@@ -25,6 +25,19 @@
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="style.css">
+
+  <!-- Module preloads for faster startup -->
+  <link rel="modulepreload" href="js/config.js">
+  <link rel="modulepreload" href="js/store.js">
+  <link rel="modulepreload" href="js/utils.js">
+  <link rel="modulepreload" href="js/geocoder.js">
+  <link rel="modulepreload" href="js/map.js">
+  <link rel="modulepreload" href="js/camera.js">
+  <link rel="modulepreload" href="js/voice.js">
+  <link rel="modulepreload" href="js/ui.js">
+  <link rel="modulepreload" href="js/return-modal.js">
+  <link rel="modulepreload" href="js/app.js">
+
   <title>FindMyCar - מצא את הרכב שלך</title>
 </head>
 <body>
@@ -147,7 +160,10 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/>
               </svg>
-              <span id="parkingAddressDisplay" class="parking-address-text">מחשב כתובת...</span>
+              <div class="parking-address-group">
+                <span id="parkingAddressDisplay" class="parking-address-text">מחשב כתובת...</span>
+                <span id="parkingCityDisplay" class="parking-address-city" style="display:none;"></span>
+              </div>
             </div>
 
             <!-- Media Attachments Row -->
@@ -474,6 +490,35 @@
   <!-- ═══════════════════ TOAST ═══════════════════ -->
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
+  <!-- ── RETURN TO CAR MODAL ── -->
+  <div id="returnModal" class="modal" role="dialog" aria-modal="true" aria-label="חזרה לרכב" style="display:none;">
+    <div class="modal-backdrop" data-close="returnModal"></div>
+    <div class="modal-sheet modal-sheet-return">
+      <div class="modal-handle"></div>
+      <div class="modal-body return-modal-body">
+        <div class="return-modal-header">
+          <div class="return-car-icon">🚗</div>
+          <h3 class="return-modal-title">ברוך השב!</h3>
+          <p class="return-modal-subtitle">הרכב שלך ממתין לך</p>
+        </div>
+        <div class="return-elapsed-badge" id="returnElapsed"></div>
+        <div class="return-address" id="returnAddress"></div>
+        <img id="returnPhotoThumb" class="return-photo-thumb" src="" alt="תמונת חניה" style="display:none;">
+        <div class="return-desc-row" id="returnDescRow" style="display:none;">
+          <span class="return-desc-icon">✏️</span>
+          <span class="return-desc-text" id="returnDescription"></span>
+        </div>
+        <div class="return-voice-indicator" id="returnVoiceIndicator" style="display:none;">
+          🎙️ הקלטה קולית שמורה
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn warning" id="returnMoveBtn">זזתי</button>
+        <button class="modal-btn primary" id="returnContinueBtn">המשך לנווט ←</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══════════════════ INSTALL BANNER ═══════════════════ -->
   <div id="installBanner" class="install-banner" style="display:none;" role="banner">
     <div class="install-inner">
@@ -496,6 +541,6 @@
 <!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
   integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN2GqM=" crossorigin=""></script>
-<script src="app.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

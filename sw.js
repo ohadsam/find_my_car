@@ -1,12 +1,21 @@
 'use strict';
 
-const CACHE_NAME      = 'findmycar-v1.0.0';
+const CACHE_NAME      = 'findmycar-v1.1.0';
 const TILES_CACHE     = 'findmycar-tiles-v1.0.0';
 const STATIC_ASSETS = [
   './',
   './index.html',
   './style.css',
-  './app.js',
+  './js/app.js',
+  './js/config.js',
+  './js/store.js',
+  './js/utils.js',
+  './js/geocoder.js',
+  './js/map.js',
+  './js/camera.js',
+  './js/voice.js',
+  './js/ui.js',
+  './js/return-modal.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-192.png',

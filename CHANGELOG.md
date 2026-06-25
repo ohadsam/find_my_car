@@ -5,6 +5,48 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.1.0] — 2026-06-25
+
+### ✨ New Features
+
+#### Enhanced Address Detection
+- **Structured geocoding** — Nominatim response parsed into `{ display, street, houseNumber, city, neighborhood }`
+- **Two-line address display** — Street + house number prominent; city/neighborhood on a secondary line
+- **Backward compatible** — Existing string addresses render correctly via `normalizeAddress()`
+
+#### Return-to-Car Modal
+- **Auto-shown on app entry** — Appears after loading screen if an active parking session exists
+- Shows elapsed time (highlighted badge), address, photo thumbnail, description, voice indicator
+- **"זזתי" button** — Archives current parking to history and clears it
+- **"המשך לנווט" button** — Dismisses modal, parking session stays active
+
+### 🏗️ Architecture — ES Module Split
+
+Monolithic `app.js` refactored into focused ES modules under `js/`:
+
+| Module | Responsibility |
+|--------|---------------|
+| `js/config.js` | Frozen `CFG` constants |
+| `js/store.js` | `localStorage` wrapper |
+| `js/utils.js` | Pure utilities (uuid, formatters, Haversine, image compression) |
+| `js/geocoder.js` | `reverseGeocode()` → structured `AddressObj`; `normalizeAddress()` |
+| `js/map.js` | `MapController` — Leaflet map + detail mini-map lifecycle |
+| `js/camera.js` | `CameraController` — getUserMedia, capture, file fallback |
+| `js/voice.js` | `VoiceController` — MediaRecorder, blob URL lifecycle |
+| `js/ui.js` | `UIController` — DOM rendering, modals, toasts, theme |
+| `js/return-modal.js` | `ReturnModal` — auto-show return-to-car flow |
+| `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle |
+
+- `<script type="module">` replaces the classic `<script>` tag
+- `<link rel="modulepreload">` for all modules
+- Private class fields (`#`) used throughout for encapsulation
+
+### 🔧 Service Worker
+- `CACHE_NAME` bumped to `findmycar-v1.1.0`
+- `STATIC_ASSETS` updated with all `js/*.js` module paths
+
+---
+
 ## [1.0.0] — 2026-06-25
 
 ### ✨ Initial Release

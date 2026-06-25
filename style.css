@@ -1467,6 +1467,97 @@ audio { width: 100%; }
   display: inline-block;
 }
 
+/* ── ENHANCED ADDRESS (structured geocoding) ── */
+.parking-address-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.parking-address-city {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* ── RETURN TO CAR MODAL ── */
+.modal-sheet-return { max-height: 80dvh; }
+
+.return-modal-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 24px 20px;
+  text-align: center;
+}
+.return-modal-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.return-car-icon { font-size: 3rem; line-height: 1; }
+.return-modal-title {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+.return-modal-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.return-elapsed-badge {
+  background: var(--color-warning-glow);
+  border: 1px solid rgba(255,165,2,0.3);
+  color: var(--color-warning);
+  padding: 7px 18px;
+  border-radius: var(--radius-full);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+.return-address {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+  max-width: 280px;
+}
+.return-photo-thumb {
+  width: 100%;
+  max-height: 130px;
+  object-fit: cover;
+  border-radius: var(--radius-lg);
+}
+.return-desc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  width: 100%;
+  text-align: right;
+}
+.return-desc-icon { flex-shrink: 0; font-size: 1rem; }
+.return-desc-text {
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  flex: 1;
+}
+.return-voice-indicator {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: var(--color-accent-glow);
+  border: 1px solid rgba(0,212,170,0.3);
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+}
+
 /* Leaflet popup override for dark mode */
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {

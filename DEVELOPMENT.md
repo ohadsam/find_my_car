@@ -19,30 +19,42 @@ npx serve find_my_car
 
 ```
 find_my_car/
-├── index.html      ← Single HTML file: all views, modals inline
-├── style.css       ← All styles; CSS variables at top; RTL layout
-├── app.js          ← All JS logic; class-based; zero dependencies
-├── sw.js           ← Service Worker; cache strategies
-├── manifest.json   ← PWA config; icons; shortcuts
-├── .nojekyll       ← Disables GitHub Pages Jekyll processing
+├── index.html          ← Single HTML file: all views, modals inline
+├── style.css           ← All styles; CSS variables at top; RTL layout
+├── js/
+│   ├── config.js       ← Frozen CFG constants
+│   ├── store.js        ← localStorage CRUD (Store)
+│   ├── utils.js        ← Pure helpers (Utils): uuid, formatters, Haversine, escHtml
+│   ├── geocoder.js     ← reverseGeocode() → AddressObj; normalizeAddress()
+│   ├── map.js          ← MapController (Leaflet map + detail mini-map)
+│   ├── camera.js       ← CameraController (getUserMedia, capture, file fallback)
+│   ├── voice.js        ← VoiceController (MediaRecorder, blob URL lifecycle)
+│   ├── ui.js           ← UIController (DOM rendering, modals, toasts, theme)
+│   ├── return-modal.js ← ReturnModal (auto-show return-to-car flow)
+│   └── app.js          ← FindMyCarApp orchestrator (entry point)
+├── sw.js               ← Service Worker; cache strategies
+├── manifest.json       ← PWA config; icons; shortcuts
+├── .nojekyll           ← Disables GitHub Pages Jekyll processing
 ├── icons/
-│   ├── icon.svg    ← Vector icon (scalable, primary)
+│   ├── icon.svg        ← Vector icon (scalable, primary)
 │   ├── icon-192.png
 │   ├── icon-512.png
-│   └── icon-180.png (apple-touch-icon)
+│   └── icon-180.png    (apple-touch-icon)
 ├── README.md
-├── CLAUDE.md       ← Claude Code context
-├── DEVELOPMENT.md  ← This file
+├── CLAUDE.md           ← Claude Code context
+├── DEVELOPMENT.md      ← This file
 └── CHANGELOG.md
 ```
 
 ## Architecture Principles
 
 1. **Zero dependencies** — vanilla JS, no npm, no bundler
-2. **Single class** — `FindMyCarApp` owns all state and methods
-3. **Persistent state** — `CFG.keys.*` localStorage keys, versioned
-4. **Graceful degradation** — every API has a fallback (GPS → error msg, camera → file input, voice → file input, share → clipboard)
-5. **RTL-first** — Hebrew is the primary language; all layout is `direction: rtl`
+2. **ES Modules** — `import`/`export`; `<script type="module">`; no globals except `window.L` (Leaflet)
+3. **Private class fields** — `#field` and `#method()` throughout for encapsulation
+4. **Single orchestrator** — `FindMyCarApp` owns shared state, delegates to focused controllers
+5. **Persistent state** — `CFG.keys.*` localStorage keys, versioned
+6. **Graceful degradation** — every API has a fallback (GPS → error msg, camera → file input, voice → file input, share → clipboard)
+7. **RTL-first** — Hebrew is the primary language; all layout is `direction: rtl`
 
 ## CSS Architecture
 
@@ -64,27 +76,43 @@ find_my_car/
 
 ## JS Architecture
 
-```javascript
-// Module: CFG — readonly config object
-const CFG = { version, keys, maxHistory, ... };
-
-// Module: Store — localStorage CRUD with JSON parsing
-const Store = { get(k,def), set(k,v), remove(k) };
-
-// Module: Utils — pure helper functions
-const Utils = { uuid, formatTime, formatDate, formatElapsed,
-                formatDuration, distance, formatDistance,
-                compressImage, blobToBase64, el };
-
-// Main: FindMyCarApp — everything else
-class FindMyCarApp {
-  constructor() { /* state init */ }
-  _init()        { /* boot sequence */ }
-  _bindEvents()  { /* all event listeners */ }
-  // ... feature methods
-}
-window.app = new FindMyCarApp(); // singleton
 ```
+js/config.js        exports CFG (frozen config object)
+js/store.js         exports Store (localStorage CRUD)
+js/utils.js         exports Utils (uuid, formatters, Haversine, escHtml, el)
+js/geocoder.js      exports reverseGeocode(), normalizeAddress()
+js/map.js           exports MapController
+js/camera.js        exports CameraController
+js/voice.js         exports VoiceController
+js/ui.js            exports UIController
+js/return-modal.js  exports ReturnModal
+js/app.js           imports all above; boots FindMyCarApp
+```
+
+**Import pattern:**
+```javascript
+// Each module imports only what it needs
+import { CFG } from './config.js';
+import { Utils } from './utils.js';
+// ...
+
+export class MyController { /* ... */ }
+```
+
+**Private fields convention:**
+```javascript
+class FindMyCarApp {
+  #state = { current: null, history: [], /* ... */ };
+  #map   = new MapController();
+  // All methods are private unless called by external code
+  #init()       { /* boot sequence */ }
+  #bindEvents() { /* all event listeners */ }
+  #saveNewParking() { /* ... */ }
+}
+window.addEventListener('DOMContentLoaded', () => { window.app = new FindMyCarApp(); });
+```
+
+**Leaflet usage:** Always access as `window.L` inside method bodies (not at module top-level) to avoid initialization timing issues with the CDN `<script>` tag.
 
 ## Service Worker Strategy
 
@@ -120,49 +148,61 @@ window.app = new FindMyCarApp(); // singleton
 ```
 
 ```javascript
-// in _bindEvents()
-Utils.el('triggerBtn').addEventListener('click', () => this._openModal('myModal'));
-Utils.el('myModalSaveBtn').addEventListener('click', () => this._handleMyModalSave());
+// in js/app.js #bindEvents()
+Utils.el('triggerBtn').addEventListener('click', () => this.#ui.openModal('myModal'));
+Utils.el('myModalSaveBtn').addEventListener('click', () => this.#handleMyModalSave());
+// For cleanup on close, add a case in #closeModal():
+#closeModal(id) {
+  if (id === 'myModal') { /* cleanup */ }
+  this.#ui.closeModal(id);
+}
 ```
 
 ### New Data Field
-1. Add to parking object in `_saveNewParking()`
-2. Save via `Store.set(CFG.keys.current, this.state.current)`
-3. Display in `_populateParkingCard()`
-4. Render in `_renderHistoryItem()`
-5. Show in `_openDetailModal()`
+1. Add to parking object in `#saveNewParking()` in `js/app.js`
+2. Save via `Store.set(CFG.keys.current, this.#state.current)`
+3. Display via `UIController` method (add to `js/ui.js`)
+4. Render in `_renderHistoryItem()` in `js/ui.js`
+5. Show in `buildDetailModal()` in `js/ui.js`
 
 ### New Storage Key
 ```javascript
-// Add to CFG.keys
-const CFG = {
-  keys: {
+// Add to CFG.keys in js/config.js
+export const CFG = Object.freeze({
+  keys: Object.freeze({
     current: 'fmc_current_v1',
     history: 'fmc_history_v1',
     theme:   'fmc_theme_v1',
     myNew:   'fmc_mynew_v1'  // ← add here
-  }
-};
+  })
+});
 ```
+
+### New Module
+1. Create `js/mymodule.js` with `export class MyController { ... }`
+2. Import in `js/app.js`: `import { MyController } from './mymodule.js';`
+3. Add `<link rel="modulepreload" href="js/mymodule.js">` to `index.html`
+4. Add `'./js/mymodule.js'` to `STATIC_ASSETS` in `sw.js`
+5. Bump `CACHE_NAME` in `sw.js`
 
 ## Debugging
 
+`#state` is a private field and not accessible from the console directly. Use localStorage:
+
 ```javascript
 // In browser console:
-app.state              // full app state
-app.state.current      // current parking
-app.state.history      // history array
-Store.get('fmc_current_v1')  // raw stored data
-localStorage           // all keys
+JSON.parse(localStorage.getItem('fmc_current_v1'))   // current parking
+JSON.parse(localStorage.getItem('fmc_history_v1'))   // history array
+localStorage                                         // all keys
 
-// Force save parking (bypasses GPS in dev)
-app.state.current = {
+// Force inject a test parking (bypasses GPS):
+localStorage.setItem('fmc_current_v1', JSON.stringify({
   id: 'test', timestamp: new Date().toISOString(),
   location: { lat: 32.0853, lng: 34.7818, accuracy: 10 },
-  address: 'Tel Aviv', description: null, photo: null, voice: null, voiceDuration: 0
-};
-Store.set('fmc_current_v1', app.state.current);
-app._updateUI();
+  address: { display: 'דיזנגוף 50, תל אביב', street: 'דיזנגוף', houseNumber: '50', city: 'תל אביב', neighborhood: null },
+  description: null, photo: null, voice: null, voiceDuration: 0
+}));
+location.reload(); // reload to pick up injected data
 ```
 
 ## Browser Compatibility
