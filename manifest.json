@@ -1,0 +1,49 @@
+{
+  "name": "FindMyCar - מצא את הרכב שלך",
+  "short_name": "FindMyCar",
+  "description": "שמור ומצא את מיקום חניית הרכב שלך בקלות",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#060B18",
+  "theme_color": "#060B18",
+  "orientation": "portrait-primary",
+  "lang": "he",
+  "dir": "rtl",
+  "categories": ["navigation", "utilities"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "שמור חניה עכשיו",
+      "short_name": "שמור",
+      "description": "שמור את מיקום הרכב הנוכחי",
+      "url": "./?action=save",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

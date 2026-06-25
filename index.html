@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#060B18" id="themeColorMeta">
+  <meta name="description" content="שמור ומצא את מיקום חניית הרכב שלך בקלות">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="FindMyCar">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+  <!-- Google Fonts: Heebo for Hebrew -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+  <title>FindMyCar - מצא את הרכב שלך</title>
+</head>
+<body>
+<div id="app">
+
+  <!-- ═══════════════════ LOADING SCREEN ═══════════════════ -->
+  <div id="loadingScreen" class="loading-screen">
+    <div class="loading-logo">
+      <div class="loading-car-icon">
+        <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="40" cy="40" r="40" fill="url(#lgrd)"/>
+          <defs>
+            <linearGradient id="lgrd" x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#4776E6"/>
+              <stop offset="1" stop-color="#8E54E9"/>
+            </linearGradient>
+          </defs>
+          <path d="M55 33L51 24C50 22 48 21 46 21H34C32 21 30 22 29 24L25 33C22 34 20 36 20 39V48C20 49 21 50 22 50H25V53C25 54 26 55 27 55C28 55 29 54 29 53V50H51V53C51 54 52 55 53 55C54 55 55 54 55 53V50H58C59 50 60 49 60 48V39C60 36 58 34 55 33ZM29 43C27 43 26 42 26 40C26 38 27 37 29 37C31 37 32 38 32 40C32 42 31 43 29 43ZM51 43C49 43 48 42 48 40C48 38 49 37 51 37C53 37 54 38 54 40C54 42 53 43 51 43ZM27 31L30 24H50L53 31H27Z" fill="white"/>
+        </svg>
+      </div>
+      <div class="loading-title">FindMyCar</div>
+      <div class="loading-subtitle">מוצא את הרכב שלך</div>
+    </div>
+    <div class="loading-bar-wrapper">
+      <div class="loading-bar"><div class="loading-progress"></div></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ HEADER ═══════════════════ -->
+  <header class="header" id="appHeader">
+    <div class="header-inner">
+      <div class="header-brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none">
+          <path d="M17 9L15.5 5.5C15.2 4.6 14.4 4 13.5 4H10.5C9.6 4 8.8 4.6 8.5 5.5L7 9C6.4 9.2 6 9.8 6 10.5V15C6 15.6 6.4 16 7 16H7.5V17C7.5 17.6 7.9 18 8.5 18C9.1 18 9.5 17.6 9.5 17V16H14.5V17C14.5 17.6 14.9 18 15.5 18C16.1 18 16.5 17.6 16.5 17V16H17C17.6 16 18 15.6 18 15V10.5C18 9.8 17.6 9.2 17 9ZM9.5 13C8.9 13 8.5 12.6 8.5 12C8.5 11.4 8.9 11 9.5 11C10.1 11 10.5 11.4 10.5 12C10.5 12.6 10.1 13 9.5 13ZM14.5 13C13.9 13 13.5 12.6 13.5 12C13.5 11.4 13.9 11 14.5 11C15.1 11 15.5 11.4 15.5 12C15.5 12.6 15.1 13 14.5 13ZM8.5 9L9.8 5.8H14.2L15.5 9H8.5Z" fill="currentColor"/>
+        </svg>
+        <span class="brand-name">FindMyCar</span>
+      </div>
+      <div class="header-right">
+        <div class="status-chip" id="statusChip">
+          <span class="status-dot" id="statusDot"></span>
+          <span class="status-label" id="statusLabel">אין חניה</span>
+        </div>
+        <button class="icon-btn" id="themeToggleBtn" aria-label="החלף ערכת נושא">
+          <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════ MAIN CONTENT ═══════════════════ -->
+  <main id="mainContent">
+
+    <!-- ─── HOME VIEW ─── -->
+    <section id="homeView" class="view active" role="main">
+
+      <!-- Map -->
+      <div class="map-wrapper" id="mapWrapper">
+        <div id="map" role="application" aria-label="מפת חניה"></div>
+        <div class="map-controls">
+          <button class="map-ctrl-btn" id="centerParkingBtn" title="מרכז על החניה" aria-label="מרכז מפה על החניה">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/>
+            </svg>
+          </button>
+          <button class="map-ctrl-btn" id="centerUserBtn" title="המיקום שלי" aria-label="מרכז מפה על מיקומי">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+            </svg>
+          </button>
+        </div>
+        <div class="map-scale-badge" id="offlineIndicator" style="display:none;">
+          <span>📡 אין חיבור</span>
+        </div>
+      </div>
+
+      <!-- Scrollable Content -->
+      <div class="home-content" id="homeContent">
+
+        <!-- ── NO PARKING STATE ── -->
+        <div id="noParkingState" class="empty-state">
+          <div class="empty-state-icon">🅿️</div>
+          <h2 class="empty-state-title">אין חניה שמורה</h2>
+          <p class="empty-state-desc">לחץ על הכפתור כדי לשמור את מיקום הרכב שלך עם GPS מדויק</p>
+          <button class="primary-cta" id="saveFirstParkingBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/>
+            </svg>
+            <span>שמור חניה עכשיו</span>
+          </button>
+        </div>
+
+        <!-- ── HAS PARKING STATE ── -->
+        <div id="hasParkingState" style="display:none;">
+
+          <!-- Parking Info Card -->
+          <div class="parking-card" id="parkingInfoCard">
+            <div class="parking-card-header">
+              <div class="parking-time-group">
+                <div class="parking-date" id="parkingDateDisplay">-</div>
+                <div class="parking-time-large" id="parkingTimeDisplay">-</div>
+                <div class="parking-ago" id="parkingAgoDisplay">-</div>
+              </div>
+              <div class="parking-timer-badge" id="parkingTimerBadge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span id="parkingTimerDisplay">00:00</span>
+              </div>
+            </div>
+
+            <div class="parking-location-row" id="parkingLocationRow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/>
+              </svg>
+              <span id="parkingAddressDisplay" class="parking-address-text">מחשב כתובת...</span>
+            </div>
+
+            <!-- Media Attachments Row -->
+            <div class="parking-attachments" id="parkingAttachments">
+              <!-- Photo thumbnail, voice chip, text chip injected by JS -->
+            </div>
+
+            <!-- Description -->
+            <div class="parking-desc-row" id="parkingDescRow" style="display:none;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+              <span id="parkingDescDisplay" class="parking-desc-text">-</span>
+            </div>
+
+            <!-- Distance -->
+            <div class="parking-distance-row" id="distanceRow" style="display:none;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>
+              </svg>
+              <span id="distanceDisplay" class="distance-text">מחשב מרחק...</span>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="parking-actions">
+              <button class="action-btn-card nav-btn" id="navigateBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+                </svg>
+                <span>נווט</span>
+              </button>
+              <button class="action-btn-card share-btn" id="shareBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                <span>שתף</span>
+              </button>
+              <button class="action-btn-card reset-btn" id="resetParkingBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-5.24"/>
+                </svg>
+                <span>חניה חדשה</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Add To Parking Section -->
+          <div class="add-media-section">
+            <div class="section-label">הוסף לחניה</div>
+            <div class="media-tiles">
+              <button class="media-tile" id="addPhotoBtn">
+                <div class="media-tile-icon">📷</div>
+                <div class="media-tile-label">תמונה</div>
+              </button>
+              <button class="media-tile" id="addVoiceBtn">
+                <div class="media-tile-icon">🎙️</div>
+                <div class="media-tile-label">הקלטה</div>
+              </button>
+              <button class="media-tile" id="addTextBtn">
+                <div class="media-tile-icon">✏️</div>
+                <div class="media-tile-label">תיאור</div>
+              </button>
+              <button class="media-tile" id="updateLocationBtn">
+                <div class="media-tile-icon">🎯</div>
+                <div class="media-tile-label">עדכן GPS</div>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── HISTORY VIEW ─── -->
+    <section id="historyView" class="view" role="region" aria-label="היסטוריית חניות">
+      <div class="history-header">
+        <h2 class="history-title">היסטוריה</h2>
+        <button class="clear-all-btn" id="clearHistoryBtn" aria-label="נקה כל ההיסטוריה">נקה הכל</button>
+      </div>
+      <div class="history-list" id="historyList" role="list">
+        <!-- Injected by JS -->
+      </div>
+      <div class="empty-state" id="noHistoryState" style="display:none;">
+        <div class="empty-state-icon">📋</div>
+        <p class="empty-state-desc">אין חניות קודמות בהיסטוריה</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══════════════════ BOTTOM NAVIGATION ═══════════════════ -->
+  <nav class="bottom-nav" role="navigation" aria-label="ניווט ראשי">
+    <button class="nav-btn active" data-view="homeView" id="navBtnHome" aria-label="בית">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+      </svg>
+      <span>בית</span>
+    </button>
+    <button class="nav-btn" data-view="historyView" id="navBtnHistory" aria-label="היסטוריה">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+      </svg>
+      <span>היסטוריה</span>
+      <span class="history-badge" id="historyCountBadge" style="display:none;">0</span>
+    </button>
+  </nav>
+
+  <!-- ═══════════════════ FAB - Save Parking ═══════════════════ -->
+  <button class="fab" id="fabSaveParking" style="display:none;" aria-label="שמור חניה חדשה">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/>
+    </svg>
+  </button>
+
+  <!-- ═══════════════════ MODALS ═══════════════════ -->
+
+  <!-- ── PHOTO MODAL ── -->
+  <div id="photoModal" class="modal" role="dialog" aria-modal="true" aria-label="צילום תמונה" style="display:none;">
+    <div class="modal-backdrop" data-close="photoModal"></div>
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">📷 צלם תמונה</h3>
+        <button class="modal-close-btn" data-close="photoModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="camera-container" id="cameraContainer">
+          <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
+          <canvas id="cameraCanvas" style="display:none;"></canvas>
+          <div class="camera-overlay" id="cameraOverlay">
+            <div class="camera-corners"></div>
+          </div>
+        </div>
+        <div id="photoPreviewContainer" style="display:none;" class="photo-preview-wrapper">
+          <img id="photoPreviewImg" class="photo-preview" alt="תמונת חניה">
+        </div>
+        <div id="cameraPermissionError" class="permission-error" style="display:none;">
+          <div class="perm-icon">📵</div>
+          <p>אין גישה למצלמה. בחר תמונה מהגלריה:</p>
+          <label class="file-pick-btn">
+            <input type="file" id="photoFilePicker" accept="image/*" capture="environment" style="display:none;">
+            <span>📁 בחר תמונה</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div id="cameraControls">
+          <button class="modal-btn secondary" id="switchCameraBtn">🔄 החלף מצלמה</button>
+          <button class="modal-btn primary" id="captureBtn">📸 צלם</button>
+        </div>
+        <div id="photoPreviewControls" style="display:none;">
+          <button class="modal-btn secondary" id="retakeBtn">🔄 צלם שוב</button>
+          <button class="modal-btn success" id="savePhotoBtn">✅ שמור תמונה</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── VOICE MODAL ── -->
+  <div id="voiceModal" class="modal" role="dialog" aria-modal="true" aria-label="הקלטה קולית" style="display:none;">
+    <div class="modal-backdrop" data-close="voiceModal"></div>
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">🎙️ הקלטה קולית</h3>
+        <button class="modal-close-btn" data-close="voiceModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body voice-modal-body">
+        <div class="voice-visualizer" id="voiceVisualizer">
+          <div class="voice-pulse-ring ring1"></div>
+          <div class="voice-pulse-ring ring2"></div>
+          <div class="voice-pulse-ring ring3"></div>
+          <div class="voice-mic-btn" id="voiceMicBtn" role="button" tabindex="0" aria-label="לחץ להקלטה">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </div>
+        </div>
+        <div class="voice-status-text" id="voiceStatusText">לחץ על המיקרופון להתחלת הקלטה</div>
+        <div class="voice-timer" id="voiceTimerDisplay" style="display:none;">0:00</div>
+        <div id="voicePlaybackContainer" style="display:none;" class="voice-playback">
+          <audio id="voiceAudioPlayer" controls class="audio-player"></audio>
+        </div>
+        <div id="voicePermissionError" class="permission-error" style="display:none;">
+          <div class="perm-icon">🎤</div>
+          <p>אין גישה למיקרופון. הקלט ידנית:</p>
+          <label class="file-pick-btn">
+            <input type="file" id="voiceFilePicker" accept="audio/*" capture="microphone" style="display:none;">
+            <span>📁 בחר הקלטה</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div id="voiceRecordControls">
+          <button class="modal-btn record-toggle" id="recordToggleBtn">
+            <span id="recordToggleIcon">⏺️</span>
+            <span id="recordToggleText">התחל הקלטה</span>
+          </button>
+        </div>
+        <div id="voiceSaveControls" style="display:none;">
+          <button class="modal-btn secondary" id="rerecordBtn">🔄 הקלט שוב</button>
+          <button class="modal-btn success" id="saveVoiceBtn">✅ שמור הקלטה</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TEXT DESCRIPTION MODAL ── -->
+  <div id="textModal" class="modal" role="dialog" aria-modal="true" aria-label="תיאור מילולי" style="display:none;">
+    <div class="modal-backdrop" data-close="textModal"></div>
+    <div class="modal-sheet modal-sheet-short">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">✏️ תיאור מקום החניה</h3>
+        <button class="modal-close-btn" data-close="textModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <textarea id="descriptionInput" class="description-textarea"
+          placeholder="תאר היכן חנית... &#10;לדוגמה: ליד הסופר, קומה 2, מקום B45"
+          maxlength="300" rows="4" aria-label="תיאור מקום החניה"></textarea>
+        <div class="char-counter">
+          <span id="charCount">0</span><span>/300</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" data-close="textModal">ביטול</button>
+        <button class="modal-btn primary" id="saveDescBtn">✅ שמור תיאור</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RESET CONFIRM MODAL ── -->
+  <div id="resetModal" class="modal" role="dialog" aria-modal="true" aria-label="אישור איפוס" style="display:none;">
+    <div class="modal-backdrop" data-close="resetModal"></div>
+    <div class="modal-sheet modal-sheet-alert">
+      <div class="modal-handle"></div>
+      <div class="modal-body alert-body">
+        <div class="alert-icon">🔄</div>
+        <h3 class="alert-title">שמור חניה חדשה?</h3>
+        <p class="alert-desc">החניה הנוכחית תועבר להיסטוריה ותוכל לשמור מיקום חדש.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" data-close="resetModal">ביטול</button>
+        <button class="modal-btn warning" id="confirmResetBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-5.24"/>
+          </svg>
+          חניה חדשה
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── HISTORY DETAIL MODAL ── -->
+  <div id="detailModal" class="modal" role="dialog" aria-modal="true" aria-label="פרטי חניה" style="display:none;">
+    <div class="modal-backdrop" data-close="detailModal"></div>
+    <div class="modal-sheet modal-sheet-tall">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title" id="detailModalTitle">פרטי חניה</h3>
+        <button class="modal-close-btn" data-close="detailModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body detail-modal-body" id="detailModalContent">
+        <!-- Injected by JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" id="detailDeleteBtn">🗑️ מחק</button>
+        <button class="modal-btn primary" id="detailNavBtn">🧭 נווט</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── NAVIGATION MODAL ── -->
+  <div id="navModal" class="modal" role="dialog" aria-modal="true" aria-label="בחר אפליקציית ניווט" style="display:none;">
+    <div class="modal-backdrop" data-close="navModal"></div>
+    <div class="modal-sheet modal-sheet-alert">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">🧭 פתח ניווט</h3>
+        <button class="modal-close-btn" data-close="navModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="nav-app-list">
+          <button class="nav-app-btn" id="openWazeBtn">
+            <span class="nav-app-icon">🗺️</span>
+            <span>Waze</span>
+          </button>
+          <button class="nav-app-btn" id="openGoogleMapsBtn">
+            <span class="nav-app-icon">🌐</span>
+            <span>Google Maps</span>
+          </button>
+          <button class="nav-app-btn" id="openAppleMapsBtn">
+            <span class="nav-app-icon">🍎</span>
+            <span>Apple Maps</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ TOAST ═══════════════════ -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <!-- ═══════════════════ INSTALL BANNER ═══════════════════ -->
+  <div id="installBanner" class="install-banner" style="display:none;" role="banner">
+    <div class="install-inner">
+      <div class="install-icon">
+        <img src="icons/icon-192.png" alt="FindMyCar" width="40" height="40">
+      </div>
+      <div class="install-text">
+        <strong>התקן את FindMyCar</strong>
+        <span>גישה מהירה מהמסך הראשי</span>
+      </div>
+      <div class="install-actions">
+        <button class="install-dismiss-btn" id="installDismissBtn" aria-label="דחה">✕</button>
+        <button class="install-accept-btn" id="installAcceptBtn">התקן</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN2GqM=" crossorigin=""></script>
+<script src="app.js"></script>
+</body>
+</html>
