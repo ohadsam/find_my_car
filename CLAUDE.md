@@ -42,9 +42,11 @@ Loaded via `<script type="module" src="js/app.js">` with `<link rel="moduleprelo
 ```javascript
 // Vehicle (localStorage key: fmc_vehicles_v1 → array)
 {
-  id:   "string (uuid)",
-  name: "string (max 30 chars)",
-  icon: "emoji string",
+  id:    "string (uuid)",
+  name:  "string (max 30 chars)",
+  icon:  "emoji string",
+  plate: "string (max 15 chars) | null",   // optional license plate
+  color: "string (max 20 chars) | null",   // optional vehicle color
 }
 
 // Active vehicle ID (localStorage key: fmc_active_v1)

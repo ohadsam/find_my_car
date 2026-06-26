@@ -25,20 +25,32 @@ export const VehicleController = {
 
   getById(id) { return this.getAll().find(v => v.id === id) || null; },
 
-  add(name, icon) {
+  add(name, icon, plate, color) {
     const vehicles = this.getAll();
     if (vehicles.length >= CFG.maxVehicles) return null;
-    const v = { id: Utils.uuid(), name: (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב', icon };
+    const v = {
+      id:    Utils.uuid(),
+      name:  (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב',
+      icon,
+      plate: (plate || '').trim().slice(0, CFG.maxPlateLen) || null,
+      color: (color || '').trim().slice(0, CFG.maxColorLen) || null,
+    };
     vehicles.push(v);
     Store.set(CFG.keys.vehicles, vehicles);
     return v;
   },
 
-  update(id, name, icon) {
+  update(id, name, icon, plate, color) {
     const vehicles = this.getAll();
     const idx = vehicles.findIndex(v => v.id === id);
     if (idx === -1) return false;
-    vehicles[idx] = { ...vehicles[idx], name: (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב', icon };
+    vehicles[idx] = {
+      ...vehicles[idx],
+      name:  (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב',
+      icon,
+      plate: (plate || '').trim().slice(0, CFG.maxPlateLen) || null,
+      color: (color || '').trim().slice(0, CFG.maxColorLen) || null,
+    };
     Store.set(CFG.keys.vehicles, vehicles);
     return true;
   },

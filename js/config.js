@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.3.0',
+  version: '1.4.0',
   keys: Object.freeze({
     theme:         'fmc_theme_v1',
     vehicles:      'fmc_vehicles_v1',
@@ -17,6 +17,8 @@ export const CFG = Object.freeze({
   maxTextLen:        300,
   maxVehicles:       5,
   maxVehicleNameLen: 30,
+  maxPlateLen:       15,
+  maxColorLen:       20,
   toastDuration:     3000,
   timerInterval:     1000,
   geocodeTimeout:    6000,
@@ -24,6 +26,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.4.0',
+      date: '2026-06-26',
+      items: Object.freeze([
+        'לחיצה על "חניה פעילה" בכותרת פותחת את מסך סיום החניה',
+        'פרטי רכב נוספים: לוחית רישוי וצבע (שדות אופציונליים)',
+      ]),
+    }),
     Object.freeze({
       version: '1.3.0',
       date: '2026-06-26',
