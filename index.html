@@ -16,8 +16,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 
   <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
   <!-- Google Fonts: Heebo for Hebrew -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -75,6 +74,7 @@
           <path d="M17 9L15.5 5.5C15.2 4.6 14.4 4 13.5 4H10.5C9.6 4 8.8 4.6 8.5 5.5L7 9C6.4 9.2 6 9.8 6 10.5V15C6 15.6 6.4 16 7 16H7.5V17C7.5 17.6 7.9 18 8.5 18C9.1 18 9.5 17.6 9.5 17V16H14.5V17C14.5 17.6 14.9 18 15.5 18C16.1 18 16.5 17.6 16.5 17V16H17C17.6 16 18 15.6 18 15V10.5C18 9.8 17.6 9.2 17 9ZM9.5 13C8.9 13 8.5 12.6 8.5 12C8.5 11.4 8.9 11 9.5 11C10.1 11 10.5 11.4 10.5 12C10.5 12.6 10.1 13 9.5 13ZM14.5 13C13.9 13 13.5 12.6 13.5 12C13.5 11.4 13.9 11 14.5 11C15.1 11 15.5 11.4 15.5 12C15.5 12.6 15.1 13 14.5 13ZM8.5 9L9.8 5.8H14.2L15.5 9H8.5Z" fill="currentColor"/>
         </svg>
         <span class="brand-name">FindMyCar</span>
+        <button class="version-tag" id="versionTagBtn" aria-label="מה חדש">v1.3.0</button>
       </div>
       <div class="header-right">
         <div class="status-chip" id="statusChip">
@@ -119,6 +119,15 @@
         </div>
         <div class="map-scale-badge" id="offlineIndicator" style="display:none;">
           <span>📡 אין חיבור</span>
+        </div>
+        <!-- Map collapse/expand bar -->
+        <div class="map-toggle-bar">
+          <button class="map-toggle-btn" id="mapCollapseBtn" aria-label="הסתר מפה">
+            <svg class="map-toggle-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="18 15 12 9 6 15"/>
+            </svg>
+            <span id="mapToggleText">הסתר מפה</span>
+          </button>
         </div>
       </div>
 
@@ -626,6 +635,28 @@
     </div>
   </div>
 
+  <!-- ── WHAT'S NEW MODAL ── -->
+  <div id="whatsNewModal" class="modal" role="dialog" aria-modal="true" aria-label="מה חדש" style="display:none;">
+    <div class="modal-backdrop" data-close="whatsNewModal"></div>
+    <div class="modal-sheet modal-sheet-short">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title" id="whatsNewTitle">🎉 מה חדש</h3>
+        <button class="modal-close-btn" data-close="whatsNewModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body" id="whatsNewContent">
+        <!-- Injected by JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn primary" data-close="whatsNewModal">הבנתי!</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══════════════════ INSTALL BANNER ═══════════════════ -->
   <div id="installBanner" class="install-banner" style="display:none;" role="banner">
     <div class="install-inner">
@@ -646,8 +677,7 @@
 </div>
 
 <!-- Leaflet JS -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN2GqM=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

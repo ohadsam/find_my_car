@@ -51,7 +51,7 @@ export class UIController {
   }
 
   // ── SETTINGS VIEW ─────────────────────────────────────────────
-  renderSettingsView(state, { onEdit, onDelete, onAdd }) {
+  renderSettingsView(state, { onEdit, onDelete, onAdd, onClearParking, hasParking }) {
     const list = Utils.el('vehiclesList');
     if (!list) return;
     list.innerHTML = '';
@@ -76,9 +76,26 @@ export class UIController {
         badge.textContent = 'פעיל';
         info.appendChild(badge);
       }
+      if (hasParking?.(v.id)) {
+        const pkBadge = document.createElement('span');
+        pkBadge.className = 'vehicle-parking-indicator';
+        pkBadge.textContent = '🅿️';
+        pkBadge.title = 'יש חניה פעילה';
+        info.appendChild(pkBadge);
+      }
 
       const actions = document.createElement('div');
       actions.className = 'vehicle-list-actions';
+
+      if (hasParking?.(v.id)) {
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'vehicle-action-btn vehicle-clear-btn';
+        clearBtn.textContent = '🧹';
+        clearBtn.title = 'העבר חניה להיסטוריה';
+        clearBtn.setAttribute('aria-label', `נקה חניה נוכחית של ${v.name}`);
+        clearBtn.addEventListener('click', () => onClearParking?.(v.id));
+        actions.appendChild(clearBtn);
+      }
 
       const editBtn = document.createElement('button');
       editBtn.className = 'vehicle-action-btn edit-btn';
@@ -102,6 +119,34 @@ export class UIController {
 
     const addBtn = Utils.el('addVehicleBtn');
     if (addBtn) addBtn.disabled = vehicles.length >= CFG.maxVehicles;
+  }
+
+  // ── WHAT'S NEW ────────────────────────────────────────────────
+  showWhatsNew(entry) {
+    if (!entry) return;
+    const { version, date, items } = entry;
+    const title = Utils.el('whatsNewTitle');
+    if (title) title.textContent = `🎉 מה חדש בגרסא ${version}`;
+
+    const body = Utils.el('whatsNewContent');
+    if (!body) return;
+    body.innerHTML = '';
+
+    const dateEl = document.createElement('p');
+    dateEl.className = 'whats-new-date';
+    dateEl.textContent = date;
+    body.appendChild(dateEl);
+
+    const ul = document.createElement('ul');
+    ul.className = 'whats-new-list';
+    items.forEach(item => {
+      const li = document.createElement('li');
+      li.textContent = item;
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+
+    this.openModal('whatsNewModal');
   }
 
   // ── VEHICLE MODAL ─────────────────────────────────────────────
