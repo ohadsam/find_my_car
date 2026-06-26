@@ -5,6 +5,20 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.4.0] — 2026-06-26
+
+### ✨ New Features
+
+#### Active Parking Chip Shortcut
+- **Tap "חניה פעילה"** — Clicking the active parking status chip in the header now opens the end-parking confirmation modal directly
+
+#### Vehicle Details
+- **License plate** — Optional license plate number field in vehicle settings (LTR input, max 15 chars)
+- **Color** — Optional vehicle color field in vehicle settings (max 20 chars)
+- Both fields appear as a secondary info line below the vehicle name in the vehicles list
+
+---
+
 ## [1.3.0] — 2026-06-26
 
 ### ✨ New Features

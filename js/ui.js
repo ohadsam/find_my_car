@@ -62,32 +62,52 @@ export class UIController {
 
       const info = document.createElement('div');
       info.className = 'vehicle-list-info';
+
       const iconEl = document.createElement('span');
       iconEl.className = 'vehicle-list-icon';
       iconEl.textContent = v.icon;
+
+      const textBlock = document.createElement('div');
+      textBlock.className = 'vehicle-list-text';
+
+      const hasPk = hasParking?.(v.id);
+
+      const nameRow = document.createElement('div');
+      nameRow.className = 'vehicle-list-name-row';
       const nameEl = document.createElement('span');
       nameEl.className = 'vehicle-list-name';
       nameEl.textContent = v.name;
-      info.appendChild(iconEl);
-      info.appendChild(nameEl);
+      nameRow.appendChild(nameEl);
       if (v.id === state.activeVehicleId) {
         const badge = document.createElement('span');
         badge.className = 'vehicle-active-badge';
         badge.textContent = 'פעיל';
-        info.appendChild(badge);
+        nameRow.appendChild(badge);
       }
-      if (hasParking?.(v.id)) {
+      if (hasPk) {
         const pkBadge = document.createElement('span');
         pkBadge.className = 'vehicle-parking-indicator';
         pkBadge.textContent = '🅿️';
         pkBadge.title = 'יש חניה פעילה';
-        info.appendChild(pkBadge);
+        nameRow.appendChild(pkBadge);
       }
+      textBlock.appendChild(nameRow);
+
+      const metaParts = [v.plate, v.color].filter(Boolean);
+      if (metaParts.length) {
+        const metaEl = document.createElement('span');
+        metaEl.className = 'vehicle-list-meta';
+        metaEl.textContent = metaParts.join(' · ');
+        textBlock.appendChild(metaEl);
+      }
+
+      info.appendChild(iconEl);
+      info.appendChild(textBlock);
 
       const actions = document.createElement('div');
       actions.className = 'vehicle-list-actions';
 
-      if (hasParking?.(v.id)) {
+      if (hasPk) {
         const clearBtn = document.createElement('button');
         clearBtn.className = 'vehicle-action-btn vehicle-clear-btn';
         clearBtn.textContent = '🧹';
@@ -154,6 +174,12 @@ export class UIController {
     const nameInput = Utils.el('vehicleNameInput');
     if (nameInput) nameInput.value = vehicle ? vehicle.name : '';
 
+    const plateInput = Utils.el('vehiclePlateInput');
+    if (plateInput) plateInput.value = vehicle?.plate || '';
+
+    const colorInput = Utils.el('vehicleColorInput');
+    if (colorInput) colorInput.value = vehicle?.color || '';
+
     const grid = Utils.el('vehicleIconGrid');
     if (!grid) return;
     grid.innerHTML = '';
@@ -177,10 +203,12 @@ export class UIController {
   }
 
   getVehicleModalValues() {
-    const name = (Utils.el('vehicleNameInput')?.value || '').trim();
+    const name  = (Utils.el('vehicleNameInput')?.value  || '').trim();
+    const plate = (Utils.el('vehiclePlateInput')?.value || '').trim() || null;
+    const color = (Utils.el('vehicleColorInput')?.value || '').trim() || null;
     const selected = Utils.el('vehicleIconGrid')?.querySelector('.icon-pick-btn.selected');
     const icon = selected ? selected.textContent : CFG.vehicleIcons[0];
-    return { name, icon };
+    return { name, icon, plate, color };
   }
 
   // ── WHATSAPP MODAL ────────────────────────────────────────────
@@ -248,10 +276,16 @@ export class UIController {
       chip.classList.add('has-parking');
       dot.classList.add('active');
       lbl.textContent = 'חניה פעילה';
+      chip.setAttribute('aria-label', 'סיים חניה');
+      chip.setAttribute('aria-disabled', 'false');
+      chip.tabIndex = 0;
     } else {
       chip.classList.remove('has-parking');
       dot.classList.remove('active');
       lbl.textContent = 'אין חניה';
+      chip.setAttribute('aria-label', 'אין חניה פעילה');
+      chip.setAttribute('aria-disabled', 'true');
+      chip.tabIndex = -1;
     }
   }
 

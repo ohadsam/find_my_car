@@ -281,6 +281,13 @@ audio { width: 100%; }
   background: var(--color-success-glow);
   border-color: rgba(46,213,115,0.3);
   color: var(--color-success);
+  cursor: pointer;
+}
+.status-chip.has-parking:hover {
+  filter: brightness(1.12);
+}
+.status-chip.has-parking:active {
+  transform: scale(0.94);
 }
 .status-dot {
   width: 7px;
@@ -1719,10 +1726,32 @@ audio { width: 100%; }
   min-width: 0;
 }
 .vehicle-list-icon { font-size: 1.5rem; flex-shrink: 0; }
+.vehicle-list-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+.vehicle-list-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
 .vehicle-list-name {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--text-primary);
+  min-width: 40px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vehicle-list-meta {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1823,6 +1852,14 @@ audio { width: 100%; }
 }
 
 /* ── FORM INPUTS ── */
+.form-row {
+  display: flex;
+  gap: 12px;
+}
+.form-group-half {
+  flex: 1;
+  min-width: 0;
+}
 .form-group { margin-bottom: 16px; }
 .form-label {
   display: block;
@@ -1832,6 +1869,13 @@ audio { width: 100%; }
   margin-bottom: 8px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+}
+.form-label-optional {
+  font-weight: 400;
+  font-size: 0.75rem;
+  text-transform: none;
+  color: var(--text-muted);
+  margin-right: 4px;
 }
 .form-input {
   width: 100%;

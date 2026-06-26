@@ -158,6 +158,12 @@ class FindMyCarApp {
       this.#resetParking();
     });
 
+    const openResetFromChip = () => { if (this.#state.current) this.#ui.openModal('resetModal'); };
+    Utils.el('statusChip')?.addEventListener('click', openResetFromChip);
+    Utils.el('statusChip')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openResetFromChip(); }
+    });
+
     Utils.el('centerParkingBtn')?.addEventListener('click', () => this.#centerOnParking());
     Utils.el('centerUserBtn')?.addEventListener('click',    () => this.#centerOnUser());
     Utils.el('mapCollapseBtn')?.addEventListener('click',   () => this.#toggleMapCollapse());
@@ -458,14 +464,14 @@ class FindMyCarApp {
   }
 
   #saveVehicle() {
-    const { name, icon } = this.#ui.getVehicleModalValues();
+    const { name, icon, plate, color } = this.#ui.getVehicleModalValues();
     if (!name) { this.#ui.showToast('יש להזין שם לרכב', 'warning'); return; }
 
     if (this.#state.vehicleEditId) {
-      VehicleController.update(this.#state.vehicleEditId, name, icon);
+      VehicleController.update(this.#state.vehicleEditId, name, icon, plate, color);
       this.#ui.showToast('✅ הרכב עודכן', 'success');
     } else {
-      const v = VehicleController.add(name, icon);
+      const v = VehicleController.add(name, icon, plate, color);
       if (!v) { this.#ui.showToast(`ניתן להוסיף עד ${CFG.maxVehicles} רכבים`, 'warning'); return; }
       this.#ui.showToast(`${icon} ${name} נוסף!`, 'success');
     }
