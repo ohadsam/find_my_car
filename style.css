@@ -608,7 +608,7 @@ audio { width: 100%; }
 /* Action buttons on card */
 .parking-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 .action-btn-card {
@@ -644,6 +644,13 @@ audio { width: 100%; }
   border-color: rgba(255,165,2,0.25);
 }
 .reset-btn:active { background: rgba(255,165,2,0.25); }
+.wa-btn {
+  background: rgba(37,211,102,0.12);
+  color: #25D366;
+  border-color: rgba(37,211,102,0.25);
+}
+.wa-btn svg { width: 20px; height: 20px; }
+.wa-btn:active { background: rgba(37,211,102,0.25); }
 
 /* ── ADD MEDIA SECTION ── */
 .add-media-section { margin-top: 16px; }
@@ -1567,3 +1574,219 @@ audio { width: 100%; }
   box-shadow: var(--shadow-md) !important;
 }
 .leaflet-popup-content { color: var(--text-primary) !important; font-family: 'Heebo', sans-serif !important; }
+
+/* ── VEHICLE SELECTOR ROW ── */
+.vehicle-selector-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 12px 16px 4px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.vehicle-selector-row::-webkit-scrollbar { display: none; }
+.vehicle-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--border-med);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  scroll-snap-align: start;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+.vehicle-chip:active { transform: scale(0.95); }
+.vehicle-chip.active {
+  background: var(--color-primary-glow);
+  border-color: rgba(91,139,245,0.5);
+  color: var(--color-primary);
+}
+
+/* ── SETTINGS VIEW ── */
+.settings-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 16px 8px;
+  flex-shrink: 0;
+}
+.settings-title { font-size: 1.3rem; font-weight: 800; }
+.vehicles-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px;
+}
+.vehicle-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+}
+.vehicle-list-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.vehicle-list-icon { font-size: 1.5rem; flex-shrink: 0; }
+.vehicle-list-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vehicle-active-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary-glow);
+  color: var(--color-primary);
+  border: 1px solid rgba(91,139,245,0.3);
+  flex-shrink: 0;
+}
+.vehicle-list-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.vehicle-action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+.vehicle-action-btn:active { transform: scale(0.9); }
+.vehicle-action-btn:disabled { opacity: 0.35; pointer-events: none; }
+.settings-add-wrapper {
+  padding: 16px;
+  flex-shrink: 0;
+}
+.settings-add-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── VEHICLE ICON GRID ── */
+.vehicle-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 4px;
+}
+.icon-pick-btn {
+  font-size: 1.6rem;
+  padding: 10px 4px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border);
+  background: var(--bg-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+.icon-pick-btn:active { transform: scale(0.9); }
+.icon-pick-btn.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-glow);
+}
+
+/* ── FORM INPUTS ── */
+.form-group { margin-bottom: 16px; }
+.form-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.form-input {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--bg-input);
+  border: 1.5px solid var(--border-med);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-family: 'Heebo', sans-serif;
+  direction: rtl;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.form-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.form-input::placeholder { color: var(--text-muted); }
+
+/* ── WHATSAPP MODAL ── */
+.wa-intro {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+}
+.wa-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+.wa-option-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  user-select: none;
+}
+.wa-option-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #25D366;
+  flex-shrink: 0;
+}
+.wa-note {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+  padding: 0 4px;
+  min-height: 1em;
+}
+.wa-send-btn {
+  background: rgba(37,211,102,0.15);
+  color: #25D366;
+  border: 1px solid rgba(37,211,102,0.35);
+}
+.wa-send-btn:active { background: rgba(37,211,102,0.3); }
+
+/* ── DANGER BUTTON ── */
+.danger-btn {
+  background: var(--color-danger-glow);
+  color: var(--color-danger);
+  border-color: rgba(255,71,87,0.3);
+}

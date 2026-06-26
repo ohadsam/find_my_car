@@ -22,18 +22,29 @@ find_my_car/
 ├── index.html          ← Single HTML file: all views, modals inline
 ├── style.css           ← All styles; CSS variables at top; RTL layout
 ├── js/
-│   ├── config.js       ← Frozen CFG constants
+│   ├── config.js       ← Frozen CFG constants (vehicleIcons, maxVehicles, etc.)
 │   ├── store.js        ← localStorage CRUD (Store)
-│   ├── utils.js        ← Pure helpers (Utils): uuid, formatters, Haversine, escHtml
+│   ├── utils.js        ← Pure helpers (Utils): uuid, formatters, Haversine, escHtml, dataUrlToFile
 │   ├── geocoder.js     ← reverseGeocode() → AddressObj; normalizeAddress()
 │   ├── map.js          ← MapController (Leaflet map + detail mini-map)
 │   ├── camera.js       ← CameraController (getUserMedia, capture, file fallback)
 │   ├── voice.js        ← VoiceController (MediaRecorder, blob URL lifecycle)
-│   ├── ui.js           ← UIController (DOM rendering, modals, toasts, theme)
+│   ├── ui.js           ← UIController (DOM rendering, modals, toasts, vehicle selector)
 │   ├── return-modal.js ← ReturnModal (auto-show return-to-car flow)
+│   ├── vehicles.js     ← VehicleController (CRUD + migration)
 │   └── app.js          ← FindMyCarApp orchestrator (entry point)
 ├── sw.js               ← Service Worker; cache strategies
 ├── manifest.json       ← PWA config; icons; shortcuts
+├── package.json        ← devDependencies (vitest, playwright)
+├── vitest.config.js    ← Unit test config
+├── playwright.config.js ← E2E test config
+├── tests/
+│   ├── unit/
+│   │   ├── utils.test.js
+│   │   ├── store.test.js
+│   │   └── vehicles.test.js
+│   └── e2e/
+│       └── app.spec.js
 ├── .nojekyll           ← Disables GitHub Pages Jekyll processing
 ├── icons/
 │   ├── icon.svg        ← Vector icon (scalable, primary)
@@ -79,13 +90,14 @@ find_my_car/
 ```
 js/config.js        exports CFG (frozen config object)
 js/store.js         exports Store (localStorage CRUD)
-js/utils.js         exports Utils (uuid, formatters, Haversine, escHtml, el)
+js/utils.js         exports Utils (uuid, formatters, Haversine, escHtml, dataUrlToFile, el)
 js/geocoder.js      exports reverseGeocode(), normalizeAddress()
 js/map.js           exports MapController
 js/camera.js        exports CameraController
 js/voice.js         exports VoiceController
 js/ui.js            exports UIController
 js/return-modal.js  exports ReturnModal
+js/vehicles.js      exports VehicleController (CRUD + migration)
 js/app.js           imports all above; boots FindMyCarApp
 ```
 
@@ -185,24 +197,49 @@ export const CFG = Object.freeze({
 4. Add `'./js/mymodule.js'` to `STATIC_ASSETS` in `sw.js`
 5. Bump `CACHE_NAME` in `sw.js`
 
+## Testing
+
+```bash
+# Install dependencies (first time)
+npm install
+
+# Run unit tests (Vitest)
+npm test
+
+# Run unit tests in watch mode
+npm run test:watch
+
+# Run e2e tests (Playwright — requires a running server)
+npm run test:e2e
+```
+
+Unit tests run in jsdom and cover `utils.js`, `store.js`, and `vehicles.js`.  
+E2E tests start a Python HTTP server automatically and test the running app.
+
 ## Debugging
 
 `#state` is a private field and not accessible from the console directly. Use localStorage:
 
 ```javascript
-// In browser console:
-JSON.parse(localStorage.getItem('fmc_current_v1'))   // current parking
-JSON.parse(localStorage.getItem('fmc_history_v1'))   // history array
-localStorage                                         // all keys
+// In browser console (v1.2.0+ — vehicle-keyed storage):
+JSON.parse(localStorage.getItem('fmc_vehicles_v1'))       // all vehicles
+localStorage.getItem('fmc_active_v1')                     // active vehicle id
 
-// Force inject a test parking (bypasses GPS):
-localStorage.setItem('fmc_current_v1', JSON.stringify({
+const id = localStorage.getItem('fmc_active_v1');
+JSON.parse(localStorage.getItem('fmc_cur_' + id))         // current parking
+JSON.parse(localStorage.getItem('fmc_hist_' + id))        // history array
+
+// Force inject a test vehicle + parking (bypasses GPS):
+const vid = 'test-vehicle';
+localStorage.setItem('fmc_vehicles_v1', JSON.stringify([{ id: vid, name: 'רכב בדיקה', icon: '🚗' }]));
+localStorage.setItem('fmc_active_v1', vid);
+localStorage.setItem('fmc_cur_' + vid, JSON.stringify({
   id: 'test', timestamp: new Date().toISOString(),
   location: { lat: 32.0853, lng: 34.7818, accuracy: 10 },
   address: { display: 'דיזנגוף 50, תל אביב', street: 'דיזנגוף', houseNumber: '50', city: 'תל אביב', neighborhood: null },
   description: null, photo: null, voice: null, voiceDuration: 0
 }));
-location.reload(); // reload to pick up injected data
+location.reload();
 ```
 
 ## Browser Compatibility

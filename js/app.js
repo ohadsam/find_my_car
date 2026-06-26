@@ -7,6 +7,7 @@ import { CameraController } from './camera.js';
 import { VoiceController } from './voice.js';
 import { UIController } from './ui.js';
 import { ReturnModal } from './return-modal.js';
+import { VehicleController } from './vehicles.js';
 
 class FindMyCarApp {
   #state = {
@@ -20,6 +21,10 @@ class FindMyCarApp {
     installPrompt:   null,
     activeNavTarget: null,
     detailItemId:    null,
+    vehicles:        [],
+    activeVehicleId: null,
+    vehicleEditId:   null,
+    vehicleDeleteId: null,
   };
 
   #map         = new MapController();
@@ -37,6 +42,7 @@ class FindMyCarApp {
         try { await this.#voice.playVoice(src); }
         catch { this.#ui.showToast('לא ניתן להפעיל הקלטה', 'error'); }
       },
+      onVehicleSelect: id => this.#switchVehicle(id),
     });
 
     this.#returnModal = new ReturnModal({
@@ -47,13 +53,20 @@ class FindMyCarApp {
     this.#init();
   }
 
+  // ── VEHICLE STORAGE HELPERS ───────────────────────────────────
+  get #currentKey()  { return CFG.keys.curPrefix  + this.#state.activeVehicleId; }
+  get #historyKey()  { return CFG.keys.histPrefix + this.#state.activeVehicleId; }
+
   async #init() {
     this.#fixVH();
     window.addEventListener('resize', () => this.#fixVH());
 
-    this.#state.current = Store.get(CFG.keys.current);
-    this.#state.history = Store.get(CFG.keys.history, []);
-    this.#state.theme   = Store.get(CFG.keys.theme, 'dark');
+    VehicleController.migrate();
+    this.#state.vehicles        = VehicleController.getAll();
+    this.#state.activeVehicleId = VehicleController.getActiveId();
+    this.#state.current         = VehicleController.getCurrent(this.#state.activeVehicleId);
+    this.#state.history         = VehicleController.getHistory(this.#state.activeVehicleId);
+    this.#state.theme            = this.#getTheme();
 
     this.#ui.applyTheme(this.#state.theme);
 
@@ -80,7 +93,8 @@ class FindMyCarApp {
     if (this.#state.current) this.#startTimer();
 
     if (this.#state.current) {
-      setTimeout(() => this.#returnModal.show(this.#state.current), 1200);
+      const v = VehicleController.getById(this.#state.activeVehicleId);
+      setTimeout(() => this.#returnModal.show(this.#state.current, v?.name), 1200);
     }
 
     const params = new URLSearchParams(window.location.search);
@@ -89,13 +103,17 @@ class FindMyCarApp {
     }
   }
 
+  #getTheme() {
+    return Store.get(CFG.keys.theme, 'dark');
+  }
+
   #fixVH() {
     document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
   }
 
   // ── EVENTS ────────────────────────────────────────────────────
   #bindEvents() {
-    document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
+    document.querySelectorAll('.bottom-nav .nav-btn[data-view]').forEach(btn => {
       btn.addEventListener('click', () => this.#showView(btn.dataset.view));
     });
 
@@ -106,6 +124,7 @@ class FindMyCarApp {
 
     Utils.el('navigateBtn')?.addEventListener('click',     () => this.#openNavModal(this.#state.current));
     Utils.el('shareBtn')?.addEventListener('click',        () => this.#shareParking(this.#state.current));
+    Utils.el('whatsappBtn')?.addEventListener('click',     () => this.#openWhatsAppModal());
     Utils.el('resetParkingBtn')?.addEventListener('click', () => this.#ui.openModal('resetModal'));
 
     Utils.el('confirmResetBtn')?.addEventListener('click', () => {
@@ -149,6 +168,14 @@ class FindMyCarApp {
     Utils.el('openWazeBtn')?.addEventListener('click',       () => this.#navOpen('waze'));
     Utils.el('openGoogleMapsBtn')?.addEventListener('click', () => this.#navOpen('google'));
     Utils.el('openAppleMapsBtn')?.addEventListener('click',  () => this.#navOpen('apple'));
+
+    // WhatsApp modal
+    Utils.el('waSendBtn')?.addEventListener('click', () => this.#executeWhatsAppShare());
+
+    // Vehicle settings
+    Utils.el('addVehicleBtn')?.addEventListener('click', () => this.#openVehicleModal(null));
+    Utils.el('saveVehicleBtn')?.addEventListener('click', () => this.#saveVehicle());
+    Utils.el('confirmVehicleDeleteBtn')?.addEventListener('click', () => this.#confirmDeleteVehicle());
 
     // Global close handler (data-close attribute on backdrops and close buttons)
     document.addEventListener('click', e => {
@@ -220,7 +247,7 @@ class FindMyCarApp {
       if (!this.#state.current || this.#state.current.id !== p.id) return;
       if (addr) {
         this.#state.current.address = addr;
-        Store.set(CFG.keys.current, this.#state.current);
+        VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
         this.#ui.updateAddress(this.#state.current);
         this.#map.updateParkingMarkerPopup(addr);
       } else {
@@ -265,7 +292,7 @@ class FindMyCarApp {
     };
 
     this.#state.current = parking;
-    Store.set(CFG.keys.current, parking);
+    VehicleController.setCurrent(this.#state.activeVehicleId, parking);
 
     this.#map.addParkingMarker(loc.lat, loc.lng, null);
     this.#map.flyTo(loc.lat, loc.lng, 17);
@@ -276,7 +303,7 @@ class FindMyCarApp {
     reverseGeocode(loc.lat, loc.lng).then(addr => {
       if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
       this.#state.current.address = addr;
-      Store.set(CFG.keys.current, this.#state.current);
+      VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
       this.#ui.updateAddress(this.#state.current);
       this.#map.updateParkingMarkerPopup(addr);
     });
@@ -289,7 +316,7 @@ class FindMyCarApp {
       const loc = await this.#getCurrentLocation();
       this.#state.current.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy || 0 };
       this.#state.current.address  = null;
-      Store.set(CFG.keys.current, this.#state.current);
+      VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
 
       this.#map.addParkingMarker(loc.lat, loc.lng, null);
       this.#map.flyTo(loc.lat, loc.lng, 17);
@@ -304,7 +331,7 @@ class FindMyCarApp {
       reverseGeocode(loc.lat, loc.lng).then(addr => {
         if (!addr || !this.#state.current) return;
         this.#state.current.address = addr;
-        Store.set(CFG.keys.current, this.#state.current);
+        VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
         this.#ui.updateAddress(this.#state.current);
         this.#map.updateParkingMarkerPopup(addr);
       });
@@ -317,7 +344,7 @@ class FindMyCarApp {
     if (!this.#state.current) return;
     this.#addToHistory(this.#state.current);
     this.#state.current = null;
-    Store.remove(CFG.keys.current);
+    VehicleController.removeCurrent(this.#state.activeVehicleId);
     this.#map.removeParkingMarker();
     this.#stopTimer();
     this.#ui.updateAll(this.#state);
@@ -330,7 +357,100 @@ class FindMyCarApp {
     if (this.#state.history.length > CFG.maxHistory) {
       this.#state.history = this.#state.history.slice(0, CFG.maxHistory);
     }
-    Store.set(CFG.keys.history, this.#state.history);
+    VehicleController.setHistory(this.#state.activeVehicleId, this.#state.history);
+  }
+
+  // ── VEHICLE MANAGEMENT ────────────────────────────────────────
+  #switchVehicle(id) {
+    if (id === this.#state.activeVehicleId) return;
+    this.#stopTimer();
+    this.#map.removeParkingMarker();
+
+    VehicleController.setActive(id);
+    this.#state.activeVehicleId = id;
+    this.#state.current         = VehicleController.getCurrent(id);
+    this.#state.history         = VehicleController.getHistory(id);
+
+    if (this.#state.current) {
+      this.#map.addParkingMarker(
+        this.#state.current.location.lat,
+        this.#state.current.location.lng,
+        this.#state.current.address
+      );
+      this.#map.flyTo(this.#state.current.location.lat, this.#state.current.location.lng, 15);
+      this.#startTimer();
+    }
+    this.#ui.updateAll(this.#state);
+    const v = VehicleController.getById(id);
+    this.#ui.showToast(`${v?.icon || '🚗'} עבר ל${v?.name || 'רכב'}`, 'info');
+  }
+
+  #openVehicleModal(vehicle) {
+    this.#state.vehicleEditId = vehicle ? vehicle.id : null;
+    const title = Utils.el('vehicleModalTitle');
+    if (title) title.textContent = vehicle ? 'ערוך רכב' : 'הוסף רכב';
+    this.#ui.populateVehicleModal(vehicle);
+    this.#ui.openModal('vehicleModal');
+  }
+
+  #saveVehicle() {
+    const { name, icon } = this.#ui.getVehicleModalValues();
+    if (!name) { this.#ui.showToast('יש להזין שם לרכב', 'warning'); return; }
+
+    if (this.#state.vehicleEditId) {
+      VehicleController.update(this.#state.vehicleEditId, name, icon);
+      this.#ui.showToast('✅ הרכב עודכן', 'success');
+    } else {
+      const v = VehicleController.add(name, icon);
+      if (!v) { this.#ui.showToast(`ניתן להוסיף עד ${CFG.maxVehicles} רכבים`, 'warning'); return; }
+      this.#ui.showToast(`${icon} ${name} נוסף!`, 'success');
+    }
+
+    this.#state.vehicles = VehicleController.getAll();
+    this.#closeModal('vehicleModal');
+    this.#ui.updateAll(this.#state);
+    this.#ui.renderSettingsView(this.#state, {
+      onEdit:   v => this.#openVehicleModal(v),
+      onDelete: (id, nm) => this.#openVehicleDeleteModal(id, nm),
+      onAdd:    () => this.#openVehicleModal(null),
+    });
+  }
+
+  #openVehicleDeleteModal(id, name) {
+    this.#state.vehicleDeleteId = id;
+    const desc = Utils.el('vehicleDeleteDesc');
+    if (desc) {
+      const nameEl = document.createElement('strong');
+      nameEl.textContent = name;
+      desc.innerHTML = '';
+      desc.appendChild(nameEl);
+      const txt = document.createTextNode(' — כל נתוני החניה יימחקו לצמיתות.');
+      desc.appendChild(txt);
+    }
+    this.#ui.openModal('vehicleDeleteModal');
+  }
+
+  #confirmDeleteVehicle() {
+    const id = this.#state.vehicleDeleteId;
+    if (!id) return;
+    const wasActive = id === this.#state.activeVehicleId;
+    const ok = VehicleController.remove(id);
+    if (!ok) { this.#ui.showToast('לא ניתן למחוק את הרכב האחרון', 'error'); return; }
+
+    this.#state.vehicles = VehicleController.getAll();
+    this.#closeModal('vehicleDeleteModal');
+
+    if (wasActive) {
+      const nextId = this.#state.vehicles[0]?.id;
+      if (nextId) this.#switchVehicle(nextId);
+    } else {
+      this.#ui.renderSettingsView(this.#state, {
+        onEdit:   v => this.#openVehicleModal(v),
+        onDelete: (delId, nm) => this.#openVehicleDeleteModal(delId, nm),
+        onAdd:    () => this.#openVehicleModal(null),
+      });
+    }
+    this.#ui.showToast('🗑️ הרכב נמחק', 'info');
   }
 
   // ── TIMER ─────────────────────────────────────────────────────
@@ -363,7 +483,7 @@ class FindMyCarApp {
     const photo = this.#camera.getPhoto();
     if (!photo || !this.#state.current) return;
     this.#state.current.photo = photo;
-    Store.set(CFG.keys.current, this.#state.current);
+    VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
     this.#closeModal('photoModal');
     this.#ui.renderAttachments(this.#state.current);
     this.#ui.updateMediaTiles(this.#state.current);
@@ -382,7 +502,7 @@ class FindMyCarApp {
     if (!voice || !this.#state.current) return;
     this.#state.current.voice         = voice;
     this.#state.current.voiceDuration = seconds;
-    Store.set(CFG.keys.current, this.#state.current);
+    VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
     this.#closeModal('voiceModal');
     this.#ui.renderAttachments(this.#state.current);
     this.#ui.updateMediaTiles(this.#state.current);
@@ -405,7 +525,7 @@ class FindMyCarApp {
     if (!input || !this.#state.current) return;
     const text = input.value.trim().slice(0, CFG.maxTextLen);
     this.#state.current.description = text || null;
-    Store.set(CFG.keys.current, this.#state.current);
+    VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
     this.#ui.updateDescription(this.#state.current);
     this.#ui.updateMediaTiles(this.#state.current);
     this.#ui.closeModal('textModal');
@@ -436,8 +556,9 @@ class FindMyCarApp {
     if (!parking?.location) return;
     const { lat, lng } = parking.location;
     const addrStr = normalizeAddress(parking.address) || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    const v = VehicleController.getById(this.#state.activeVehicleId);
     const text = [
-      '🚗 מיקום הרכב שלי:',
+      `${v?.icon || '🚗'} ${v?.name || 'הרכב'} - FindMyCar`,
       addrStr,
       parking.description ? `📝 ${parking.description}` : '',
       `⏰ ${Utils.formatDate(parking.timestamp)} ${Utils.formatTime(parking.timestamp)}`,
@@ -455,12 +576,61 @@ class FindMyCarApp {
     }
   }
 
+  // ── WHATSAPP SHARING ──────────────────────────────────────────
+  #openWhatsAppModal() {
+    if (!this.#state.current) { this.#ui.showToast('שמור חניה קודם', 'warning'); return; }
+    const v = VehicleController.getById(this.#state.activeVehicleId);
+    this.#ui.populateWhatsAppModal(this.#state.current, v?.name || 'הרכב');
+    this.#ui.openModal('whatsappModal');
+  }
+
+  async #executeWhatsAppShare() {
+    const p = this.#state.current;
+    if (!p) return;
+    const opts = this.#ui.getWhatsAppOptions();
+    const { lat, lng } = p.location;
+    const v = VehicleController.getById(this.#state.activeVehicleId);
+
+    const lines = [];
+    if (opts.includeVehicle) lines.push(`${v?.icon || '🚗'} ${v?.name || 'הרכב'} - FindMyCar`);
+    if (opts.includeAddress) {
+      const addr = normalizeAddress(p.address) || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      lines.push(`📍 ${addr}`);
+    }
+    if (opts.includeTime)    lines.push(`⏰ ${Utils.formatDate(p.timestamp)} ${Utils.formatTime(p.timestamp)}`);
+    if (opts.includeDesc && p.description)  lines.push(`📝 ${p.description}`);
+    if (opts.includeMapLink) lines.push(`🗺️ https://maps.google.com/maps?q=${lat},${lng}`);
+
+    const text = lines.join('\n');
+
+    this.#ui.closeModal('whatsappModal');
+
+    if (opts.includePhoto && p.photo) {
+      try {
+        const file = Utils.dataUrlToFile(p.photo, 'parking.jpg');
+        if (navigator.canShare?.({ files: [file] })) {
+          await navigator.share({ text, files: [file] });
+          return;
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          this.#ui.showToast('לא ניתן לשתף תמונה, שולח טקסט בלבד', 'info');
+        } else {
+          return;
+        }
+      }
+    }
+
+    // Text-only WhatsApp link
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  }
+
   // ── HISTORY ───────────────────────────────────────────────────
   #clearHistory() {
     if (!this.#state.history.length) return;
     if (!confirm(`למחוק ${this.#state.history.length} חניות מההיסטוריה?`)) return;
     this.#state.history = [];
-    Store.remove(CFG.keys.history);
+    VehicleController.setHistory(this.#state.activeVehicleId, []);
     this.#ui.updateHistoryView(this.#state);
     this.#ui.updateHistoryBadge(this.#state);
     this.#ui.showToast('🗑️ ההיסטוריה נמחקה', 'info');
@@ -468,7 +638,7 @@ class FindMyCarApp {
 
   #deleteHistoryItem(id) {
     this.#state.history = this.#state.history.filter(i => i.id !== id);
-    Store.set(CFG.keys.history, this.#state.history);
+    VehicleController.setHistory(this.#state.activeVehicleId, this.#state.history);
     this.#ui.updateHistoryView(this.#state);
     this.#ui.updateHistoryBadge(this.#state);
     this.#ui.showToast('🗑️ חניה נמחקה', 'info');
@@ -500,9 +670,10 @@ class FindMyCarApp {
 
   // ── MODALS ────────────────────────────────────────────────────
   #closeModal(id) {
-    if (id === 'photoModal')  this.#camera.close();
-    if (id === 'voiceModal')  this.#voice.close();
-    if (id === 'detailModal') this.#map.destroyDetailMap();
+    if (id === 'photoModal')        this.#camera.close();
+    if (id === 'voiceModal')        this.#voice.close();
+    if (id === 'detailModal')       this.#map.destroyDetailMap();
+    if (id === 'settingsView')      return; // views are not modals
     this.#ui.closeModal(id);
   }
 
@@ -510,7 +681,14 @@ class FindMyCarApp {
   #showView(viewId) {
     this.#state.currentView = viewId;
     this.#ui.showView(viewId, this.#map);
-    if (viewId === 'historyView') this.#ui.updateHistoryView(this.#state);
+    if (viewId === 'historyView')  this.#ui.updateHistoryView(this.#state);
+    if (viewId === 'settingsView') {
+      this.#ui.renderSettingsView(this.#state, {
+        onEdit:   v => this.#openVehicleModal(v),
+        onDelete: (id, nm) => this.#openVehicleDeleteModal(id, nm),
+        onAdd:    () => this.#openVehicleModal(null),
+      });
+    }
   }
 
   // ── THEME ─────────────────────────────────────────────────────

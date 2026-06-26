@@ -84,5 +84,14 @@ export const Utils = {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   },
 
+  dataUrlToFile(dataUrl, filename) {
+    const [header, b64] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const raw  = atob(b64);
+    const buf  = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+    return new File([buf], filename, { type: mime });
+  },
+
   el(id) { return document.getElementById(id); }
 };

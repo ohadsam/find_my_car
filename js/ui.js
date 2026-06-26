@@ -7,20 +7,190 @@ export class UIController {
   #onHistoryItemNav;
   #onPhotoClick;
   #onVoiceClick;
+  #onVehicleSelect;
 
-  constructor({ onHistoryItemClick, onHistoryItemNav, onPhotoClick, onVoiceClick }) {
+  constructor({ onHistoryItemClick, onHistoryItemNav, onPhotoClick, onVoiceClick, onVehicleSelect }) {
     this.#onHistoryItemClick = onHistoryItemClick;
     this.#onHistoryItemNav   = onHistoryItemNav;
     this.#onPhotoClick       = onPhotoClick;
     this.#onVoiceClick       = onVoiceClick;
+    this.#onVehicleSelect    = onVehicleSelect;
   }
 
   // ── FULL REFRESH ──────────────────────────────────────────────
   updateAll(state) {
     this.updateStatusChip(state);
+    this.renderVehicleSelector(state);
     this.updateHomeView(state);
     this.updateHistoryView(state);
     this.updateHistoryBadge(state);
+  }
+
+  // ── VEHICLE SELECTOR ──────────────────────────────────────────
+  renderVehicleSelector(state) {
+    const row = Utils.el('vehicleSelectorRow');
+    if (!row) return;
+    const vehicles = state.vehicles || [];
+    if (vehicles.length < 2) { row.style.display = 'none'; return; }
+
+    row.style.display = '';
+    row.innerHTML = '';
+    vehicles.forEach(v => {
+      const chip = document.createElement('button');
+      chip.className = 'vehicle-chip' + (v.id === state.activeVehicleId ? ' active' : '');
+      chip.setAttribute('aria-pressed', v.id === state.activeVehicleId ? 'true' : 'false');
+      const iconSpan = document.createElement('span');
+      iconSpan.textContent = v.icon;
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = v.name;
+      chip.appendChild(iconSpan);
+      chip.appendChild(nameSpan);
+      chip.addEventListener('click', () => this.#onVehicleSelect?.(v.id));
+      row.appendChild(chip);
+    });
+  }
+
+  // ── SETTINGS VIEW ─────────────────────────────────────────────
+  renderSettingsView(state, { onEdit, onDelete, onAdd }) {
+    const list = Utils.el('vehiclesList');
+    if (!list) return;
+    list.innerHTML = '';
+    const vehicles = state.vehicles || [];
+    vehicles.forEach(v => {
+      const item = document.createElement('div');
+      item.className = 'vehicle-list-item';
+
+      const info = document.createElement('div');
+      info.className = 'vehicle-list-info';
+      const iconEl = document.createElement('span');
+      iconEl.className = 'vehicle-list-icon';
+      iconEl.textContent = v.icon;
+      const nameEl = document.createElement('span');
+      nameEl.className = 'vehicle-list-name';
+      nameEl.textContent = v.name;
+      info.appendChild(iconEl);
+      info.appendChild(nameEl);
+      if (v.id === state.activeVehicleId) {
+        const badge = document.createElement('span');
+        badge.className = 'vehicle-active-badge';
+        badge.textContent = 'פעיל';
+        info.appendChild(badge);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'vehicle-list-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'vehicle-action-btn edit-btn';
+      editBtn.textContent = '✏️';
+      editBtn.setAttribute('aria-label', `ערוך ${v.name}`);
+      editBtn.addEventListener('click', () => onEdit?.(v));
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'vehicle-action-btn delete-btn';
+      delBtn.textContent = '🗑️';
+      delBtn.setAttribute('aria-label', `מחק ${v.name}`);
+      delBtn.disabled = vehicles.length <= 1;
+      delBtn.addEventListener('click', () => onDelete?.(v.id, v.name));
+
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
+      item.appendChild(info);
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+
+    const addBtn = Utils.el('addVehicleBtn');
+    if (addBtn) addBtn.disabled = vehicles.length >= CFG.maxVehicles;
+  }
+
+  // ── VEHICLE MODAL ─────────────────────────────────────────────
+  populateVehicleModal(vehicle) {
+    const nameInput = Utils.el('vehicleNameInput');
+    if (nameInput) nameInput.value = vehicle ? vehicle.name : '';
+
+    const grid = Utils.el('vehicleIconGrid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    const selectedIcon = vehicle ? vehicle.icon : CFG.vehicleIcons[0];
+    CFG.vehicleIcons.forEach(icon => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'icon-pick-btn' + (icon === selectedIcon ? ' selected' : '');
+      btn.textContent = icon;
+      btn.setAttribute('aria-pressed', icon === selectedIcon ? 'true' : 'false');
+      btn.addEventListener('click', () => {
+        grid.querySelectorAll('.icon-pick-btn').forEach(b => {
+          b.classList.remove('selected');
+          b.setAttribute('aria-pressed', 'false');
+        });
+        btn.classList.add('selected');
+        btn.setAttribute('aria-pressed', 'true');
+      });
+      grid.appendChild(btn);
+    });
+  }
+
+  getVehicleModalValues() {
+    const name = (Utils.el('vehicleNameInput')?.value || '').trim();
+    const selected = Utils.el('vehicleIconGrid')?.querySelector('.icon-pick-btn.selected');
+    const icon = selected ? selected.textContent : CFG.vehicleIcons[0];
+    return { name, icon };
+  }
+
+  // ── WHATSAPP MODAL ────────────────────────────────────────────
+  populateWhatsAppModal(parking, vehicleName) {
+    const list = Utils.el('waOptionsList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const addrText = normalizeAddress(parking.address) ||
+      `${parking.location.lat.toFixed(5)}, ${parking.location.lng.toFixed(5)}`;
+    const mapUrl = `https://maps.google.com/maps?q=${parking.location.lat},${parking.location.lng}`;
+
+    const options = [
+      { id: 'wa_vehicle',  label: `${vehicleName || 'הרכב'} 🚗`,      checked: true, always: true },
+      { id: 'wa_address',  label: `כתובת: ${addrText}`,               checked: true, always: true },
+      { id: 'wa_maplink',  label: 'קישור למפה 🗺️',                   checked: true, always: true },
+      { id: 'wa_time',     label: 'שעת חניה ⏰',                      checked: true, always: true },
+      { id: 'wa_desc',     label: `תיאור: ${parking.description}`,     checked: true, always: false, show: !!parking.description },
+      { id: 'wa_photo',    label: 'תמונה 📷',                         checked: true, always: false, show: !!parking.photo },
+    ];
+
+    options.forEach(opt => {
+      if (!opt.always && !opt.show) return;
+      const row = document.createElement('label');
+      row.className = 'wa-option-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = opt.id;
+      cb.checked = opt.checked;
+      const span = document.createElement('span');
+      span.textContent = opt.label;
+      row.appendChild(cb);
+      row.appendChild(span);
+      list.appendChild(row);
+    });
+
+    const note = Utils.el('waNote');
+    if (note) {
+      if (parking.photo) {
+        note.textContent = 'שיתוף תמונה ייפתח את תפריט השיתוף של המכשיר';
+      } else {
+        note.textContent = '';
+      }
+    }
+  }
+
+  getWhatsAppOptions() {
+    return {
+      includeVehicle:  Utils.el('wa_vehicle')?.checked  ?? true,
+      includeAddress:  Utils.el('wa_address')?.checked  ?? true,
+      includeMapLink:  Utils.el('wa_maplink')?.checked  ?? true,
+      includeTime:     Utils.el('wa_time')?.checked     ?? true,
+      includeDesc:     Utils.el('wa_desc')?.checked     ?? false,
+      includePhoto:    Utils.el('wa_photo')?.checked    ?? false,
+    };
   }
 
   // ── STATUS CHIP ───────────────────────────────────────────────
@@ -319,10 +489,10 @@ export class UIController {
   // ── VIEWS ─────────────────────────────────────────────────────
   showView(viewId, mapCtrl) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.bottom-nav .nav-btn').forEach(b => b.classList.remove('active'));
 
     Utils.el(viewId)?.classList.add('active');
-    document.querySelector(`.nav-btn[data-view="${viewId}"]`)?.classList.add('active');
+    document.querySelector(`.bottom-nav .nav-btn[data-view="${viewId}"]`)?.classList.add('active');
 
     if (viewId === 'homeView' && mapCtrl) {
       setTimeout(() => mapCtrl.invalidateSize(), 50);

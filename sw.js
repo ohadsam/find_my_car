@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME      = 'findmycar-v1.1.0';
+const CACHE_NAME      = 'findmycar-v1.2.0';
 const TILES_CACHE     = 'findmycar-tiles-v1.0.0';
 const STATIC_ASSETS = [
   './',
@@ -16,6 +16,7 @@ const STATIC_ASSETS = [
   './js/voice.js',
   './js/ui.js',
   './js/return-modal.js',
+  './js/vehicles.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-192.png',

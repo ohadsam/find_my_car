@@ -5,6 +5,45 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.2.0] — 2026-06-26
+
+### ✨ New Features
+
+#### Multi-Vehicle Support
+- **Vehicle management** — Add, edit, and delete vehicles from a dedicated "Vehicles" settings screen (bottom nav)
+- **Vehicle selector** — Horizontal chip row in the home view (shown when 2+ vehicles are configured)
+- **Per-vehicle parking data** — Each vehicle maintains its own active parking and history
+- **Storage migration** — On first load, existing data is automatically migrated to the default vehicle (`הרכב שלי`)
+- Maximum 5 vehicles; up to 30 characters per vehicle name; 8 icon choices
+- Return-to-car modal now shows the specific vehicle's name
+
+#### WhatsApp Sharing
+- **WhatsApp button** in the parking action grid
+- **Content selection modal** — Choose what to include: vehicle name, address, time, description, map link, and photo
+- **Smart file sharing** — If a photo is selected, uses the native `navigator.share({ files })` API for the system share sheet; falls back to `wa.me/?text=…` for text-only or when the File Share API is unavailable
+
+#### Tests
+- **33 unit tests** (Vitest + jsdom):
+  - `tests/unit/utils.test.js` — UUID, escHtml, Haversine distance, dataUrlToFile
+  - `tests/unit/store.test.js` — localStorage CRUD
+  - `tests/unit/vehicles.test.js` — VehicleController full lifecycle
+- **E2E tests** (Playwright + Chromium): `tests/e2e/app.spec.js` — smoke tests for all views and key interactions
+- `package.json` with Vitest + Playwright devDependencies
+
+### 🏗️ Architecture
+- New `js/vehicles.js` module — `VehicleController` with CRUD + localStorage migration
+- `js/config.js` — vehicle keys, `maxVehicles`, `maxVehicleNameLen`, `vehicleIcons`
+- `js/utils.js` — added `dataUrlToFile()` for Web Share API file conversion
+- `js/app.js` — vehicle state management, `#currentKey`/`#historyKey` computed getters, vehicle lifecycle methods, WhatsApp sharing
+- `js/ui.js` — `renderVehicleSelector()`, `renderSettingsView()`, `populateVehicleModal()`, `getVehicleModalValues()`, `populateWhatsAppModal()`, `getWhatsAppOptions()`
+- `js/return-modal.js` — `show(parking, vehicleName)` for vehicle-specific subtitle
+
+### 🔧 Service Worker
+- `CACHE_NAME` bumped to `findmycar-v1.2.0`
+- `./js/vehicles.js` added to `STATIC_ASSETS`
+
+---
+
 ## [1.1.0] — 2026-06-25
 
 ### ✨ New Features

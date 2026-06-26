@@ -21,9 +21,12 @@ export class ReturnModal {
     });
   }
 
-  show(parking) {
+  show(parking, vehicleName) {
     const modal = Utils.el('returnModal');
     if (!modal) return;
+
+    const subtitleEl = Utils.el('returnModalSubtitle');
+    if (subtitleEl) subtitleEl.textContent = vehicleName ? `${vehicleName} ממתין לך` : 'הרכב שלך ממתין לך';
 
     const elapsedEl = Utils.el('returnElapsed');
     if (elapsedEl) elapsedEl.textContent = Utils.formatElapsed(parking.timestamp);

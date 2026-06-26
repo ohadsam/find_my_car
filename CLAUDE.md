@@ -14,27 +14,43 @@ FindMyCar is a Hebrew-language Progressive Web App (PWA) for saving and finding 
 |------|---------|
 | `index.html` | Complete app HTML — all views, modals, and components inline |
 | `style.css` | Full stylesheet with CSS variables, dark/light themes, RTL layout |
-| `js/config.js` | Frozen `CFG` constants (versions, keys, limits, URLs) |
+| `js/config.js` | Frozen `CFG` constants (versions, keys, limits, vehicleIcons, URLs) |
 | `js/store.js` | `Store` — localStorage CRUD with JSON parsing |
-| `js/utils.js` | `Utils` — pure helpers: uuid, formatters, Haversine, image compression, escHtml |
+| `js/utils.js` | `Utils` — pure helpers: uuid, formatters, Haversine, image compression, escHtml, dataUrlToFile |
 | `js/geocoder.js` | `reverseGeocode()` → structured `AddressObj`; `normalizeAddress()` |
 | `js/map.js` | `MapController` — Leaflet map + detail mini-map lifecycle |
 | `js/camera.js` | `CameraController` — getUserMedia, capture, file fallback |
 | `js/voice.js` | `VoiceController` — MediaRecorder, blob URL lifecycle |
-| `js/ui.js` | `UIController` — DOM rendering, modals, toasts, theme |
+| `js/ui.js` | `UIController` — DOM rendering, modals, toasts, theme, vehicle selector, settings view |
 | `js/return-modal.js` | `ReturnModal` — auto-show return-to-car flow on app entry |
-| `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle |
+| `js/vehicles.js` | `VehicleController` — vehicle CRUD + localStorage migration |
+| `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing |
 | `sw.js` | Service Worker — cache strategies for app shell, tiles, Leaflet CDN |
 | `manifest.json` | PWA manifest — Hebrew locale, icons, shortcuts |
+| `package.json` | devDependencies: Vitest, Playwright |
+| `vitest.config.js` | Unit test config (jsdom environment) |
+| `playwright.config.js` | E2E test config (Chromium, Python HTTP server) |
+| `tests/unit/` | Vitest unit tests for utils, store, vehicles |
+| `tests/e2e/` | Playwright e2e smoke tests |
 
-**Module DAG (no circular imports):** `config` → `utils/geocoder/store` → `map/camera/voice/ui/return-modal` → `app`
+**Module DAG (no circular imports):** `config` → `utils/geocoder/store` → `map/camera/voice/ui/return-modal/vehicles` → `app`
 
 Loaded via `<script type="module" src="js/app.js">` with `<link rel="modulepreload">` for all modules.
 
 ## Data Model
 
 ```javascript
-// Current parking (localStorage key: fmc_current_v1)
+// Vehicle (localStorage key: fmc_vehicles_v1 → array)
+{
+  id:   "string (uuid)",
+  name: "string (max 30 chars)",
+  icon: "emoji string",
+}
+
+// Active vehicle ID (localStorage key: fmc_active_v1)
+"vehicleId"
+
+// Current parking per vehicle (localStorage key: fmc_cur_{vehicleId})
 {
   id: "string (uuid)",
   timestamp: "ISO 8601 string",
@@ -55,8 +71,10 @@ Loaded via `<script type="module" src="js/app.js">` with `<link rel="moduleprelo
   neighborhood:string|null,
 }
 
-// History (localStorage key: fmc_history_v1)
+// History per vehicle (localStorage key: fmc_hist_{vehicleId})
 // Array of parking objects (max 30), most recent first
+
+// Legacy keys (fmc_current_v1, fmc_history_v1) migrated on first v1.2.0 load
 ```
 
 ## App State (`FindMyCarApp.#state`)
@@ -65,16 +83,20 @@ Private field — not accessible from console. Internal shape:
 
 ```javascript
 {
-  current:         Parking | null,   // active parking session
-  history:         Parking[],        // past sessions (max 30)
+  current:         Parking | null,   // active parking session (active vehicle)
+  history:         Parking[],        // past sessions (max 30, active vehicle)
   theme:           'dark' | 'light',
-  currentView:     'homeView' | 'historyView',
+  currentView:     'homeView' | 'historyView' | 'settingsView',
   userPos:         {lat, lng, accuracy} | null,
   watchId:         number | null,    // geolocation.watchPosition id
   timerIntervalId: number | null,    // parking elapsed timer
   installPrompt:   BeforeInstallPromptEvent | null,
   activeNavTarget: Parking | null,   // for nav/detail modals
   detailItemId:    string | null,    // for detail delete
+  vehicles:        Vehicle[],        // all vehicles
+  activeVehicleId: string | null,    // currently selected vehicle id
+  vehicleEditId:   string | null,    // vehicle being edited (null = creating)
+  vehicleDeleteId: string | null,    // vehicle pending delete confirm
 }
 ```
 

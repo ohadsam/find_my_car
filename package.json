@@ -1,0 +1,16 @@
+{
+  "name": "find-my-car",
+  "version": "1.2.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "jsdom": "^29.1.1",
+    "vitest": "^2.0.0"
+  }
+}
