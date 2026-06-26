@@ -70,6 +70,10 @@ class FindMyCarApp {
 
     this.#ui.applyTheme(this.#state.theme);
 
+    // Restore map collapsed state before init
+    const mapCollapsed = Store.get(CFG.keys.mapCollapsed, false);
+    if (mapCollapsed) this.#setMapCollapsed(true, false);
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW reg failed', e));
     }
@@ -77,7 +81,10 @@ class FindMyCarApp {
     this.#bindEvents();
     this.#returnModal.bindEvents();
 
-    setTimeout(() => this.#map.init(this.#state.current), 100);
+    // Init map; after loading screen fades, invalidate size to handle any CSS transition artifacts
+    setTimeout(() => {
+      this.#map.init(this.#state.current);
+    }, 100);
 
     this.#ui.updateAll(this.#state);
 
@@ -88,13 +95,32 @@ class FindMyCarApp {
     this.#startLocationWatch();
     this.#setupPWA();
 
-    setTimeout(() => Utils.el('loadingScreen')?.classList.add('fade-out'), 1000);
+    setTimeout(() => {
+      Utils.el('loadingScreen')?.classList.add('fade-out');
+      // Invalidate map size after loading screen CSS transition (500ms) completes
+      setTimeout(() => this.#map.invalidateSize(), 600);
+    }, 1000);
 
     if (this.#state.current) this.#startTimer();
 
     if (this.#state.current) {
       const v = VehicleController.getById(this.#state.activeVehicleId);
       setTimeout(() => this.#returnModal.show(this.#state.current, v?.name), 1200);
+    }
+
+    // Show what's new whenever this version hasn't been seen yet (first install or upgrade)
+    const seenVersion = Store.get(CFG.keys.seenVersion, null);
+    if (seenVersion !== CFG.version) {
+      if (!this.#state.current) {
+        // No active parking — safe to show without conflicting with returnModal
+        setTimeout(() => {
+          this.#ui.showWhatsNew(CFG.changelog[0]);
+          Store.set(CFG.keys.seenVersion, CFG.version);
+        }, 1800);
+      } else {
+        // Active parking will trigger returnModal — skip popup, mark as seen
+        Store.set(CFG.keys.seenVersion, CFG.version);
+      }
     }
 
     const params = new URLSearchParams(window.location.search);
@@ -134,6 +160,14 @@ class FindMyCarApp {
 
     Utils.el('centerParkingBtn')?.addEventListener('click', () => this.#centerOnParking());
     Utils.el('centerUserBtn')?.addEventListener('click',    () => this.#centerOnUser());
+    Utils.el('mapCollapseBtn')?.addEventListener('click',   () => this.#toggleMapCollapse());
+    Utils.el('reloadAppBtn')?.addEventListener('click',     () => this.#reloadApp());
+
+    const vBtn = Utils.el('versionTagBtn');
+    if (vBtn) {
+      vBtn.textContent = `v${CFG.version}`;
+      vBtn.addEventListener('click', () => this.#ui.showWhatsNew(CFG.changelog[0]));
+    }
 
     Utils.el('addPhotoBtn')?.addEventListener('click',        () => this.#openCameraModal());
     Utils.el('addVoiceBtn')?.addEventListener('click',        () => this.#openVoiceModal());
@@ -194,6 +228,36 @@ class FindMyCarApp {
         if (open) this.#closeModal(open.id);
       }
     });
+  }
+
+  // ── MAP COLLAPSE ──────────────────────────────────────────────
+  #toggleMapCollapse() {
+    const collapsed = !Store.get(CFG.keys.mapCollapsed, false);
+    this.#setMapCollapsed(collapsed, true);
+  }
+
+  #setMapCollapsed(collapsed, animate) {
+    Store.set(CFG.keys.mapCollapsed, collapsed);
+    const wrapper = Utils.el('mapWrapper');
+    const label   = Utils.el('mapToggleText');
+    const btn     = Utils.el('mapCollapseBtn');
+    if (!wrapper) return;
+    if (!animate) wrapper.classList.add('no-transition');
+    if (collapsed) {
+      wrapper.classList.add('map-collapsed');
+      if (btn)     btn.setAttribute('aria-label', 'הצג מפה');
+      if (label)   label.textContent = 'הצג מפה';
+    } else {
+      wrapper.classList.remove('map-collapsed');
+      if (btn)     btn.setAttribute('aria-label', 'הסתר מפה');
+      if (label)   label.textContent = 'הסתר מפה';
+      setTimeout(() => this.#map.invalidateSize(), 380);
+    }
+    if (!animate) {
+      // Force a reflow then re-enable transitions
+      wrapper.getBoundingClientRect();
+      wrapper.classList.remove('no-transition');
+    }
   }
 
   // ── MAP ───────────────────────────────────────────────────────
@@ -409,11 +473,7 @@ class FindMyCarApp {
     this.#state.vehicles = VehicleController.getAll();
     this.#closeModal('vehicleModal');
     this.#ui.updateAll(this.#state);
-    this.#ui.renderSettingsView(this.#state, {
-      onEdit:   v => this.#openVehicleModal(v),
-      onDelete: (id, nm) => this.#openVehicleDeleteModal(id, nm),
-      onAdd:    () => this.#openVehicleModal(null),
-    });
+    this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
   }
 
   #openVehicleDeleteModal(id, name) {
@@ -443,14 +503,45 @@ class FindMyCarApp {
     if (wasActive) {
       const nextId = this.#state.vehicles[0]?.id;
       if (nextId) this.#switchVehicle(nextId);
-    } else {
-      this.#ui.renderSettingsView(this.#state, {
-        onEdit:   v => this.#openVehicleModal(v),
-        onDelete: (delId, nm) => this.#openVehicleDeleteModal(delId, nm),
-        onAdd:    () => this.#openVehicleModal(null),
-      });
     }
+    this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
     this.#ui.showToast('🗑️ הרכב נמחק', 'info');
+  }
+
+  // Returns a callbacks object for renderSettingsView (DRY helper)
+  #settingsCbs() {
+    return {
+      onEdit:          v  => this.#openVehicleModal(v),
+      onDelete:        (id, nm) => this.#openVehicleDeleteModal(id, nm),
+      onAdd:           () => this.#openVehicleModal(null),
+      onClearParking:  id => this.#clearVehicleParking(id),
+      hasParking:      id => !!VehicleController.getCurrent(id),
+    };
+  }
+
+  #clearVehicleParking(vehicleId) {
+    const current = VehicleController.getCurrent(vehicleId);
+    if (!current) return;
+
+    // Move to history
+    const hist = VehicleController.getHistory(vehicleId);
+    hist.unshift({ ...current });
+    if (hist.length > CFG.maxHistory) hist.splice(CFG.maxHistory);
+    VehicleController.setHistory(vehicleId, hist);
+    VehicleController.removeCurrent(vehicleId);
+
+    const isActive = vehicleId === this.#state.activeVehicleId;
+    if (isActive) {
+      this.#state.current = null;
+      this.#state.history = hist;
+      this.#map.removeParkingMarker();
+      this.#stopTimer();
+      this.#ui.updateAll(this.#state);
+    }
+
+    this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
+    const v = VehicleController.getById(vehicleId);
+    this.#ui.showToast(`${v?.icon || '🚗'} החניה הועברה להיסטוריה`, 'info');
   }
 
   // ── TIMER ─────────────────────────────────────────────────────
@@ -683,11 +774,7 @@ class FindMyCarApp {
     this.#ui.showView(viewId, this.#map);
     if (viewId === 'historyView')  this.#ui.updateHistoryView(this.#state);
     if (viewId === 'settingsView') {
-      this.#ui.renderSettingsView(this.#state, {
-        onEdit:   v => this.#openVehicleModal(v),
-        onDelete: (id, nm) => this.#openVehicleDeleteModal(id, nm),
-        onAdd:    () => this.#openVehicleModal(null),
-      });
+      this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
     }
   }
 
@@ -701,6 +788,17 @@ class FindMyCarApp {
 
   // ── PWA ───────────────────────────────────────────────────────
   #setupPWA() {
+    if ('serviceWorker' in navigator) {
+      // Skip auto-reload if this page load was triggered by #reloadApp() to avoid double-reload
+      if (!sessionStorage.getItem('fmc_manual_reload')) {
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!refreshing) { refreshing = true; window.location.reload(); }
+        });
+      }
+      sessionStorage.removeItem('fmc_manual_reload');
+    }
+
     window.addEventListener('beforeinstallprompt', e => {
       e.preventDefault();
       this.#state.installPrompt = e;
@@ -720,6 +818,19 @@ class FindMyCarApp {
 
     window.addEventListener('online',  () => { Utils.el('offlineIndicator').style.display = 'none'; });
     window.addEventListener('offline', () => { Utils.el('offlineIndicator').style.display = ''; });
+  }
+
+  async #reloadApp() {
+    sessionStorage.setItem('fmc_manual_reload', '1');
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      const regs = await navigator.serviceWorker?.getRegistrations?.() ?? [];
+      await Promise.all(regs.map(r => r.unregister()));
+    } catch (e) {
+      console.warn('reloadApp cleanup:', e);
+    }
+    window.location.reload();
   }
 
   async #promptInstall() {

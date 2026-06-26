@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.2.0',
+  version: '1.3.0',
   keys: Object.freeze({
     theme:         'fmc_theme_v1',
     vehicles:      'fmc_vehicles_v1',
@@ -8,6 +8,8 @@ export const CFG = Object.freeze({
     histPrefix:    'fmc_hist_',
     legacyCurrent: 'fmc_current_v1',
     legacyHistory: 'fmc_history_v1',
+    seenVersion:   'fmc_seen_version_v1',
+    mapCollapsed:  'fmc_map_collapsed_v1',
   }),
   maxHistory:        30,
   maxImgWidth:       900,
@@ -21,4 +23,26 @@ export const CFG = Object.freeze({
   defaultCenter:     [31.7767, 35.2345],
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
+  changelog: Object.freeze([
+    Object.freeze({
+      version: '1.3.0',
+      date: '2026-06-26',
+      items: Object.freeze([
+        'מספר גרסה גלוי בכותרת האפליקציה',
+        'חלון "מה חדש" מוצג בכל עדכון',
+        'תיקון תצוגת מפה ואיתחול מחדש',
+        'כפתור הסתרת / הצגת המפה',
+        'ניקוי חניה נוכחית לפי רכב מתצוגת הרכבים',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.2.0',
+      date: '2026-06-25',
+      items: Object.freeze([
+        'תמיכה במספר רכבים (עד 5)',
+        'שיתוף ב-WhatsApp עם בחירת תוכן',
+        'חבילת בדיקות אוטומטיות (Vitest + Playwright)',
+      ]),
+    }),
+  ]),
 });

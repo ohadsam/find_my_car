@@ -5,6 +5,44 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.3.0] — 2026-06-26
+
+### ✨ New Features
+
+#### Version Display & What's New
+- **Version tag** — Version number (e.g. `v1.3.0`) shown as a tappable pill in the header
+- **What's New modal** — Automatically shown once per upgrade; also accessible by tapping the version tag
+- First-install users see no popup (only returning users on upgrade)
+
+#### Map Improvements
+- **Map fix** — Removed SRI `integrity` attributes from Leaflet CDN tags that caused load failures in proxy/CDN environments; map now reliably loads tiles
+- **Map collapse/expand** — Tap the bar at the bottom of the map to hide or show it; state is persisted across sessions
+- **invalidateSize on reveal** — Map tiles recalculate layout correctly after loading screen fade and after expand
+- **Internal invalidateSize** — Map self-recalculates after 400ms to handle any container size changes
+
+#### Vehicle Parking Management
+- **Clear parking per vehicle** — 🧹 button in the Vehicles settings view moves a vehicle's current parking to history without switching vehicles
+
+#### Load New Version Button
+- **"טען גרסה חדשה" button** — In the Vehicles settings view; clears all caches, unregisters the service worker, and reloads to pick up the latest deployed version
+- **Auto-reload on SW update** — App reloads automatically when a new service worker takes control
+
+### 🐛 Bug Fixes
+- Deleted active vehicle no longer stays visible in the settings list after deletion
+- What's New modal no longer conflicts with the return-to-car modal on upgrade
+- What's New now correctly shows for users upgrading from v1.2.0 (which never stored the seen-version key)
+
+### 🏗️ Architecture
+- `js/config.js` — `seenVersion` and `mapCollapsed` storage keys; `changelog` array (deeply frozen)
+- `js/app.js` — `#toggleMapCollapse`, `#setMapCollapsed`, `#clearVehicleParking`, `#settingsCbs` helpers
+- `js/ui.js` — `showWhatsNew(entry)` method; `renderSettingsView` now accepts `onClearParking` / `hasParking` callbacks
+- `style.css` — version-tag, map-toggle-bar/btn/chevron, vehicle-parking-indicator, vehicle-clear-btn, whats-new-list; map overlay color uses `--map-overlay-bg` CSS variable
+
+### 🔧 Service Worker
+- `CACHE_NAME` bumped to `findmycar-v1.3.0`
+
+---
+
 ## [1.2.0] — 2026-06-26
 
 ### ✨ New Features
