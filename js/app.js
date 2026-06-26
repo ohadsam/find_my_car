@@ -108,19 +108,19 @@ class FindMyCarApp {
       setTimeout(() => this.#returnModal.show(this.#state.current, v?.name), 1200);
     }
 
-    // Show what's new on upgrade (not on first install; not when returnModal will show)
+    // Show what's new whenever this version hasn't been seen yet (first install or upgrade)
     const seenVersion = Store.get(CFG.keys.seenVersion, null);
-    if (seenVersion !== null && seenVersion !== CFG.version) {
+    if (seenVersion !== CFG.version) {
       if (!this.#state.current) {
+        // No active parking — safe to show without conflicting with returnModal
         setTimeout(() => {
           this.#ui.showWhatsNew(CFG.changelog[0]);
           Store.set(CFG.keys.seenVersion, CFG.version);
         }, 1800);
       } else {
+        // Active parking will trigger returnModal — skip popup, mark as seen
         Store.set(CFG.keys.seenVersion, CFG.version);
       }
-    } else if (seenVersion === null) {
-      Store.set(CFG.keys.seenVersion, CFG.version);
     }
 
     const params = new URLSearchParams(window.location.search);
@@ -161,6 +161,7 @@ class FindMyCarApp {
     Utils.el('centerParkingBtn')?.addEventListener('click', () => this.#centerOnParking());
     Utils.el('centerUserBtn')?.addEventListener('click',    () => this.#centerOnUser());
     Utils.el('mapCollapseBtn')?.addEventListener('click',   () => this.#toggleMapCollapse());
+    Utils.el('reloadAppBtn')?.addEventListener('click',     () => this.#reloadApp());
 
     const vBtn = Utils.el('versionTagBtn');
     if (vBtn) {
@@ -787,6 +788,17 @@ class FindMyCarApp {
 
   // ── PWA ───────────────────────────────────────────────────────
   #setupPWA() {
+    if ('serviceWorker' in navigator) {
+      // Skip auto-reload if this page load was triggered by #reloadApp() to avoid double-reload
+      if (!sessionStorage.getItem('fmc_manual_reload')) {
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!refreshing) { refreshing = true; window.location.reload(); }
+        });
+      }
+      sessionStorage.removeItem('fmc_manual_reload');
+    }
+
     window.addEventListener('beforeinstallprompt', e => {
       e.preventDefault();
       this.#state.installPrompt = e;
@@ -806,6 +818,19 @@ class FindMyCarApp {
 
     window.addEventListener('online',  () => { Utils.el('offlineIndicator').style.display = 'none'; });
     window.addEventListener('offline', () => { Utils.el('offlineIndicator').style.display = ''; });
+  }
+
+  async #reloadApp() {
+    sessionStorage.setItem('fmc_manual_reload', '1');
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      const regs = await navigator.serviceWorker?.getRegistrations?.() ?? [];
+      await Promise.all(regs.map(r => r.unregister()));
+    } catch (e) {
+      console.warn('reloadApp cleanup:', e);
+    }
+    window.location.reload();
   }
 
   async #promptInstall() {

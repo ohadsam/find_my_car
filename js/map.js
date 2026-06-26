@@ -37,6 +37,9 @@ export class MapController {
         const el = document.getElementById('offlineIndicator');
         if (el) el.style.display = 'block';
       });
+
+      // Recalculate tile layout after container settles (handles loading-screen fade)
+      setTimeout(() => this.#map?.invalidateSize(), 400);
     } catch (e) {
       console.error('Map init failed', e);
     }

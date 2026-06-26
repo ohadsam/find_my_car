@@ -126,7 +126,7 @@ export class UIController {
     if (!entry) return;
     const { version, date, items } = entry;
     const title = Utils.el('whatsNewTitle');
-    if (title) title.textContent = `🎉 מה חדש בגרסא ${version}`;
+    if (title) title.textContent = `🎉 מה חדש בגרסה ${version}`;
 
     const body = Utils.el('whatsNewContent');
     if (!body) return;
