@@ -38,11 +38,11 @@ class FindMyCarApp {
       onHistoryItemClick: item => this.#openDetailModal(item),
       onHistoryItemNav:   item => this.#openNavModal(item),
       onPhotoClick:       src  => this.#camera.viewPhoto(src),
-      onVoiceClick:       async src => {
-        try { await this.#voice.playVoice(src); }
-        catch { this.#ui.showToast('לא ניתן להפעיל הקלטה', 'error'); }
-      },
-      onVehicleSelect: id => this.#switchVehicle(id),
+      onVehicleSelect:    id   => this.#switchVehicle(id),
+      onDeletePhoto:      ()   => this.#deletePhoto(),
+      onDeleteVoice:      ()   => this.#deleteVoice(),
+      onDeleteText:       ()   => this.#deleteText(),
+      onEditText:         ()   => this.#openTextModal(),
     });
 
     this.#returnModal = new ReturnModal({
@@ -623,10 +623,40 @@ class FindMyCarApp {
     const text = input.value.trim().slice(0, CFG.maxTextLen);
     this.#state.current.description = text || null;
     VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
-    this.#ui.updateDescription(this.#state.current);
+    this.#ui.renderAttachments(this.#state.current);
     this.#ui.updateMediaTiles(this.#state.current);
     this.#ui.closeModal('textModal');
     this.#ui.showToast(text ? '✅ תיאור נשמר!' : '🗑️ תיאור נמחק', 'success');
+  }
+
+  #deletePhoto() {
+    if (!this.#state.current) return;
+    if (!confirm('למחוק את התמונה?')) return;
+    this.#state.current.photo = null;
+    VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+    this.#ui.renderAttachments(this.#state.current);
+    this.#ui.updateMediaTiles(this.#state.current);
+    this.#ui.showToast('🗑️ תמונה נמחקה', 'info');
+  }
+
+  #deleteVoice() {
+    if (!this.#state.current) return;
+    if (!confirm('למחוק את ההקלטה?')) return;
+    this.#state.current.voice = null;
+    this.#state.current.voiceDuration = 0;
+    VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+    this.#ui.renderAttachments(this.#state.current);
+    this.#ui.updateMediaTiles(this.#state.current);
+    this.#ui.showToast('🗑️ הקלטה נמחקה', 'info');
+  }
+
+  #deleteText() {
+    if (!this.#state.current) return;
+    this.#state.current.description = null;
+    VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+    this.#ui.renderAttachments(this.#state.current);
+    this.#ui.updateMediaTiles(this.#state.current);
+    this.#ui.showToast('🗑️ תיאור נמחק', 'info');
   }
 
   // ── NAVIGATION & SHARING ──────────────────────────────────────

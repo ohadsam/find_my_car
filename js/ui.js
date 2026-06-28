@@ -6,15 +6,22 @@ export class UIController {
   #onHistoryItemClick;
   #onHistoryItemNav;
   #onPhotoClick;
-  #onVoiceClick;
   #onVehicleSelect;
+  #onDeletePhoto;
+  #onDeleteVoice;
+  #onDeleteText;
+  #onEditText;
 
-  constructor({ onHistoryItemClick, onHistoryItemNav, onPhotoClick, onVoiceClick, onVehicleSelect }) {
+  constructor({ onHistoryItemClick, onHistoryItemNav, onPhotoClick, onVehicleSelect,
+                onDeletePhoto, onDeleteVoice, onDeleteText, onEditText }) {
     this.#onHistoryItemClick = onHistoryItemClick;
     this.#onHistoryItemNav   = onHistoryItemNav;
     this.#onPhotoClick       = onPhotoClick;
-    this.#onVoiceClick       = onVoiceClick;
     this.#onVehicleSelect    = onVehicleSelect;
+    this.#onDeletePhoto      = onDeletePhoto;
+    this.#onDeleteVoice      = onDeleteVoice;
+    this.#onDeleteText       = onDeleteText;
+    this.#onEditText         = onEditText;
   }
 
   // ── FULL REFRESH ──────────────────────────────────────────────
@@ -322,7 +329,6 @@ export class UIController {
     if (timerEl) timerEl.textContent = Utils.formatDuration(p.timestamp);
 
     this.updateAddress(p);
-    this.updateDescription(p);
     this.renderAttachments(p);
     this.updateMediaTiles(p);
     if (state.userPos) this.updateDistance(state);
@@ -359,19 +365,6 @@ export class UIController {
     }
   }
 
-  // ── DESCRIPTION ───────────────────────────────────────────────
-  updateDescription(p) {
-    const row  = Utils.el('parkingDescRow');
-    const span = Utils.el('parkingDescDisplay');
-    if (!row || !span) return;
-    if (p.description) {
-      row.style.display = '';
-      span.textContent  = p.description;
-    } else {
-      row.style.display = 'none';
-    }
-  }
-
   // ── DISTANCE ──────────────────────────────────────────────────
   updateDistance(state) {
     if (!state.current || !state.userPos) return;
@@ -388,23 +381,101 @@ export class UIController {
   renderAttachments(p) {
     const container = Utils.el('parkingAttachments');
     if (!container) return;
+    const existingAudio = container.querySelector('audio');
+    if (existingAudio) { existingAudio.pause(); existingAudio.src = ''; }
     container.innerHTML = '';
     if (!p) return;
 
     if (p.photo) {
-      const chip = document.createElement('div');
-      chip.className = 'attachment-chip has-photo';
-      chip.innerHTML = `<img class="photo-thumb" src="${p.photo}" alt="תמונה"><span>📷 תמונה</span>`;
-      chip.addEventListener('click', () => this.#onPhotoClick?.(p.photo));
-      container.appendChild(chip);
+      const panel = document.createElement('div');
+      panel.className = 'media-panel media-panel-photo';
+      const header = document.createElement('div');
+      header.className = 'media-panel-header';
+      const label = document.createElement('span');
+      label.className = 'media-panel-label';
+      label.textContent = '📷 תמונה';
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'media-panel-delete-btn';
+      deleteBtn.textContent = '🗑️';
+      deleteBtn.setAttribute('aria-label', 'מחק תמונה');
+      deleteBtn.addEventListener('click', () => this.#onDeletePhoto?.());
+      header.appendChild(label);
+      header.appendChild(deleteBtn);
+      const img = document.createElement('img');
+      img.src = p.photo;
+      img.className = 'media-panel-photo-img';
+      img.alt = 'תמונת חניה';
+      img.addEventListener('click', () => this.#onPhotoClick?.(p.photo));
+      panel.appendChild(header);
+      panel.appendChild(img);
+      container.appendChild(panel);
     }
+
     if (p.voice) {
-      const chip = document.createElement('div');
-      chip.className = 'attachment-chip has-voice';
-      chip.innerHTML = `<span>🎙️</span><span>הקלטה קולית</span>`;
-      chip.addEventListener('click', () => this.#onVoiceClick?.(p.voice));
-      container.appendChild(chip);
+      const panel = document.createElement('div');
+      panel.className = 'media-panel media-panel-voice';
+      const header = document.createElement('div');
+      header.className = 'media-panel-header';
+      const label = document.createElement('span');
+      label.className = 'media-panel-label';
+      label.textContent = '🎙️ הקלטה קולית';
+      header.appendChild(label);
+      if (p.voiceDuration > 0) {
+        const dur = document.createElement('span');
+        dur.className = 'media-panel-duration';
+        const m = Math.floor(p.voiceDuration / 60);
+        const s = p.voiceDuration % 60;
+        dur.textContent = `${m}:${String(s).padStart(2, '0')}`;
+        header.appendChild(dur);
+      }
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'media-panel-delete-btn';
+      deleteBtn.textContent = '🗑️';
+      deleteBtn.setAttribute('aria-label', 'מחק הקלטה');
+      deleteBtn.addEventListener('click', () => this.#onDeleteVoice?.());
+      header.appendChild(deleteBtn);
+      const audio = document.createElement('audio');
+      audio.src = p.voice;
+      audio.setAttribute('controls', '');
+      audio.className = 'media-panel-audio';
+      panel.appendChild(header);
+      panel.appendChild(audio);
+      container.appendChild(panel);
     }
+
+    if (p.description) {
+      const panel = document.createElement('div');
+      panel.className = 'media-panel media-panel-text';
+      const header = document.createElement('div');
+      header.className = 'media-panel-header';
+      const label = document.createElement('span');
+      label.className = 'media-panel-label';
+      label.textContent = '✏️ תיאור';
+      const actions = document.createElement('div');
+      actions.className = 'media-panel-actions';
+      const editBtn = document.createElement('button');
+      editBtn.className = 'media-panel-edit-btn';
+      editBtn.setAttribute('aria-label', 'ערוך תיאור');
+      editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M11 4H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+      editBtn.addEventListener('click', () => this.#onEditText?.());
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'media-panel-delete-btn';
+      deleteBtn.setAttribute('aria-label', 'מחק תיאור');
+      deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
+      deleteBtn.addEventListener('click', () => this.#onDeleteText?.());
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+      header.appendChild(label);
+      header.appendChild(actions);
+      const textEl = document.createElement('p');
+      textEl.className = 'media-panel-text-content';
+      textEl.textContent = p.description;
+      panel.appendChild(header);
+      panel.appendChild(textEl);
+      container.appendChild(panel);
+    }
+
+    container.style.display = (p.photo || p.voice || p.description) ? '' : 'none';
   }
 
   updateMediaTiles(p) {

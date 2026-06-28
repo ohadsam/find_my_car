@@ -661,34 +661,77 @@ audio { width: 100%; }
   color: var(--text-primary);
 }
 
-/* Attachments */
-.parking-attachments {
+/* ── INLINE MEDIA PANELS ── */
+.parking-media {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 12px 0;
 }
-.attachment-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+.media-panel {
+  border-radius: var(--radius-md);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  font-size: 0.8rem;
+  overflow: hidden;
+}
+.media-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+.media-panel-label {
+  font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-secondary);
-  cursor: pointer;
-  transition: var(--transition);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  flex: 1;
 }
-.attachment-chip:active { background: var(--bg-card); }
-.attachment-chip.has-photo { border-color: rgba(91,139,245,0.4); color: var(--color-primary); }
-.attachment-chip.has-voice { border-color: rgba(0,212,170,0.4); color: var(--color-accent); }
-.photo-thumb {
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
+.media-panel-duration {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.media-panel-actions {
+  display: flex;
+  gap: 4px;
+}
+.media-panel-delete-btn,
+.media-panel-edit-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  line-height: 1;
+}
+.media-panel-delete-btn:hover { color: var(--color-danger); background: var(--color-danger-glow); }
+.media-panel-edit-btn:hover   { color: var(--color-primary); background: var(--color-primary-glow); }
+.media-panel-photo-img {
+  width: 100%;
+  display: block;
+  max-height: 220px;
   object-fit: cover;
+  cursor: pointer;
+}
+.media-panel-audio {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 0 12px 12px;
+}
+.media-panel-text-content {
+  margin: 0;
+  padding: 0 12px 12px;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Action buttons on card */
