@@ -25,34 +25,57 @@ export const VehicleController = {
 
   getById(id) { return this.getAll().find(v => v.id === id) || null; },
 
-  add(name, icon, plate, color) {
+  add(name, icon, plate, color, bluetoothDevice = null) {
     const vehicles = this.getAll();
     if (vehicles.length >= CFG.maxVehicles) return null;
     const v = {
-      id:    Utils.uuid(),
-      name:  (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב',
+      id:                  Utils.uuid(),
+      name:                (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב',
       icon,
-      plate: (plate || '').trim().slice(0, CFG.maxPlateLen) || null,
-      color: (color || '').trim().slice(0, CFG.maxColorLen) || null,
+      plate:               (plate || '').trim().slice(0, CFG.maxPlateLen) || null,
+      color:               (color || '').trim().slice(0, CFG.maxColorLen) || null,
+      bluetoothDevice:     bluetoothDevice || null,
+      bluetoothAutoEnd:    false,
+      bluetoothAutoStart:  false,
+      bluetoothStartPopup: true,
     };
     vehicles.push(v);
     Store.set(CFG.keys.vehicles, vehicles);
     return v;
   },
 
-  update(id, name, icon, plate, color) {
+  update(id, name, icon, plate, color, bluetoothDevice = null) {
     const vehicles = this.getAll();
     const idx = vehicles.findIndex(v => v.id === id);
     if (idx === -1) return false;
     vehicles[idx] = {
-      ...vehicles[idx],
-      name:  (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב',
+      bluetoothAutoEnd:    false,     // defaults for vehicles created before BT fields existed
+      bluetoothAutoStart:  false,
+      bluetoothStartPopup: true,
+      ...vehicles[idx],              // existing values take priority over defaults
+      name:            (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב',
       icon,
-      plate: (plate || '').trim().slice(0, CFG.maxPlateLen) || null,
-      color: (color || '').trim().slice(0, CFG.maxColorLen) || null,
+      plate:           (plate || '').trim().slice(0, CFG.maxPlateLen) || null,
+      color:           (color || '').trim().slice(0, CFG.maxColorLen) || null,
+      bluetoothDevice: bluetoothDevice || null,
     };
     Store.set(CFG.keys.vehicles, vehicles);
     return true;
+  },
+
+  updateBluetooth(id, updates) {
+    const vehicles = this.getAll();
+    const idx = vehicles.findIndex(v => v.id === id);
+    if (idx === -1) return false;
+    vehicles[idx] = { ...vehicles[idx], ...updates };
+    Store.set(CFG.keys.vehicles, vehicles);
+    return true;
+  },
+
+  updateAllBluetooth(updates) {
+    const vehicles = this.getAll();
+    const updated = vehicles.map(v => v.bluetoothDevice ? { ...v, ...updates } : v);
+    Store.set(CFG.keys.vehicles, updated);
   },
 
   remove(id) {

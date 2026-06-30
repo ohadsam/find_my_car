@@ -1870,6 +1870,271 @@ audio { width: 100%; }
 }
 .settings-reload-btn:active { transform: scale(0.97); }
 
+/* ── BLUETOOTH SETTINGS BUTTON ── */
+.settings-bt-wrapper {
+  padding: 0 16px 12px;
+  flex-shrink: 0;
+}
+.settings-bt-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-glow);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.settings-bt-btn:hover { background: rgba(91,139,245,0.28); }
+.settings-bt-btn:active { transform: scale(0.97); }
+.bt-linked-badge {
+  margin-right: auto;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  min-width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+/* ── BLUETOOTH IN VEHICLE MODAL ── */
+.bt-link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+.bt-linked-name {
+  flex: 1;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bt-scan-btn,
+.bt-unlink-btn-sm {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: 1px solid var(--border-med);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: var(--transition);
+}
+.bt-scan-btn:hover   { border-color: var(--color-primary); color: var(--color-primary); }
+.bt-unlink-btn-sm:hover { border-color: var(--color-danger); color: var(--color-danger); }
+.bt-device-list {
+  margin-top: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.bt-device-item {
+  width: 100%;
+  text-align: right;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  transition: var(--transition);
+}
+.bt-device-item:last-child { border-bottom: none; }
+.bt-device-item:hover { background: var(--color-primary-glow); color: var(--color-primary); }
+.bt-device-empty {
+  padding: 12px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+.bt-perm-msg {
+  padding: 8px 12px 4px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.bt-perm-btn {
+  margin: 4px 12px 8px;
+  display: block;
+  width: calc(100% - 24px);
+}
+
+/* ── BLUETOOTH SETTINGS MODAL ── */
+.bt-settings-body {
+  padding: 0;
+  overflow-y: auto;
+}
+.bt-section {
+  padding: 0 16px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.bt-section:last-child { border-bottom: none; }
+.bt-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 16px 0 8px;
+}
+.bt-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.bt-toggle-row:last-child { border-bottom: none; }
+.bt-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.bt-toggle-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.bt-toggle-desc {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.bt-toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+  direction: ltr;
+}
+.bt-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.bt-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-med);
+  border-radius: var(--radius-full);
+  transition: var(--transition);
+}
+.bt-toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  right: 2px;
+  top: 2px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: var(--transition);
+}
+.bt-toggle input:checked + .bt-toggle-slider {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.bt-toggle input:checked + .bt-toggle-slider::before {
+  right: auto;
+  left: 2px;
+  background: #fff;
+}
+.bt-vehicle-card {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+}
+.bt-vehicle-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.bt-vehicle-icon { font-size: 1.4rem; }
+.bt-vehicle-info { flex: 1; }
+.bt-vehicle-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.bt-vehicle-device {
+  font-size: 0.76rem;
+  color: var(--color-primary);
+  margin-top: 2px;
+}
+.bt-no-vehicles-msg {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 20px 0 8px;
+  margin: 0;
+}
+
+/* ── BLUETOOTH START POPUP ── */
+.bt-popup-subtitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  text-align: center;
+  margin: 0 0 4px;
+}
+.bt-popup-question {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  text-align: center;
+  margin: 0 0 16px;
+}
+.bt-popup-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 0 8px;
+}
+.bt-popup-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 8px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.bt-popup-btn-icon { font-size: 1.5rem; }
+.bt-popup-btn:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-glow);
+  color: var(--color-primary);
+}
+.bt-popup-btn:active { transform: scale(0.95); }
+
 /* ── VEHICLE ICON GRID ── */
 .vehicle-icon-grid {
   display: grid;

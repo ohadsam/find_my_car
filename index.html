@@ -36,6 +36,7 @@
   <link rel="modulepreload" href="js/ui.js">
   <link rel="modulepreload" href="js/return-modal.js">
   <link rel="modulepreload" href="js/vehicles.js">
+  <link rel="modulepreload" href="js/bluetooth.js">
   <link rel="modulepreload" href="js/app.js">
 
   <title>FindMyCar - מצא את הרכב שלך</title>
@@ -261,6 +262,17 @@
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
           <span>הוסף רכב</span>
+        </button>
+      </div>
+      <div class="settings-bt-wrapper">
+        <button class="settings-bt-btn" id="openBtSettingsBtn" aria-label="הגדרות Bluetooth">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <polyline points="6.5 6.5 17.5 17.5"/><polyline points="17.5 6.5 6.5 17.5"/>
+            <polyline points="12 2 18 8 12 14"/><line x1="6" y1="8" x2="18" y2="8"/>
+            <polyline points="12 10 6 16 12 22"/><line x1="6" y1="16" x2="18" y2="16"/>
+          </svg>
+          <span>הגדרות Bluetooth</span>
+          <span class="bt-linked-badge" id="btLinkedBadge" style="display:none;"></span>
         </button>
       </div>
       <div class="settings-reload-wrapper">
@@ -621,6 +633,22 @@
               placeholder="לבן, כסוף, שחור...">
           </div>
         </div>
+        <div class="form-group">
+          <label class="form-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="vertical-align:-2px;margin-left:4px;">
+              <polyline points="12 2 18 8 12 14"/><line x1="6" y1="8" x2="18" y2="8"/>
+              <polyline points="12 10 6 16 12 22"/><line x1="6" y1="16" x2="18" y2="16"/>
+            </svg>
+            Bluetooth <span class="form-label-optional">אופציונלי</span>
+          </label>
+          <div class="bt-link-row">
+            <span class="bt-linked-name" id="vehicleBtDeviceDisplay">לא מקושר</span>
+            <button type="button" class="bt-scan-btn" id="vehicleBtScanBtn">בחר מכשיר</button>
+            <button type="button" class="bt-unlink-btn-sm" id="vehicleBtUnlinkBtn" style="display:none;">נתק</button>
+          </div>
+          <input type="hidden" id="vehicleBtDeviceValue" value="">
+          <div class="bt-device-list" id="vehicleBtDeviceList" style="display:none;"></div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="modal-btn secondary" data-close="vehicleModal">ביטול</button>
@@ -664,6 +692,88 @@
       </div>
       <div class="modal-footer">
         <button class="modal-btn primary" data-close="whatsNewModal">הבנתי!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── BLUETOOTH END-PARKING PROMPT ── -->
+  <div id="btParkingModal" class="modal" role="dialog" aria-modal="true" aria-label="זוהה רכב" style="display:none;">
+    <div class="modal-backdrop" data-close="btParkingModal"></div>
+    <div class="modal-sheet modal-sheet-alert">
+      <div class="modal-handle"></div>
+      <div class="modal-body alert-body">
+        <div class="alert-icon">🔵</div>
+        <h3 class="alert-title" id="btParkingTitle">הגעת לרכב?</h3>
+        <p class="alert-desc" id="btParkingDesc">זוהה חיבור Bluetooth</p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" data-close="btParkingModal">לא</button>
+        <button class="modal-btn success" id="btParkingEndBtn">כן, סיים חניה ✅</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── BLUETOOTH AUTO-START MEDIA POPUP ── -->
+  <div id="btStartPopupModal" class="modal" role="dialog" aria-modal="true" aria-label="חניה נשמרה" style="display:none;">
+    <div class="modal-backdrop" data-close="btStartPopupModal"></div>
+    <div class="modal-sheet modal-sheet-short">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">✅ חניה נשמרה!</h3>
+        <button class="modal-close-btn" data-close="btStartPopupModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="bt-popup-subtitle" id="btStartPopupSubtitle"></p>
+        <p class="bt-popup-question">ברצונך להוסיף לחניה?</p>
+        <div class="bt-popup-actions">
+          <button class="bt-popup-btn" id="btStartAddPhotoBtn">
+            <span class="bt-popup-btn-icon">📷</span>
+            <span>תמונה</span>
+          </button>
+          <button class="bt-popup-btn" id="btStartAddVoiceBtn">
+            <span class="bt-popup-btn-icon">🎙️</span>
+            <span>הקלטה</span>
+          </button>
+          <button class="bt-popup-btn" id="btStartAddTextBtn">
+            <span class="bt-popup-btn-icon">✏️</span>
+            <span>תיאור</span>
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" data-close="btStartPopupModal">לא תודה</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── BLUETOOTH SETTINGS MODAL ── -->
+  <div id="btSettingsModal" class="modal" role="dialog" aria-modal="true" aria-label="הגדרות Bluetooth" style="display:none;">
+    <div class="modal-backdrop" data-close="btSettingsModal"></div>
+    <div class="modal-sheet modal-sheet-tall">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align:-3px;margin-left:6px;">
+            <polyline points="12 2 18 8 12 14"/><line x1="6" y1="8" x2="18" y2="8"/>
+            <polyline points="12 10 6 16 12 22"/><line x1="6" y1="16" x2="18" y2="16"/>
+          </svg>
+          הגדרות Bluetooth
+        </h3>
+        <button class="modal-close-btn" data-close="btSettingsModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body bt-settings-body" id="btSettingsContent">
+        <!-- Injected by JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn primary" data-close="btSettingsModal">סגור</button>
       </div>
     </div>
   </div>

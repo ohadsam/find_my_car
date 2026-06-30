@@ -24,7 +24,8 @@ FindMyCar is a Hebrew-language Progressive Web App (PWA) for saving and finding 
 | `js/ui.js` | `UIController` — DOM rendering, modals, toasts, theme, vehicle selector, settings view |
 | `js/return-modal.js` | `ReturnModal` — auto-show return-to-car flow on app entry |
 | `js/vehicles.js` | `VehicleController` — vehicle CRUD + localStorage migration |
-| `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing |
+| `js/bluetooth.js` | `BluetoothController` — device watch via `enumerateDevices` + `devicechange`; connect/disconnect callbacks |
+| `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing, Bluetooth |
 | `sw.js` | Service Worker — cache strategies for app shell, tiles, Leaflet CDN |
 | `manifest.json` | PWA manifest — Hebrew locale, icons, shortcuts |
 | `package.json` | devDependencies: Vitest, Playwright |
@@ -33,7 +34,7 @@ FindMyCar is a Hebrew-language Progressive Web App (PWA) for saving and finding 
 | `tests/unit/` | Vitest unit tests for utils, store, vehicles |
 | `tests/e2e/` | Playwright e2e smoke tests |
 
-**Module DAG (no circular imports):** `config` → `utils/geocoder/store` → `map/camera/voice/ui/return-modal/vehicles` → `app`
+**Module DAG (no circular imports):** `config` → `utils/geocoder/store` → `map/camera/voice/ui/return-modal/vehicles/bluetooth` → `app`
 
 Loaded via `<script type="module" src="js/app.js">` with `<link rel="modulepreload">` for all modules.
 
@@ -42,11 +43,20 @@ Loaded via `<script type="module" src="js/app.js">` with `<link rel="moduleprelo
 ```javascript
 // Vehicle (localStorage key: fmc_vehicles_v1 → array)
 {
-  id:    "string (uuid)",
-  name:  "string (max 30 chars)",
-  icon:  "emoji string",
-  plate: "string (max 15 chars) | null",   // optional license plate
-  color: "string (max 20 chars) | null",   // optional vehicle color
+  id:                 "string (uuid)",
+  name:               "string (max 30 chars)",
+  icon:               "emoji string",
+  plate:              "string (max 15 chars) | null",   // optional license plate
+  color:              "string (max 20 chars) | null",   // optional vehicle color
+  bluetoothDevice:    "string | null",   // device label linked via BT settings
+  bluetoothAutoEnd:   boolean,           // auto-end parking on BT connect
+  bluetoothAutoStart: boolean,           // auto-start parking on BT disconnect
+  bluetoothStartPopup:boolean,           // show media popup after auto-start
+}
+
+// Bluetooth settings (localStorage key: fmc_bluetooth_v1)
+{
+  enabled: boolean   // master switch for all Bluetooth features
 }
 
 // Active vehicle ID (localStorage key: fmc_active_v1)
@@ -97,12 +107,14 @@ Private field — not accessible from console. Internal shape:
   detailItemId:    string | null,    // for detail delete
   vehicles:        Vehicle[],        // all vehicles
   activeVehicleId: string | null,    // currently selected vehicle id
-  vehicleEditId:   string | null,    // vehicle being edited (null = creating)
-  vehicleDeleteId: string | null,    // vehicle pending delete confirm
+  vehicleEditId:       string | null,    // vehicle being edited (null = creating)
+  vehicleDeleteId:     string | null,    // vehicle pending delete confirm
+  btPendingVehicleId:  string | null,    // vehicle waiting for BT end-parking confirm
+  btStartPopupVehicle: Vehicle | null,   // vehicle whose BT auto-start popup is open
 }
 ```
 
-Map, camera, and voice state are now owned by their respective controllers (`#map`, `#camera`, `#voice` private fields on `FindMyCarApp`).
+Map, camera, voice, and Bluetooth state are owned by their respective controllers (`#map`, `#camera`, `#voice`, `#bluetooth` private fields on `FindMyCarApp`).
 
 ## Key Methods
 
@@ -121,6 +133,13 @@ Map, camera, and voice state are now owned by their respective controllers (`#ma
 | `#shareParking(p)` | Web Share API → clipboard fallback |
 | `#showView(id)` | Switch active view + nav btn state |
 | `#closeModal(id)` | Camera/voice/map cleanup + `ui.closeModal(id)` |
+| `#onBtConnected(label)` | BT connect → find matching vehicle → auto-end or show confirm modal |
+| `#onBtDisconnected(label)` | BT disconnect → find matching vehicle → auto-start parking + optional popup |
+| `#btEndParking(vehicleId)` | End parking for a vehicle (active or background) |
+| `#btScanDevices()` | Scan audio devices; prompt mic permission if labels hidden |
+| `#openBtSettingsModal()` | Render and open `btSettingsModal` |
+| `#btSettingsCbs()` | Returns `{ onToggleEnabled, onToggleVehicle, onSetAll }` callbacks |
+| `#updateBtBadge()` | Update BT settings button badge (count of linked vehicles) |
 
 ### `js/ui.js` — `UIController`
 
@@ -132,6 +151,11 @@ Map, camera, and voice state are now owned by their respective controllers (`#ma
 | `showToast(msg, type)` | Floating notification (success/error/info/warning) |
 | `openModal(id)` / `closeModal(id)` | Show/hide modal + body overflow |
 | `showView(viewId, mapCtrl)` | Switch views, invalidate map size |
+| `setBtDeviceValue(label)` | Show linked device name in vehicle modal |
+| `showBtDeviceList(devices, onSelect)` | Render scannable device list (deduped by label) |
+| `showBtPermissionRequest(onRequest)` | Render mic-permission prompt in device list area |
+| `renderBtSettingsModal(btSettings, vehicles, cbs)` | Render full BT settings (master switch + global + per-vehicle) |
+| `updateBtSettingsBtn(linkedCount)` | Update linked-device badge on BT settings button |
 
 ### `js/geocoder.js`
 
@@ -219,3 +243,12 @@ Run: `python3 /tmp/gen_icons.py` (from repo root)
 - [ ] "זזתי" clears parking → moved to history
 - [ ] "המשך לנווט" dismisses modal, parking stays active
 - [ ] Address shows two-line format (street+number / city)
+- [ ] Bluetooth: link a device to a vehicle in vehicle settings
+- [ ] Bluetooth: connect to linked device → confirm end-parking modal appears
+- [ ] Bluetooth: auto-end on connect (when bluetoothAutoEnd = true)
+- [ ] Bluetooth: disconnect from linked device → auto-start parking
+- [ ] Bluetooth: disconnect → media popup appears (when bluetoothStartPopup = true)
+- [ ] Bluetooth: master switch disables all BT features
+- [ ] Bluetooth: global toggles in BT settings screen apply to all linked vehicles
+- [ ] Bluetooth: per-vehicle toggles in BT settings screen work independently
+- [ ] Bluetooth: unlink device from vehicle removes all auto-behavior

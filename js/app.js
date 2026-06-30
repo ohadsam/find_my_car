@@ -8,28 +8,32 @@ import { VoiceController } from './voice.js';
 import { UIController } from './ui.js';
 import { ReturnModal } from './return-modal.js';
 import { VehicleController } from './vehicles.js';
+import { BluetoothController } from './bluetooth.js';
 
 class FindMyCarApp {
   #state = {
-    current:         null,
-    history:         [],
-    theme:           'dark',
-    currentView:     'homeView',
-    userPos:         null,
-    watchId:         null,
-    timerIntervalId: null,
-    installPrompt:   null,
-    activeNavTarget: null,
-    detailItemId:    null,
-    vehicles:        [],
-    activeVehicleId: null,
-    vehicleEditId:   null,
-    vehicleDeleteId: null,
+    current:              null,
+    history:              [],
+    theme:                'dark',
+    currentView:          'homeView',
+    userPos:              null,
+    watchId:              null,
+    timerIntervalId:      null,
+    installPrompt:        null,
+    activeNavTarget:      null,
+    detailItemId:         null,
+    vehicles:             [],
+    activeVehicleId:      null,
+    vehicleEditId:        null,
+    vehicleDeleteId:      null,
+    btPendingVehicleId:   null,  // vehicle awaiting end-parking confirmation
+    btStartPopupVehicle:  null,  // vehicle whose parking was just auto-started
   };
 
-  #map         = new MapController();
-  #camera      = new CameraController();
-  #voice       = new VoiceController();
+  #map       = new MapController();
+  #camera    = new CameraController();
+  #voice     = new VoiceController();
+  #bluetooth = new BluetoothController();
   #ui;
   #returnModal;
 
@@ -80,6 +84,15 @@ class FindMyCarApp {
 
     this.#bindEvents();
     this.#returnModal.bindEvents();
+
+    // Bluetooth setup
+    this.#bluetooth.init({
+      onDeviceConnected:    label => this.#onBtConnected(label),
+      onDeviceDisconnected: label => this.#onBtDisconnected(label),
+    });
+    if (this.#getBtSettings().enabled) {
+      this.#bluetooth.startWatch();
+    }
 
     // Init map; after loading screen fades, invalidate size to handle any CSS transition artifacts
     setTimeout(() => {
@@ -216,6 +229,28 @@ class FindMyCarApp {
     Utils.el('addVehicleBtn')?.addEventListener('click', () => this.#openVehicleModal(null));
     Utils.el('saveVehicleBtn')?.addEventListener('click', () => this.#saveVehicle());
     Utils.el('confirmVehicleDeleteBtn')?.addEventListener('click', () => this.#confirmDeleteVehicle());
+
+    // Bluetooth
+    Utils.el('vehicleBtScanBtn')?.addEventListener('click',   () => this.#btScanDevices());
+    Utils.el('vehicleBtUnlinkBtn')?.addEventListener('click', () => this.#ui.setBtDeviceValue(null));
+    Utils.el('openBtSettingsBtn')?.addEventListener('click',  () => this.#openBtSettingsModal());
+    Utils.el('btParkingEndBtn')?.addEventListener('click', () => {
+      const vid = this.#state.btPendingVehicleId;
+      this.#closeModal('btParkingModal');
+      if (vid) this.#btEndParking(vid);
+    });
+    Utils.el('btStartAddPhotoBtn')?.addEventListener('click', () => {
+      this.#ui.closeModal('btStartPopupModal');
+      this.#openCameraModal();
+    });
+    Utils.el('btStartAddVoiceBtn')?.addEventListener('click', () => {
+      this.#ui.closeModal('btStartPopupModal');
+      this.#openVoiceModal();
+    });
+    Utils.el('btStartAddTextBtn')?.addEventListener('click', () => {
+      this.#ui.closeModal('btStartPopupModal');
+      this.#openTextModal();
+    });
 
     // Global close handler (data-close attribute on backdrops and close buttons)
     document.addEventListener('click', e => {
@@ -464,14 +499,14 @@ class FindMyCarApp {
   }
 
   #saveVehicle() {
-    const { name, icon, plate, color } = this.#ui.getVehicleModalValues();
+    const { name, icon, plate, color, bluetoothDevice } = this.#ui.getVehicleModalValues();
     if (!name) { this.#ui.showToast('יש להזין שם לרכב', 'warning'); return; }
 
     if (this.#state.vehicleEditId) {
-      VehicleController.update(this.#state.vehicleEditId, name, icon, plate, color);
+      VehicleController.update(this.#state.vehicleEditId, name, icon, plate, color, bluetoothDevice);
       this.#ui.showToast('✅ הרכב עודכן', 'success');
     } else {
-      const v = VehicleController.add(name, icon, plate, color);
+      const v = VehicleController.add(name, icon, plate, color, bluetoothDevice);
       if (!v) { this.#ui.showToast(`ניתן להוסיף עד ${CFG.maxVehicles} רכבים`, 'warning'); return; }
       this.#ui.showToast(`${icon} ${name} נוסף!`, 'success');
     }
@@ -480,6 +515,7 @@ class FindMyCarApp {
     this.#closeModal('vehicleModal');
     this.#ui.updateAll(this.#state);
     this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
+    this.#updateBtBadge();
   }
 
   #openVehicleDeleteModal(id, name) {
@@ -659,6 +695,116 @@ class FindMyCarApp {
     this.#ui.showToast('🗑️ תיאור נמחק', 'info');
   }
 
+  // ── BLUETOOTH ─────────────────────────────────────────────────
+  #getBtSettings() {
+    return Store.get(CFG.keys.bluetoothSettings, { enabled: true });
+  }
+
+  #onBtConnected(label) {
+    const vehicles = this.#state.vehicles;
+    for (const v of vehicles) {
+      if (v.bluetoothDevice !== label) continue;
+      if (!VehicleController.getCurrent(v.id)) continue;
+      if (v.bluetoothAutoEnd) {
+        this.#btEndParking(v.id);
+        this.#ui.showToast(`🔵 ${v.icon} ${v.name} — חניה הסתיימה אוטומטית`, 'success');
+      } else {
+        this.#state.btPendingVehicleId = v.id;
+        const title = Utils.el('btParkingTitle');
+        const desc  = Utils.el('btParkingDesc');
+        if (title) title.textContent = `${v.icon} הגעת לרכב?`;
+        if (desc)  desc.textContent  = `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`;
+        this.#ui.openModal('btParkingModal');
+      }
+      break;
+    }
+  }
+
+  async #onBtDisconnected(label) {
+    const vehicles = this.#state.vehicles;
+    for (const v of vehicles) {
+      if (v.bluetoothDevice !== label) continue;
+      if (!v.bluetoothAutoStart) continue;
+      if (VehicleController.getCurrent(v.id)) continue; // already has parking
+
+      // Switch to this vehicle if needed, then save parking
+      if (v.id !== this.#state.activeVehicleId) this.#switchVehicle(v.id);
+      await this.#saveNewParking();
+
+      if (v.bluetoothStartPopup) {
+        this.#state.btStartPopupVehicle = v;
+        const subtitle = Utils.el('btStartPopupSubtitle');
+        if (subtitle) subtitle.textContent = `${v.icon} ${v.name}`;
+        this.#ui.openModal('btStartPopupModal');
+      }
+      break;
+    }
+  }
+
+  #btEndParking(vehicleId) {
+    if (vehicleId === this.#state.activeVehicleId) {
+      this.#resetParking();
+    } else {
+      this.#clearVehicleParking(vehicleId);
+    }
+  }
+
+  async #btScanDevices(retried = false) {
+    const devices   = await this.#bluetooth.getDevices();
+    const hasLabels = devices.some(d => d.label);
+    if (!hasLabels) {
+      if (retried) {
+        this.#ui.showToast('לא ניתן לזהות מכשירי Bluetooth', 'error');
+        return;
+      }
+      this.#ui.showBtPermissionRequest(async () => {
+        const granted = await BluetoothController.requestPermission();
+        if (granted) {
+          await this.#btScanDevices(true);
+        } else {
+          this.#ui.showToast('לא ניתן לגשת למיקרופון', 'error');
+        }
+      });
+    } else {
+      this.#ui.showBtDeviceList(devices, label => this.#ui.setBtDeviceValue(label));
+    }
+  }
+
+  #btSettingsCbs() {
+    return {
+      onToggleEnabled: enabled => {
+        Store.set(CFG.keys.bluetoothSettings, { ...this.#getBtSettings(), enabled });
+        if (enabled) this.#bluetooth.startWatch(); else this.#bluetooth.stopWatch();
+        this.#refreshBtModal();
+      },
+      onToggleVehicle: (vehicleId, updates) => {
+        VehicleController.updateBluetooth(vehicleId, updates);
+        this.#state.vehicles = VehicleController.getAll();
+        this.#refreshBtModal();
+      },
+      onSetAll: updates => {
+        VehicleController.updateAllBluetooth(updates);
+        this.#state.vehicles = VehicleController.getAll();
+        this.#refreshBtModal();
+      },
+    };
+  }
+
+  #refreshBtModal() {
+    this.#ui.renderBtSettingsModal(this.#getBtSettings(), this.#state.vehicles, this.#btSettingsCbs());
+    this.#updateBtBadge();
+  }
+
+  #openBtSettingsModal() {
+    this.#refreshBtModal();
+    this.#ui.openModal('btSettingsModal');
+  }
+
+  #updateBtBadge() {
+    const count = this.#state.vehicles.filter(v => v.bluetoothDevice).length;
+    this.#ui.updateBtSettingsBtn(count);
+  }
+
   // ── NAVIGATION & SHARING ──────────────────────────────────────
   #openNavModal(parking) {
     if (!parking?.location) return;
@@ -800,6 +946,8 @@ class FindMyCarApp {
     if (id === 'photoModal')        this.#camera.close();
     if (id === 'voiceModal')        this.#voice.close();
     if (id === 'detailModal')       this.#map.destroyDetailMap();
+    if (id === 'btParkingModal')    this.#state.btPendingVehicleId  = null;
+    if (id === 'btStartPopupModal') this.#state.btStartPopupVehicle = null;
     if (id === 'settingsView')      return; // views are not modals
     this.#ui.closeModal(id);
   }
@@ -811,6 +959,7 @@ class FindMyCarApp {
     if (viewId === 'historyView')  this.#ui.updateHistoryView(this.#state);
     if (viewId === 'settingsView') {
       this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
+      this.#updateBtBadge();
     }
   }
 

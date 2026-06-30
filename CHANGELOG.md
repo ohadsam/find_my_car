@@ -5,6 +5,36 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.6.0] — 2026-06-30
+
+### ✨ New Features
+
+#### Bluetooth Device Linking
+- **קישור Bluetooth לרכב** — ניתן לקשר התקן Bluetooth (לדוגמה מערכת שמע של הרכב) לכל רכב בנפרד, ישירות ממסך עריכת הרכב
+- **זיהוי חיבור** — כאשר מתחברים ל-Bluetooth שקושר לרכב עם חניה פעילה, האפליקציה מציעה לסיים את החניה
+- **סיום אוטומטי** — ניתן להגדיר שבחיבור ל-Bluetooth הסיום יתבצע אוטומטית ללא שאילתה
+
+#### Bluetooth Auto-Start Parking on Disconnect
+- **התחלת חניה אוטומטית** — בניתוק מ-Bluetooth של הרכב, האפליקציה שומרת חניה חדשה לפי GPS באופן אוטומטי
+- **חלון הוספת מדיה** — לאחר שמירה אוטומטית, חלון popup מציע להוסיף תמונה, הקלטה קולית או תיאור טקסטואלי
+
+#### Bluetooth Settings Screen
+- **מסך הגדרות Bluetooth** — כפתור ייעודי בלשונית הרכבים פותח מסך הגדרות מלא
+- **הגדרות לכלל הרכבים** — שלושה מתגים שמגדירים ברירת מחדל לכל הרכבים בו-זמנית:
+  - סיום חניה אוטומטי בחיבור
+  - התחלת חניה אוטומטית בניתוק
+  - הצגת חלון הוספת מדיה לאחר שמירה
+- **הגדרות לכל רכב בנפרד** — כל רכב עם Bluetooth מקושר מציג מתגים עצמאיים לאותן הגדרות
+- **מתג ראשי** — ניתן לכבות את כל פיצ'ר ה-Bluetooth באחת
+
+### 🔧 Technical
+- מודול חדש `js/bluetooth.js` — `BluetoothController` עם מעקב `devicechange`
+- זיהוי חיבור וניתוק של מכשירי שמע (audiooutput + audioinput) באמצעות `enumerateDevices()`
+- שמירת הגדרות Bluetooth ב-`fmc_bluetooth_v1` (localStorage)
+- שדות Bluetooth חדשים ב-Vehicle: `bluetoothDevice`, `bluetoothAutoEnd`, `bluetoothAutoStart`, `bluetoothStartPopup`
+
+---
+
 ## [1.5.0] — 2026-06-27
 
 ### ✨ New Features
