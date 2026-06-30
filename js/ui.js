@@ -24,6 +24,208 @@ export class UIController {
     this.#onEditText         = onEditText;
   }
 
+  // ── BLUETOOTH HELPERS ─────────────────────────────────────────
+  setBtDeviceValue(label) {
+    const btValue   = Utils.el('vehicleBtDeviceValue');
+    const btDisplay = Utils.el('vehicleBtDeviceDisplay');
+    const unlinkBtn = Utils.el('vehicleBtUnlinkBtn');
+    if (btValue)   btValue.value     = label || '';
+    if (btDisplay) btDisplay.textContent = label || 'לא מקושר';
+    if (unlinkBtn) unlinkBtn.style.display = label ? '' : 'none';
+    // Hide device list after selection
+    const list = Utils.el('vehicleBtDeviceList');
+    if (list) list.style.display = 'none';
+  }
+
+  showBtDeviceList(devices, onSelect) {
+    const list = Utils.el('vehicleBtDeviceList');
+    if (!list) return;
+    list.innerHTML = '';
+    const labels = [...new Set(devices.map(d => d.label).filter(Boolean))];
+    if (labels.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'bt-device-empty';
+      empty.textContent = 'לא נמצאו מכשירי שמע פעילים. חבר מכשיר Bluetooth ונסה שוב.';
+      list.appendChild(empty);
+    } else {
+      labels.forEach(label => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'bt-device-item';
+        btn.textContent = label;
+        btn.addEventListener('click', () => onSelect(label));
+        list.appendChild(btn);
+      });
+    }
+    list.style.display = '';
+  }
+
+  showBtPermissionRequest(onRequest) {
+    const list = Utils.el('vehicleBtDeviceList');
+    if (!list) return;
+    list.innerHTML = '';
+    const msg = document.createElement('p');
+    msg.className = 'bt-perm-msg';
+    msg.textContent = 'נדרש אישור גישה למיקרופון כדי לזהות מכשירי Bluetooth';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'bt-perm-btn modal-btn primary';
+    btn.textContent = '🎤 אשר גישה';
+    btn.addEventListener('click', () => onRequest());
+    list.appendChild(msg);
+    list.appendChild(btn);
+    list.style.display = '';
+  }
+
+  renderBtSettingsModal(btSettings, vehicles, { onToggleEnabled, onToggleVehicle, onSetAll }) {
+    const content = Utils.el('btSettingsContent');
+    if (!content) return;
+    content.innerHTML = '';
+
+    // Master switch
+    const masterRow = this.#makeBtRow(
+      'הפעל זיהוי Bluetooth',
+      'זיהוי אוטומטי של התקן הרכב — חיבור וניתוק',
+      btSettings.enabled,
+      checked => onToggleEnabled(checked)
+    );
+    content.appendChild(masterRow);
+
+    if (!btSettings.enabled) return;
+
+    const linked = vehicles.filter(v => v.bluetoothDevice);
+    if (linked.length === 0) {
+      const msg = document.createElement('p');
+      msg.className = 'bt-no-vehicles-msg';
+      msg.textContent = 'לא קושרו מכשירי Bluetooth לרכבים. ערוך רכב כדי לקשר.';
+      content.appendChild(msg);
+      return;
+    }
+
+    // Global "set all" section
+    const globalSec = document.createElement('div');
+    globalSec.className = 'bt-section';
+    const globalTitle = document.createElement('div');
+    globalTitle.className = 'bt-section-title';
+    globalTitle.textContent = 'הגדרות לכלל הרכבים';
+    globalSec.appendChild(globalTitle);
+
+    const allAutoEnd = linked.every(v => v.bluetoothAutoEnd);
+    globalSec.appendChild(this.#makeBtRow(
+      'סיום חניה בחיבור',
+      'כאשר מזוהה חיבור, מציע סיום חניה',
+      allAutoEnd,
+      checked => onSetAll({ bluetoothAutoEnd: checked })
+    ));
+
+    const allAutoStart = linked.every(v => v.bluetoothAutoStart);
+    globalSec.appendChild(this.#makeBtRow(
+      'התחלת חניה בניתוק',
+      'כאשר מזוהה ניתוק, שומר חניה חדשה לפי GPS',
+      allAutoStart,
+      checked => onSetAll({ bluetoothAutoStart: checked })
+    ));
+
+    const allPopup = linked.every(v => v.bluetoothStartPopup);
+    globalSec.appendChild(this.#makeBtRow(
+      'חלון הוספת מדיה',
+      'לאחר שמירה אוטומטית — שאל האם להוסיף תמונה / הקלטה / תיאור',
+      allPopup,
+      checked => onSetAll({ bluetoothStartPopup: checked })
+    ));
+
+    content.appendChild(globalSec);
+
+    // Per-vehicle section
+    const vehicleSec = document.createElement('div');
+    vehicleSec.className = 'bt-section';
+    const vehicleTitle = document.createElement('div');
+    vehicleTitle.className = 'bt-section-title';
+    vehicleTitle.textContent = 'הגדרות לפי רכב';
+    vehicleSec.appendChild(vehicleTitle);
+
+    linked.forEach(v => {
+      const card = document.createElement('div');
+      card.className = 'bt-vehicle-card';
+
+      const header = document.createElement('div');
+      header.className = 'bt-vehicle-header';
+      const icon = document.createElement('span');
+      icon.className = 'bt-vehicle-icon';
+      icon.textContent = v.icon;
+      const info = document.createElement('div');
+      info.className = 'bt-vehicle-info';
+      const name = document.createElement('div');
+      name.className = 'bt-vehicle-name';
+      name.textContent = v.name;
+      const device = document.createElement('div');
+      device.className = 'bt-vehicle-device';
+      device.textContent = `🔵 ${v.bluetoothDevice}`;
+      info.appendChild(name);
+      info.appendChild(device);
+      header.appendChild(icon);
+      header.appendChild(info);
+      card.appendChild(header);
+
+      card.appendChild(this.#makeBtRow(
+        'סיום חניה בחיבור', '',
+        v.bluetoothAutoEnd,
+        checked => onToggleVehicle(v.id, { bluetoothAutoEnd: checked })
+      ));
+      card.appendChild(this.#makeBtRow(
+        'התחלת חניה בניתוק', '',
+        v.bluetoothAutoStart,
+        checked => onToggleVehicle(v.id, { bluetoothAutoStart: checked })
+      ));
+      card.appendChild(this.#makeBtRow(
+        'חלון הוספת מדיה', '',
+        v.bluetoothStartPopup,
+        checked => onToggleVehicle(v.id, { bluetoothStartPopup: checked })
+      ));
+
+      vehicleSec.appendChild(card);
+    });
+
+    content.appendChild(vehicleSec);
+  }
+
+  #makeBtRow(label, desc, checked, onChange) {
+    const row = document.createElement('div');
+    row.className = 'bt-toggle-row';
+    const text = document.createElement('div');
+    text.className = 'bt-toggle-text';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'bt-toggle-label';
+    labelEl.textContent = label;
+    text.appendChild(labelEl);
+    if (desc) {
+      const descEl = document.createElement('span');
+      descEl.className = 'bt-toggle-desc';
+      descEl.textContent = desc;
+      text.appendChild(descEl);
+    }
+    const toggleLabel = document.createElement('label');
+    toggleLabel.className = 'bt-toggle';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = checked;
+    input.addEventListener('change', () => onChange(input.checked));
+    const slider = document.createElement('span');
+    slider.className = 'bt-toggle-slider';
+    toggleLabel.appendChild(input);
+    toggleLabel.appendChild(slider);
+    row.appendChild(text);
+    row.appendChild(toggleLabel);
+    return row;
+  }
+
+  updateBtSettingsBtn(linkedCount) {
+    const badge = Utils.el('btLinkedBadge');
+    if (!badge) return;
+    badge.textContent    = linkedCount > 0 ? String(linkedCount) : '';
+    badge.style.display  = linkedCount > 0 ? '' : 'none';
+  }
+
   // ── FULL REFRESH ──────────────────────────────────────────────
   updateAll(state) {
     this.updateStatusChip(state);
@@ -207,15 +409,21 @@ export class UIController {
       });
       grid.appendChild(btn);
     });
+
+    // BT section
+    this.setBtDeviceValue(vehicle?.bluetoothDevice || null);
+    const btList = Utils.el('vehicleBtDeviceList');
+    if (btList) { btList.innerHTML = ''; btList.style.display = 'none'; }
   }
 
   getVehicleModalValues() {
-    const name  = (Utils.el('vehicleNameInput')?.value  || '').trim();
-    const plate = (Utils.el('vehiclePlateInput')?.value || '').trim() || null;
-    const color = (Utils.el('vehicleColorInput')?.value || '').trim() || null;
-    const selected = Utils.el('vehicleIconGrid')?.querySelector('.icon-pick-btn.selected');
-    const icon = selected ? selected.textContent : CFG.vehicleIcons[0];
-    return { name, icon, plate, color };
+    const name            = (Utils.el('vehicleNameInput')?.value  || '').trim();
+    const plate           = (Utils.el('vehiclePlateInput')?.value || '').trim() || null;
+    const color           = (Utils.el('vehicleColorInput')?.value || '').trim() || null;
+    const selected        = Utils.el('vehicleIconGrid')?.querySelector('.icon-pick-btn.selected');
+    const icon            = selected ? selected.textContent : CFG.vehicleIcons[0];
+    const bluetoothDevice = Utils.el('vehicleBtDeviceValue')?.value || null;
+    return { name, icon, plate, color, bluetoothDevice };
   }
 
   // ── WHATSAPP MODAL ────────────────────────────────────────────
