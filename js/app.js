@@ -36,6 +36,7 @@ class FindMyCarApp {
   #camera    = new CameraController();
   #voice     = new VoiceController();
   #bluetooth = new BluetoothController();
+  #wakeLock  = null;
   #ui;
   #returnModal;
 
@@ -112,6 +113,11 @@ class FindMyCarApp {
 
     this.#startLocationWatch();
     this.#setupPWA();
+
+    if (this.#state.current) {
+      this.#acquireWakeLock();
+      this.#showParkingNotification(this.#state.current);
+    }
 
     setTimeout(() => {
       Utils.el('loadingScreen')?.classList.add('fade-out');
@@ -283,6 +289,12 @@ class FindMyCarApp {
       Utils.el('installBanner').style.display = 'none';
     });
 
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (this.#state.current) this.#acquireWakeLock();
+      if (this.#getBtSettings().enabled) this.#bluetooth.checkNow();
+    });
+
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         const open = document.querySelector('.modal[style*="flex"]');
@@ -430,6 +442,12 @@ class FindMyCarApp {
     this.#ui.updateAll(this.#state);
     this.#startTimer();
     this.#ui.showToast('✅ מיקום חניה נשמר!', 'success');
+    this.#acquireWakeLock();
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(() => this.#showParkingNotification(parking));
+    } else {
+      this.#showParkingNotification(parking);
+    }
 
     reverseGeocode(loc.lat, loc.lng).then(addr => {
       if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
@@ -437,6 +455,7 @@ class FindMyCarApp {
       VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
       this.#ui.updateAddress(this.#state.current);
       this.#map.updateParkingMarkerPopup(addr);
+      this.#showParkingNotification(this.#state.current);
     });
   }
 
@@ -480,6 +499,8 @@ class FindMyCarApp {
     VehicleController.removeCurrent(this.#state.activeVehicleId);
     this.#map.removeParkingMarker();
     this.#stopTimer();
+    this.#releaseWakeLock();
+    this.#cancelParkingNotification();
     this.#ui.updateAll(this.#state);
     this.#ui.showToast('✅ החניה הועברה להיסטוריה', 'success');
   }
@@ -516,6 +537,13 @@ class FindMyCarApp {
       this.#startTimer();
     }
     this.#ui.updateAll(this.#state);
+    if (this.#state.current) {
+      this.#acquireWakeLock();
+      this.#showParkingNotification(this.#state.current);
+    } else {
+      this.#releaseWakeLock();
+      this.#cancelParkingNotification();
+    }
     if (!silent) {
       const v = VehicleController.getById(id);
       this.#ui.showToast(`${v?.icon || '🚗'} עבר ל${v?.name || 'רכב'}`, 'info');
@@ -612,6 +640,8 @@ class FindMyCarApp {
       this.#state.history = hist;
       this.#map.removeParkingMarker();
       this.#stopTimer();
+      this.#releaseWakeLock();
+      this.#cancelParkingNotification();
       this.#ui.updateAll(this.#state);
     }
 
@@ -727,6 +757,46 @@ class FindMyCarApp {
     this.#ui.renderAttachments(this.#state.current);
     this.#ui.updateMediaTiles(this.#state.current);
     this.#ui.showToast('🗑️ תיאור נמחק', 'info');
+  }
+
+  // ── WAKE LOCK ─────────────────────────────────────────────────
+  async #acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    if (this.#wakeLock && !this.#wakeLock.released) return;
+    try {
+      this.#wakeLock = await navigator.wakeLock.request('screen');
+    } catch { /* non-fatal; wake lock is a progressive enhancement */ }
+  }
+
+  async #releaseWakeLock() {
+    if (!this.#wakeLock) return;
+    try { await this.#wakeLock.release(); } catch { /* ignore */ }
+    this.#wakeLock = null;
+  }
+
+  // ── PARKING NOTIFICATION ──────────────────────────────────────
+  async #showParkingNotification(parking) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const reg = await navigator.serviceWorker.ready.catch(() => null);
+    if (!reg) return;
+    const body = normalizeAddress(parking.address) ||
+      `${parking.location.lat.toFixed(5)}, ${parking.location.lng.toFixed(5)}`;
+    reg.showNotification('FindMyCar — חניה פעילה 🅿️', {
+      body,
+      tag:      CFG.keys.notifTag,
+      icon:     './icons/icon-192.png',
+      badge:    './icons/icon-192.png',
+      renotify: false,
+      silent:   true,
+    });
+  }
+
+  async #cancelParkingNotification() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const reg = await navigator.serviceWorker.ready.catch(() => null);
+    if (!reg) return;
+    const notifs = await reg.getNotifications({ tag: CFG.keys.notifTag }).catch(() => []);
+    notifs.forEach(n => n.close());
   }
 
   // ── GPS AUTO-END ──────────────────────────────────────────────
@@ -1034,7 +1104,7 @@ class FindMyCarApp {
     if (id === 'voiceModal')        this.#voice.close();
     if (id === 'detailModal')       this.#map.destroyDetailMap();
     if (id === 'btParkingModal') { this.#state.btPendingVehicleId = null; this.#state.btPendingLabel = null; }
-    if (id === 'gpsEndModal')    this.#state.gpsEndSuggested = true; // prevent re-showing if dismissed
+    if (id === 'gpsEndModal')    this.#state.gpsEndSuggested = true;
     if (id === 'settingsView')      return; // views are not modals
     this.#ui.closeModal(id);
   }

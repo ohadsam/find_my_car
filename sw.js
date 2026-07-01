@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME      = 'findmycar-v1.7.0';
+const CACHE_NAME      = 'findmycar-v1.8.0';
 const TILES_CACHE     = 'findmycar-tiles-v1.0.0';
 const STATIC_ASSETS = [
   './',
@@ -106,6 +106,20 @@ self.addEventListener('fetch', (event) => {
         }
         return res;
       }).catch(() => caches.match('./index.html'));
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+      for (const client of clientList) {
+        if (client.url.startsWith(self.registration.scope) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      return clients.openWindow('./');
     })
   );
 });

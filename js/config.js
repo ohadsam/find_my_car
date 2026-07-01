@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.7.0',
+  version: '1.8.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -12,6 +12,7 @@ export const CFG = Object.freeze({
     mapCollapsed:      'fmc_map_collapsed_v1',
     bluetoothSettings: 'fmc_bluetooth_v1',
     gpsAutoEnd:        'fmc_gps_auto_end_v1',
+    notifTag:          'fmc-parking-active',
   }),
   gpsSpeedThreshold: 7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
   gpsSpeedDuration:  8000, // ms speed must be sustained before suggesting end
@@ -30,6 +31,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.8.0',
+      date: '2026-07-01',
+      items: Object.freeze([
+        'נוטיפיקציה כשהאפליקציה ברקע — פרטי החניה הפעילה מוצגים בחלון התראה',
+        'Wake Lock — מסך נשאר פעיל בזמן חניה כדי שה-GPS וה-Bluetooth ימשיכו לעבוד',
+        'זיהוי Bluetooth מחדש בחזרה לאפליקציה — לא מפספסים חיבור/ניתוק שקרה ברקע',
+      ]),
+    }),
     Object.freeze({
       version: '1.7.0',
       date: '2026-07-01',

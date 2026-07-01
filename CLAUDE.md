@@ -24,7 +24,7 @@ FindMyCar is a Hebrew-language Progressive Web App (PWA) for saving and finding 
 | `js/ui.js` | `UIController` — DOM rendering, modals, toasts, theme, vehicle selector, settings view |
 | `js/return-modal.js` | `ReturnModal` — auto-show return-to-car flow on app entry |
 | `js/vehicles.js` | `VehicleController` — vehicle CRUD + localStorage migration |
-| `js/bluetooth.js` | `BluetoothController` — device watch via `enumerateDevices` + `devicechange`; connect/disconnect callbacks |
+| `js/bluetooth.js` | `BluetoothController` — device watch via `enumerateDevices` + `devicechange`; connect/disconnect callbacks; `checkNow()` for on-demand re-scan |
 | `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing, Bluetooth |
 | `sw.js` | Service Worker — cache strategies for app shell, tiles, Leaflet CDN |
 | `manifest.json` | PWA manifest — Hebrew locale, icons, shortcuts |
@@ -124,7 +124,7 @@ Private field — not accessible from console. Internal shape:
 }
 ```
 
-Map, camera, voice, and Bluetooth state are owned by their respective controllers (`#map`, `#camera`, `#voice`, `#bluetooth` private fields on `FindMyCarApp`).
+Map, camera, voice, and Bluetooth state are owned by their respective controllers (`#map`, `#camera`, `#voice`, `#bluetooth` private fields on `FindMyCarApp`). Wake lock sentinel is in `#wakeLock` (WakeLockSentinel | null).
 
 ## Key Methods
 
@@ -152,6 +152,10 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | `#btScanDevices()` | Scan audio devices; prompt mic permission if labels hidden |
 | `#openBtSettingsModal()` | Render and open `btSettingsModal` |
 | `#btSettingsCbs()` | Returns `{ onToggleEnabled, onToggleVehicle, onSetAll }` callbacks |
+| `#acquireWakeLock()` | Request Screen Wake Lock to keep app active while parking |
+| `#releaseWakeLock()` | Release Wake Lock when parking ends |
+| `#showParkingNotification(parking)` | Show/update persistent system notification with active parking address |
+| `#cancelParkingNotification()` | Close the active parking notification via SW |
 | `#updateBtBadge()` | Update BT settings button badge (count of linked vehicles) |
 
 ### `js/ui.js` — `UIController`

@@ -5,6 +5,34 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.8.0] — 2026-07-01
+
+### ✨ New Features
+
+#### Wake Lock — מסך פעיל בזמן חניה
+- **Screen Wake Lock** — כאשר חניה פעילה, האפליקציה מבקשת מהמכשיר לשמור את המסך דולק (`navigator.wakeLock`), כך שה-GPS וה-Bluetooth ממשיכים לעבוד
+- משוחרר אוטומטית כשהחניה מסתיימת; מוחזר אוטומטית בחזרה לאפליקציה לאחר נעילת מסך
+
+#### נוטיפיקציה — חניה פעילה ברקע
+- **התראה מתמשכת** — כאשר חניה מתחילה, מוצגת נוטיפיקציה עם כתובת הרכב
+- הנוטיפיקציה מתעדכנת עם הכתובת הסופית לאחר ה-Geocoding
+- **לחיצה על ההתראה** — פותחת / מחזירה פוקוס לאפליקציה (מטופל ב-Service Worker)
+- ההתראה נסגרת אוטומטית עם סיום החניה
+
+#### זיהוי Bluetooth מחדש בחזרה לאפליקציה
+- בכל חזרה לחלונית הפעילה (`visibilitychange`), מתבצעת סריקת מכשירי Bluetooth מחדש
+- מזהה חיבורים/ניתוקים שקרו בזמן שהאפליקציה הייתה ברקע
+
+### 🔧 Technical
+- `BluetoothController.checkNow()` — שיטה ציבורית חדשה לסריקת שינויי מכשירים לפי דרישה
+- `#acquireWakeLock()`, `#releaseWakeLock()` — ניהול Wake Lock ב-`FindMyCarApp`
+- `#showParkingNotification(parking)`, `#cancelParkingNotification()` — ניהול התראת חניה
+- `sw.js` מטפל בלחיצה על התראה (`notificationclick`)
+- `sw.js` עודכן ל-`findmycar-v1.8.0`
+- `CFG.keys.notifTag = 'fmc-parking-active'`
+
+---
+
 ## [1.7.0] — 2026-07-01
 
 ### ✨ New Features
