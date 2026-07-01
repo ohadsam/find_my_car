@@ -444,7 +444,11 @@ class FindMyCarApp {
     this.#ui.showToast('✅ מיקום חניה נשמר!', 'success');
     this.#acquireWakeLock();
     if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().then(() => this.#showParkingNotification(parking));
+      Notification.requestPermission()
+        .then(() => {
+          if (this.#state.current?.id === parking.id) this.#showParkingNotification(parking);
+        })
+        .catch(() => {});
     } else {
       this.#showParkingNotification(parking);
     }
@@ -636,8 +640,10 @@ class FindMyCarApp {
 
     const isActive = vehicleId === this.#state.activeVehicleId;
     if (isActive) {
-      this.#state.current = null;
-      this.#state.history = hist;
+      this.#state.current         = null;
+      this.#state.history         = hist;
+      this.#state.gpsSpeedSince   = null;
+      this.#state.gpsEndSuggested = false;
       this.#map.removeParkingMarker();
       this.#stopTimer();
       this.#releaseWakeLock();

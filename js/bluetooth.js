@@ -6,6 +6,7 @@ export class BluetoothController {
   #boundHandler         = null;
   #changeTimer          = null;
   #handling             = false;
+  #pendingCheck         = false;
 
   static isSupported() {
     return !!navigator.mediaDevices?.enumerateDevices;
@@ -56,7 +57,7 @@ export class BluetoothController {
   }
 
   async #handleChange() {
-    if (this.#handling) return;
+    if (this.#handling) { this.#pendingCheck = true; return; }
     this.#handling = true;
     try {
       const prev = this.#prevLabels;  // snapshot before await so concurrent calls don't share state
@@ -73,6 +74,10 @@ export class BluetoothController {
       }
     } finally {
       this.#handling = false;
+      if (this.#pendingCheck) {
+        this.#pendingCheck = false;
+        this.#handleChange();
+      }
     }
   }
 
