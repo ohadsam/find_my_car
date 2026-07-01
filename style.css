@@ -26,6 +26,8 @@
   --color-success-glow:  rgba(46,213,115,0.15);
   --color-warning:       #FFA502;
   --color-warning-glow:  rgba(255,165,2,0.15);
+  --color-bt:            #3b82f6;
+  --color-bt-glow:       rgba(59,130,246,0.15);
   --color-purple:        #8E54E9;
 
   /* Text */
@@ -924,6 +926,7 @@ audio { width: 100%; }
 .media-badge.photo { background: var(--color-primary-glow); color: var(--color-primary); }
 .media-badge.voice { background: var(--color-accent-glow); color: var(--color-accent); }
 .media-badge.text  { background: var(--color-warning-glow); color: var(--color-warning); }
+.media-badge.bt    { background: var(--color-bt-glow); color: var(--color-bt); }
 
 .history-item-nav {
   width: 36px;

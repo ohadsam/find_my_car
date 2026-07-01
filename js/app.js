@@ -27,6 +27,7 @@ class FindMyCarApp {
     vehicleEditId:        null,
     vehicleDeleteId:      null,
     btPendingVehicleId:   null,  // vehicle awaiting end-parking confirmation
+    btPendingLabel:       null,  // BT device label that triggered the confirm modal
   };
 
   #map       = new MapController();
@@ -234,9 +235,13 @@ class FindMyCarApp {
     Utils.el('vehicleBtUnlinkBtn')?.addEventListener('click', () => this.#ui.setBtDeviceValue(null));
     Utils.el('openBtSettingsBtn')?.addEventListener('click',  () => this.#openBtSettingsModal());
     Utils.el('btParkingEndBtn')?.addEventListener('click', () => {
-      const vid = this.#state.btPendingVehicleId;
+      const vid   = this.#state.btPendingVehicleId;
+      const label = this.#state.btPendingLabel;
       this.#closeModal('btParkingModal');
-      if (vid) this.#btEndParking(vid);
+      if (vid) {
+        if (label) this.#markBtEnd(vid, label);
+        this.#btEndParking(vid);
+      }
     });
     Utils.el('btStartAddPhotoBtn')?.addEventListener('click', () => {
       this.#closeModal('btStartPopupModal');
@@ -385,14 +390,17 @@ class FindMyCarApp {
     }
 
     const parking = {
-      id:          Utils.uuid(),
-      timestamp:   new Date().toISOString(),
-      location:    { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy || 0 },
-      address:     null,
-      description: null,
-      photo:       null,
-      voice:       null,
-      voiceDuration: 0
+      id:            Utils.uuid(),
+      timestamp:     new Date().toISOString(),
+      location:      { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy || 0 },
+      address:       null,
+      description:   null,
+      photo:         null,
+      voice:         null,
+      voiceDuration: 0,
+      btStartDevice: null,
+      btEndDevice:   null,
+      btEndTime:     null,
     };
 
     this.#state.current = parking;
@@ -709,10 +717,12 @@ class FindMyCarApp {
       if (v.bluetoothDevice !== label) continue;
       if (!VehicleController.getCurrent(v.id)) continue;
       if (v.bluetoothAutoEnd) {
+        this.#markBtEnd(v.id, label);
         this.#btEndParking(v.id);
         this.#ui.showToast(`🔵 ${v.icon} ${v.name} — חניה הסתיימה אוטומטית`, 'success');
       } else {
         this.#state.btPendingVehicleId = v.id;
+        this.#state.btPendingLabel     = label;
         const title = Utils.el('btParkingTitle');
         const desc  = Utils.el('btParkingDesc');
         if (title) title.textContent = `${v.icon} הגעת לרכב?`;
@@ -741,12 +751,31 @@ class FindMyCarApp {
         break;
       }
 
+      this.#state.current.btStartDevice = label;
+      VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+
       if (v.bluetoothStartPopup) {
         const subtitle = Utils.el('btStartPopupSubtitle');
         if (subtitle) subtitle.textContent = `${v.icon} ${v.name}`;
         this.#ui.openModal('btStartPopupModal');
       }
       break;
+    }
+  }
+
+  #markBtEnd(vehicleId, label) {
+    const now = new Date().toISOString();
+    if (vehicleId === this.#state.activeVehicleId) {
+      if (!this.#state.current) return;
+      this.#state.current.btEndDevice = label;
+      this.#state.current.btEndTime   = now;
+      VehicleController.setCurrent(vehicleId, this.#state.current);
+    } else {
+      const parking = VehicleController.getCurrent(vehicleId);
+      if (!parking) return;
+      parking.btEndDevice = label;
+      parking.btEndTime   = now;
+      VehicleController.setCurrent(vehicleId, parking);
     }
   }
 
@@ -955,7 +984,7 @@ class FindMyCarApp {
     if (id === 'photoModal')        this.#camera.close();
     if (id === 'voiceModal')        this.#voice.close();
     if (id === 'detailModal')       this.#map.destroyDetailMap();
-    if (id === 'btParkingModal') this.#state.btPendingVehicleId = null;
+    if (id === 'btParkingModal') { this.#state.btPendingVehicleId = null; this.#state.btPendingLabel = null; }
     if (id === 'settingsView')      return; // views are not modals
     this.#ui.closeModal(id);
   }

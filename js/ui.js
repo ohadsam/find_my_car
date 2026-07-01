@@ -728,9 +728,10 @@ export class UIController {
       : `<span>🅿️</span>`;
 
     const badges = [
-      item.photo       ? '<span class="media-badge photo">📷 תמונה</span>'   : '',
-      item.voice       ? '<span class="media-badge voice">🎙️ הקלטה</span>'   : '',
-      item.description ? '<span class="media-badge text">✏️ תיאור</span>'     : ''
+      item.photo                              ? '<span class="media-badge photo">📷 תמונה</span>'   : '',
+      item.voice                              ? '<span class="media-badge voice">🎙️ הקלטה</span>'  : '',
+      item.description                        ? '<span class="media-badge text">✏️ תיאור</span>'    : '',
+      (item.btStartDevice || item.btEndDevice) ? '<span class="media-badge bt">🔵 BT</span>'        : '',
     ].filter(Boolean);
 
     const addrDisplay = normalizeAddress(item.address) || 'מיקום ידוע';
@@ -788,6 +789,16 @@ export class UIController {
     body.appendChild(this._makeSection('📍 מיקום', addrDisplay));
     body.appendChild(this._makeSection('⏰ זמן חניה',
       `${Utils.formatDate(item.timestamp)}, ${Utils.formatTime(item.timestamp)}`));
+
+    if (item.btStartDevice) {
+      body.appendChild(this._makeSection('🔵 הופעל אוטומטית', item.btStartDevice));
+    }
+    if (item.btEndDevice) {
+      const btEndVal = item.btEndTime
+        ? `${item.btEndDevice} • ${Utils.formatDate(item.btEndTime)}, ${Utils.formatTime(item.btEndTime)}`
+        : item.btEndDevice;
+      body.appendChild(this._makeSection('🔵 הסתיים אוטומטית', btEndVal));
+    }
 
     if (item.description) {
       body.appendChild(this._makeSection('✏️ תיאור', item.description));
