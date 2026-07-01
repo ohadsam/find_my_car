@@ -27,7 +27,6 @@ class FindMyCarApp {
     vehicleEditId:        null,
     vehicleDeleteId:      null,
     btPendingVehicleId:   null,  // vehicle awaiting end-parking confirmation
-    btStartPopupVehicle:  null,  // vehicle whose parking was just auto-started
   };
 
   #map       = new MapController();
@@ -240,15 +239,15 @@ class FindMyCarApp {
       if (vid) this.#btEndParking(vid);
     });
     Utils.el('btStartAddPhotoBtn')?.addEventListener('click', () => {
-      this.#ui.closeModal('btStartPopupModal');
+      this.#closeModal('btStartPopupModal');
       this.#openCameraModal();
     });
     Utils.el('btStartAddVoiceBtn')?.addEventListener('click', () => {
-      this.#ui.closeModal('btStartPopupModal');
+      this.#closeModal('btStartPopupModal');
       this.#openVoiceModal();
     });
     Utils.el('btStartAddTextBtn')?.addEventListener('click', () => {
-      this.#ui.closeModal('btStartPopupModal');
+      this.#closeModal('btStartPopupModal');
       this.#openTextModal();
     });
 
@@ -466,7 +465,7 @@ class FindMyCarApp {
   }
 
   // ── VEHICLE MANAGEMENT ────────────────────────────────────────
-  #switchVehicle(id) {
+  #switchVehicle(id, { silent = false } = {}) {
     if (id === this.#state.activeVehicleId) return;
     this.#stopTimer();
     this.#map.removeParkingMarker();
@@ -486,8 +485,10 @@ class FindMyCarApp {
       this.#startTimer();
     }
     this.#ui.updateAll(this.#state);
-    const v = VehicleController.getById(id);
-    this.#ui.showToast(`${v?.icon || '🚗'} עבר ל${v?.name || 'רכב'}`, 'info');
+    if (!silent) {
+      const v = VehicleController.getById(id);
+      this.#ui.showToast(`${v?.icon || '🚗'} עבר ל${v?.name || 'רכב'}`, 'info');
+    }
   }
 
   #openVehicleModal(vehicle) {
@@ -540,6 +541,7 @@ class FindMyCarApp {
     if (!ok) { this.#ui.showToast('לא ניתן למחוק את הרכב האחרון', 'error'); return; }
 
     this.#state.vehicles = VehicleController.getAll();
+    if (this.#state.btPendingVehicleId === id) this.#state.btPendingVehicleId = null;
     this.#closeModal('vehicleDeleteModal');
 
     if (wasActive) {
@@ -547,6 +549,7 @@ class FindMyCarApp {
       if (nextId) this.#switchVehicle(nextId);
     }
     this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
+    this.#updateBtBadge();
     this.#ui.showToast('🗑️ הרכב נמחק', 'info');
   }
 
@@ -727,12 +730,12 @@ class FindMyCarApp {
       if (!v.bluetoothAutoStart) continue;
       if (VehicleController.getCurrent(v.id)) continue; // already has parking
 
-      // Switch to this vehicle if needed, then save parking
-      if (v.id !== this.#state.activeVehicleId) this.#switchVehicle(v.id);
+      // Switch to this vehicle if needed (silently — BT event should not intrude with a toast), then save parking
+      if (v.id !== this.#state.activeVehicleId) this.#switchVehicle(v.id, { silent: true });
       await this.#saveNewParking();
+      if (!this.#state.current) break; // GPS failed — don't show popup for a parking that wasn't saved
 
       if (v.bluetoothStartPopup) {
-        this.#state.btStartPopupVehicle = v;
         const subtitle = Utils.el('btStartPopupSubtitle');
         if (subtitle) subtitle.textContent = `${v.icon} ${v.name}`;
         this.#ui.openModal('btStartPopupModal');
@@ -946,8 +949,7 @@ class FindMyCarApp {
     if (id === 'photoModal')        this.#camera.close();
     if (id === 'voiceModal')        this.#voice.close();
     if (id === 'detailModal')       this.#map.destroyDetailMap();
-    if (id === 'btParkingModal')    this.#state.btPendingVehicleId  = null;
-    if (id === 'btStartPopupModal') this.#state.btStartPopupVehicle = null;
+    if (id === 'btParkingModal') this.#state.btPendingVehicleId = null;
     if (id === 'settingsView')      return; // views are not modals
     this.#ui.closeModal(id);
   }

@@ -15,7 +15,9 @@
   /* Brand colors */
   --color-primary:       #5B8BF5;
   --color-primary-dark:  #4776E6;
-  --color-primary-glow:  rgba(91,139,245,0.18);
+  --color-primary-glow:       rgba(91,139,245,0.18);
+  --color-primary-glow-hover: rgba(91,139,245,0.28);
+  --color-white:              #fff;
   --color-accent:        #00D4AA;
   --color-accent-glow:   rgba(0,212,170,0.15);
   --color-danger:        #FF4757;
@@ -1889,12 +1891,12 @@ audio { width: 100%; }
   font-weight: 600;
   transition: var(--transition);
 }
-.settings-bt-btn:hover { background: rgba(91,139,245,0.28); }
+.settings-bt-btn:hover { background: var(--color-primary-glow-hover); }
 .settings-bt-btn:active { transform: scale(0.97); }
 .bt-linked-badge {
   margin-right: auto;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-white);
   font-size: 0.7rem;
   font-weight: 700;
   min-width: 20px;
@@ -2055,7 +2057,7 @@ audio { width: 100%; }
 .bt-toggle input:checked + .bt-toggle-slider::before {
   right: auto;
   left: 2px;
-  background: #fff;
+  background: var(--color-white);
 }
 .bt-vehicle-card {
   background: var(--bg-elevated);

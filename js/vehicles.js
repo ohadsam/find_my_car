@@ -67,7 +67,13 @@ export const VehicleController = {
     const vehicles = this.getAll();
     const idx = vehicles.findIndex(v => v.id === id);
     if (idx === -1) return false;
-    vehicles[idx] = { ...vehicles[idx], ...updates };
+    vehicles[idx] = {
+      bluetoothAutoEnd:    false,
+      bluetoothAutoStart:  false,
+      bluetoothStartPopup: true,
+      ...vehicles[idx],
+      ...updates,
+    };
     Store.set(CFG.keys.vehicles, vehicles);
     return true;
   },

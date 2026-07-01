@@ -110,7 +110,6 @@ Private field — not accessible from console. Internal shape:
   vehicleEditId:       string | null,    // vehicle being edited (null = creating)
   vehicleDeleteId:     string | null,    // vehicle pending delete confirm
   btPendingVehicleId:  string | null,    // vehicle waiting for BT end-parking confirm
-  btStartPopupVehicle: Vehicle | null,   // vehicle whose BT auto-start popup is open
 }
 ```
 
