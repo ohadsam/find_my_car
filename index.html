@@ -219,6 +219,14 @@
                 <span>חניה חדשה</span>
               </button>
             </div>
+
+            <!-- End Parking Button -->
+            <button class="end-parking-btn" id="endParkingBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span>סיום חניה</span>
+            </button>
           </div>
 
           <!-- Add To Parking Section -->
@@ -274,6 +282,18 @@
           <span>הגדרות Bluetooth</span>
           <span class="bt-linked-badge" id="btLinkedBadge" style="display:none;"></span>
         </button>
+      </div>
+      <div class="gps-settings-wrapper">
+        <div class="gps-toggle-row">
+          <div class="gps-toggle-info">
+            <span class="gps-toggle-label">🚗 הצעת סיום לפי GPS</span>
+            <span class="gps-toggle-desc">כשמזוהה נסיעה ברכב תוצג הצעה לסיים את החניה</span>
+          </div>
+          <label class="bt-toggle" aria-label="הצעת סיום לפי GPS">
+            <input type="checkbox" id="gpsAutoEndToggle">
+            <span class="bt-toggle-slider"></span>
+          </label>
+        </div>
       </div>
       <div class="settings-reload-wrapper">
         <button class="settings-reload-btn" id="reloadAppBtn" aria-label="טען גרסה חדשה">
@@ -746,6 +766,23 @@
       </div>
       <div class="modal-footer">
         <button class="modal-btn secondary" data-close="btStartPopupModal">לא תודה</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GPS SPEED END-PARKING PROMPT ── -->
+  <div id="gpsEndModal" class="modal" role="dialog" aria-modal="true" aria-label="זוהתה נסיעה" style="display:none;">
+    <div class="modal-backdrop" data-close="gpsEndModal"></div>
+    <div class="modal-sheet modal-sheet-alert">
+      <div class="modal-handle"></div>
+      <div class="modal-body alert-body">
+        <div class="alert-icon">🚗</div>
+        <h3 class="alert-title">נראה שאתה נוסע ברכב</h3>
+        <p class="alert-desc">זוהתה מהירות נסיעה — האם לסיים את החניה?</p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" id="gpsEndDismissBtn">לא, אשאר</button>
+        <button class="modal-btn success" id="gpsEndConfirmBtn">כן, סיים ✅</button>
       </div>
     </div>
   </div>

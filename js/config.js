@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.6.0',
+  version: '1.7.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -11,7 +11,10 @@ export const CFG = Object.freeze({
     seenVersion:       'fmc_seen_version_v1',
     mapCollapsed:      'fmc_map_collapsed_v1',
     bluetoothSettings: 'fmc_bluetooth_v1',
+    gpsAutoEnd:        'fmc_gps_auto_end_v1',
   }),
+  gpsSpeedThreshold: 7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
+  gpsSpeedDuration:  8000, // ms speed must be sustained before suggesting end
   maxHistory:        30,
   maxImgWidth:       900,
   imgQuality:        0.72,
@@ -27,6 +30,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.7.0',
+      date: '2026-07-01',
+      items: Object.freeze([
+        'כפתור "סיום חניה" ישיר בכרטיס החניה הפעילה',
+        'הצעת סיום חניה אוטומטית לפי מהירות GPS (נסיעה ברכב)',
+        'מידע Bluetooth בהיסטוריה — מי התחיל/סיים כל חניה',
+      ]),
+    }),
     Object.freeze({
       version: '1.6.0',
       date: '2026-06-30',

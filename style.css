@@ -22,10 +22,14 @@
   --color-accent-glow:   rgba(0,212,170,0.15);
   --color-danger:        #FF4757;
   --color-danger-glow:   rgba(255,71,87,0.15);
+  --color-danger-border: rgba(255,71,87,0.3);
+  --color-danger-hover:  rgba(255,71,87,0.2);
   --color-success:       #2ED573;
   --color-success-glow:  rgba(46,213,115,0.15);
   --color-warning:       #FFA502;
   --color-warning-glow:  rgba(255,165,2,0.15);
+  --color-bt:            #3b82f6;
+  --color-bt-glow:       rgba(59,130,246,0.15);
   --color-purple:        #8E54E9;
 
   /* Text */
@@ -783,6 +787,59 @@ audio { width: 100%; }
 .wa-btn svg { width: 20px; height: 20px; }
 .wa-btn:active { background: rgba(37,211,102,0.25); }
 
+/* ── END PARKING BUTTON ── */
+.end-parking-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: var(--color-danger-glow);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.end-parking-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+.end-parking-btn:hover { background: var(--color-danger-hover); }
+.end-parking-btn:active { transform: scale(0.97); }
+
+/* ── GPS SETTINGS ── */
+.gps-settings-wrapper {
+  padding: 0 16px 12px;
+  flex-shrink: 0;
+}
+.gps-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+.gps-toggle-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.gps-toggle-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.gps-toggle-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 /* ── ADD MEDIA SECTION ── */
 .add-media-section { margin-top: 16px; }
 .section-label {
@@ -924,6 +981,7 @@ audio { width: 100%; }
 .media-badge.photo { background: var(--color-primary-glow); color: var(--color-primary); }
 .media-badge.voice { background: var(--color-accent-glow); color: var(--color-accent); }
 .media-badge.text  { background: var(--color-warning-glow); color: var(--color-warning); }
+.media-badge.bt    { background: var(--color-bt-glow); color: var(--color-bt); }
 
 .history-item-nav {
   width: 36px;
@@ -1145,7 +1203,7 @@ audio { width: 100%; }
 .modal-btn.danger {
   background: var(--color-danger-glow);
   color: var(--color-danger);
-  border-color: rgba(255,71,87,0.3);
+  border-color: var(--color-danger-border);
 }
 .modal-btn.warning {
   background: linear-gradient(135deg, var(--color-warning), #ff8c00);
@@ -1319,7 +1377,7 @@ audio { width: 100%; }
 .record-toggle.recording {
   background: var(--color-danger-glow);
   color: var(--color-danger);
-  border-color: rgba(255,71,87,0.3);
+  border-color: var(--color-danger-border);
   animation: recordingPulse 1.5s ease-in-out infinite;
 }
 @keyframes recordingPulse {
@@ -2254,7 +2312,7 @@ audio { width: 100%; }
 .danger-btn {
   background: var(--color-danger-glow);
   color: var(--color-danger);
-  border-color: rgba(255,71,87,0.3);
+  border-color: var(--color-danger-border);
 }
 
 /* ── WHAT'S NEW MODAL ── */

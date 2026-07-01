@@ -59,6 +59,11 @@ Loaded via `<script type="module" src="js/app.js">` with `<link rel="moduleprelo
   enabled: boolean   // master switch for all Bluetooth features
 }
 
+// GPS auto-end settings (localStorage key: fmc_gps_auto_end_v1)
+{
+  enabled: boolean   // suggest end-parking when vehicle-speed movement detected
+}
+
 // Active vehicle ID (localStorage key: fmc_active_v1)
 "vehicleId"
 
@@ -71,7 +76,10 @@ Loaded via `<script type="module" src="js/app.js">` with `<link rel="moduleprelo
   description: "string | null", // user text, max 300 chars
   photo: "data:image/jpeg;base64,... | null",   // compressed JPEG
   voice: "data:audio/webm;base64,... | null",   // MediaRecorder output
-  voiceDuration: number          // seconds
+  voiceDuration: number,         // seconds
+  btStartDevice: "string | null",  // BT device label that auto-started this parking (v1.6.1+)
+  btEndDevice:   "string | null",  // BT device label that auto-ended this parking (v1.6.1+)
+  btEndTime:     "ISO 8601 string | null",  // timestamp when BT end was triggered (v1.6.1+)
 }
 
 // AddressObj (v1.1.0+) — from js/geocoder.js
@@ -110,6 +118,9 @@ Private field — not accessible from console. Internal shape:
   vehicleEditId:       string | null,    // vehicle being edited (null = creating)
   vehicleDeleteId:     string | null,    // vehicle pending delete confirm
   btPendingVehicleId:  string | null,    // vehicle waiting for BT end-parking confirm
+  btPendingLabel:      string | null,    // BT device label that triggered the confirm modal
+  gpsSpeedSince:       number | null,    // Date.now() when speed first exceeded threshold
+  gpsEndSuggested:     boolean,          // true after GPS end suggestion shown this session
 }
 ```
 
@@ -134,6 +145,9 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | `#closeModal(id)` | Camera/voice/map cleanup + `ui.closeModal(id)` |
 | `#onBtConnected(label)` | BT connect → find matching vehicle → auto-end or show confirm modal |
 | `#onBtDisconnected(label)` | BT disconnect → find matching vehicle → auto-start parking + optional popup |
+| `#markBtEnd(vehicleId, label)` | Annotate current parking with BT end device + timestamp before it moves to history |
+| `#getGpsSettings()` | Read GPS auto-end setting from localStorage |
+| `#checkGpsSpeed(speed)` | Called on each GPS position update; opens `gpsEndModal` if speed sustained ≥ threshold |
 | `#btEndParking(vehicleId)` | End parking for a vehicle (active or background) |
 | `#btScanDevices()` | Scan audio devices; prompt mic permission if labels hidden |
 | `#openBtSettingsModal()` | Render and open `btSettingsModal` |
