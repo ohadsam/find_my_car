@@ -80,7 +80,13 @@ export const VehicleController = {
 
   updateAllBluetooth(updates) {
     const vehicles = this.getAll();
-    const updated = vehicles.map(v => v.bluetoothDevice ? { ...v, ...updates } : v);
+    const updated = vehicles.map(v => v.bluetoothDevice ? {
+      bluetoothAutoEnd:    false,
+      bluetoothAutoStart:  false,
+      bluetoothStartPopup: true,
+      ...v,
+      ...updates,
+    } : v);
     Store.set(CFG.keys.vehicles, updated);
   },
 

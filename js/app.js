@@ -240,15 +240,15 @@ class FindMyCarApp {
     });
     Utils.el('btStartAddPhotoBtn')?.addEventListener('click', () => {
       this.#closeModal('btStartPopupModal');
-      this.#openCameraModal();
+      if (this.#state.current) this.#openCameraModal();
     });
     Utils.el('btStartAddVoiceBtn')?.addEventListener('click', () => {
       this.#closeModal('btStartPopupModal');
-      this.#openVoiceModal();
+      if (this.#state.current) this.#openVoiceModal();
     });
     Utils.el('btStartAddTextBtn')?.addEventListener('click', () => {
       this.#closeModal('btStartPopupModal');
-      this.#openTextModal();
+      if (this.#state.current) this.#openTextModal();
     });
 
     // Global close handler (data-close attribute on backdrops and close buttons)
@@ -541,12 +541,12 @@ class FindMyCarApp {
     if (!ok) { this.#ui.showToast('לא ניתן למחוק את הרכב האחרון', 'error'); return; }
 
     this.#state.vehicles = VehicleController.getAll();
-    if (this.#state.btPendingVehicleId === id) this.#state.btPendingVehicleId = null;
+    if (this.#state.btPendingVehicleId === id) this.#closeModal('btParkingModal');
     this.#closeModal('vehicleDeleteModal');
 
     if (wasActive) {
       const nextId = this.#state.vehicles[0]?.id;
-      if (nextId) this.#switchVehicle(nextId);
+      if (nextId) this.#switchVehicle(nextId, { silent: true });
     }
     this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
     this.#updateBtBadge();
@@ -730,10 +730,16 @@ class FindMyCarApp {
       if (!v.bluetoothAutoStart) continue;
       if (VehicleController.getCurrent(v.id)) continue; // already has parking
 
-      // Switch to this vehicle if needed (silently — BT event should not intrude with a toast), then save parking
-      if (v.id !== this.#state.activeVehicleId) this.#switchVehicle(v.id, { silent: true });
+      // Switch to this vehicle if needed silently, then save parking.
+      // Roll back the switch if GPS fails so the user's active parking remains visible.
+      const needsSwitch = v.id !== this.#state.activeVehicleId;
+      const prevId      = this.#state.activeVehicleId;
+      if (needsSwitch) this.#switchVehicle(v.id, { silent: true });
       await this.#saveNewParking();
-      if (!this.#state.current) break; // GPS failed — don't show popup for a parking that wasn't saved
+      if (!this.#state.current) {
+        if (needsSwitch) this.#switchVehicle(prevId, { silent: true }); // GPS failed — restore previous vehicle
+        break;
+      }
 
       if (v.bluetoothStartPopup) {
         const subtitle = Utils.el('btStartPopupSubtitle');
