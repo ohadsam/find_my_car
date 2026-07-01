@@ -28,6 +28,8 @@ class FindMyCarApp {
     vehicleDeleteId:      null,
     btPendingVehicleId:   null,  // vehicle awaiting end-parking confirmation
     btPendingLabel:       null,  // BT device label that triggered the confirm modal
+    gpsSpeedSince:        null,  // Date.now() when speed first exceeded threshold
+    gpsEndSuggested:      false, // true after GPS end suggestion shown this session
   };
 
   #map       = new MapController();
@@ -93,6 +95,9 @@ class FindMyCarApp {
     if (this.#getBtSettings().enabled) {
       this.#bluetooth.startWatch();
     }
+
+    const gpsToggle = Utils.el('gpsAutoEndToggle');
+    if (gpsToggle) gpsToggle.checked = this.#getGpsSettings().enabled;
 
     // Init map; after loading screen fades, invalidate size to handle any CSS transition artifacts
     setTimeout(() => {
@@ -165,6 +170,7 @@ class FindMyCarApp {
     Utils.el('shareBtn')?.addEventListener('click',        () => this.#shareParking(this.#state.current));
     Utils.el('whatsappBtn')?.addEventListener('click',     () => this.#openWhatsAppModal());
     Utils.el('resetParkingBtn')?.addEventListener('click', () => this.#ui.openModal('resetModal'));
+    Utils.el('endParkingBtn')?.addEventListener('click',   () => this.#resetParking());
 
     Utils.el('confirmResetBtn')?.addEventListener('click', () => {
       this.#ui.closeModal('resetModal');
@@ -230,6 +236,16 @@ class FindMyCarApp {
     Utils.el('saveVehicleBtn')?.addEventListener('click', () => this.#saveVehicle());
     Utils.el('confirmVehicleDeleteBtn')?.addEventListener('click', () => this.#confirmDeleteVehicle());
 
+    // GPS auto-end
+    Utils.el('gpsEndConfirmBtn')?.addEventListener('click', () => {
+      this.#closeModal('gpsEndModal');
+      this.#resetParking();
+    });
+    Utils.el('gpsEndDismissBtn')?.addEventListener('click', () => this.#closeModal('gpsEndModal'));
+    Utils.el('gpsAutoEndToggle')?.addEventListener('change', e => {
+      Store.set(CFG.keys.gpsAutoEnd, { enabled: e.target.checked });
+    });
+
     // Bluetooth
     Utils.el('vehicleBtScanBtn')?.addEventListener('click',   () => this.#btScanDevices());
     Utils.el('vehicleBtUnlinkBtn')?.addEventListener('click', () => this.#ui.setBtDeviceValue(null));
@@ -239,7 +255,7 @@ class FindMyCarApp {
       const label = this.#state.btPendingLabel;
       this.#closeModal('btParkingModal');
       if (vid) {
-        if (label) this.#markBtEnd(vid, label);
+        this.#markBtEnd(vid, label);
         this.#btEndParking(vid);
       }
     });
@@ -331,10 +347,11 @@ class FindMyCarApp {
   }
 
   #onPosition(pos) {
-    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    const { latitude: lat, longitude: lng, accuracy, speed } = pos.coords;
     this.#state.userPos = { lat, lng, accuracy };
     this.#map.updateUserMarker(lat, lng);
     this.#ui.updateDistance(this.#state);
+    this.#checkGpsSpeed(speed);
   }
 
   #getCurrentLocation() {
@@ -403,7 +420,9 @@ class FindMyCarApp {
       btEndTime:     null,
     };
 
-    this.#state.current = parking;
+    this.#state.current       = parking;
+    this.#state.gpsEndSuggested = false;
+    this.#state.gpsSpeedSince   = null;
     VehicleController.setCurrent(this.#state.activeVehicleId, parking);
 
     this.#map.addParkingMarker(loc.lat, loc.lng, null);
@@ -455,7 +474,9 @@ class FindMyCarApp {
   #resetParking() {
     if (!this.#state.current) return;
     this.#addToHistory(this.#state.current);
-    this.#state.current = null;
+    this.#state.current       = null;
+    this.#state.gpsSpeedSince   = null;
+    this.#state.gpsEndSuggested = false;
     VehicleController.removeCurrent(this.#state.activeVehicleId);
     this.#map.removeParkingMarker();
     this.#stopTimer();
@@ -479,9 +500,11 @@ class FindMyCarApp {
     this.#map.removeParkingMarker();
 
     VehicleController.setActive(id);
-    this.#state.activeVehicleId = id;
-    this.#state.current         = VehicleController.getCurrent(id);
-    this.#state.history         = VehicleController.getHistory(id);
+    this.#state.activeVehicleId  = id;
+    this.#state.current          = VehicleController.getCurrent(id);
+    this.#state.history          = VehicleController.getHistory(id);
+    this.#state.gpsSpeedSince    = null;
+    this.#state.gpsEndSuggested  = false;
 
     if (this.#state.current) {
       this.#map.addParkingMarker(
@@ -706,6 +729,27 @@ class FindMyCarApp {
     this.#ui.showToast('🗑️ תיאור נמחק', 'info');
   }
 
+  // ── GPS AUTO-END ──────────────────────────────────────────────
+  #getGpsSettings() {
+    return Store.get(CFG.keys.gpsAutoEnd, { enabled: false });
+  }
+
+  #checkGpsSpeed(speed) {
+    if (!this.#state.current || this.#state.gpsEndSuggested) return;
+    if (!this.#getGpsSettings().enabled) return;
+    if (speed === null || speed === undefined || Number.isNaN(speed) || speed < CFG.gpsSpeedThreshold) {
+      this.#state.gpsSpeedSince = null;
+      return;
+    }
+    if (!this.#state.gpsSpeedSince) {
+      this.#state.gpsSpeedSince = Date.now();
+    } else if (Date.now() - this.#state.gpsSpeedSince >= CFG.gpsSpeedDuration) {
+      this.#state.gpsEndSuggested = true;
+      this.#state.gpsSpeedSince   = null;
+      this.#ui.openModal('gpsEndModal');
+    }
+  }
+
   // ── BLUETOOTH ─────────────────────────────────────────────────
   #getBtSettings() {
     return Store.get(CFG.keys.bluetoothSettings, { enabled: true });
@@ -721,6 +765,7 @@ class FindMyCarApp {
         this.#btEndParking(v.id);
         this.#ui.showToast(`🔵 ${v.icon} ${v.name} — חניה הסתיימה אוטומטית`, 'success');
       } else {
+        if (this.#state.btPendingVehicleId) continue; // confirm modal already open; keep processing autoEnd vehicles
         this.#state.btPendingVehicleId = v.id;
         this.#state.btPendingLabel     = label;
         const title = Utils.el('btParkingTitle');
@@ -729,7 +774,6 @@ class FindMyCarApp {
         if (desc)  desc.textContent  = `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`;
         this.#ui.openModal('btParkingModal');
       }
-      break;
     }
   }
 
@@ -751,15 +795,20 @@ class FindMyCarApp {
         break;
       }
 
-      this.#state.current.btStartDevice = label;
-      VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+      const saved = VehicleController.getCurrent(v.id);
+      if (saved) {
+        saved.btStartDevice = label;
+        VehicleController.setCurrent(v.id, saved);
+        if (v.id === this.#state.activeVehicleId && this.#state.current?.id === saved.id) {
+          this.#state.current.btStartDevice = label;
+        }
+      }
 
       if (v.bluetoothStartPopup) {
         const subtitle = Utils.el('btStartPopupSubtitle');
         if (subtitle) subtitle.textContent = `${v.icon} ${v.name}`;
         this.#ui.openModal('btStartPopupModal');
       }
-      break;
     }
   }
 
@@ -985,6 +1034,7 @@ class FindMyCarApp {
     if (id === 'voiceModal')        this.#voice.close();
     if (id === 'detailModal')       this.#map.destroyDetailMap();
     if (id === 'btParkingModal') { this.#state.btPendingVehicleId = null; this.#state.btPendingLabel = null; }
+    if (id === 'gpsEndModal')    this.#state.gpsEndSuggested = true; // prevent re-showing if dismissed
     if (id === 'settingsView')      return; // views are not modals
     this.#ui.closeModal(id);
   }

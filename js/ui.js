@@ -797,7 +797,7 @@ export class UIController {
       const btEndVal = item.btEndTime
         ? `${item.btEndDevice} • ${Utils.formatDate(item.btEndTime)}, ${Utils.formatTime(item.btEndTime)}`
         : item.btEndDevice;
-      body.appendChild(this._makeSection('🔵 הסתיים אוטומטית', btEndVal));
+      body.appendChild(this._makeSection('🔵 הסתיים ב-Bluetooth', btEndVal));
     }
 
     if (item.description) {
