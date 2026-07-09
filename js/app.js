@@ -176,6 +176,7 @@ class FindMyCarApp {
     Utils.el('shareBtn')?.addEventListener('click',        () => this.#shareParking(this.#state.current));
     Utils.el('whatsappBtn')?.addEventListener('click',     () => this.#openWhatsAppModal());
     Utils.el('resetParkingBtn')?.addEventListener('click', () => this.#ui.openModal('resetModal'));
+    Utils.el('swapParkingBtn')?.addEventListener('click',  () => this.#swapParking());
     Utils.el('endParkingBtn')?.addEventListener('click',   () => this.#resetParking());
 
     Utils.el('confirmResetBtn')?.addEventListener('click', () => {
@@ -452,6 +453,60 @@ class FindMyCarApp {
     } else {
       this.#showParkingNotification(parking);
     }
+
+    reverseGeocode(loc.lat, loc.lng).then(addr => {
+      if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
+      this.#state.current.address = addr;
+      VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+      this.#ui.updateAddress(this.#state.current);
+      this.#map.updateParkingMarkerPopup(addr);
+      this.#showParkingNotification(this.#state.current);
+    });
+  }
+
+  async #swapParking() {
+    if (!this.#state.current) return;
+    this.#ui.showToast('מחפש מיקום... ⏳', 'info');
+    let loc;
+    try {
+      loc = await this.#getCurrentLocation();
+    } catch {
+      if (this.#state.userPos) {
+        loc = this.#state.userPos;
+      } else {
+        this.#ui.showToast('לא ניתן לאתר מיקום. בדוק הרשאות GPS.', 'error');
+        return;
+      }
+    }
+
+    this.#addToHistory(this.#state.current);
+
+    const parking = {
+      id:            Utils.uuid(),
+      timestamp:     new Date().toISOString(),
+      location:      { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy || 0 },
+      address:       null,
+      description:   null,
+      photo:         null,
+      voice:         null,
+      voiceDuration: 0,
+      btStartDevice: null,
+      btEndDevice:   null,
+      btEndTime:     null,
+    };
+
+    this.#state.current         = parking;
+    this.#state.gpsEndSuggested = false;
+    this.#state.gpsSpeedSince   = null;
+    VehicleController.setCurrent(this.#state.activeVehicleId, parking);
+
+    this.#map.addParkingMarker(loc.lat, loc.lng, null);
+    this.#map.flyTo(loc.lat, loc.lng, 17);
+    this.#stopTimer();
+    this.#startTimer();
+    this.#ui.updateAll(this.#state);
+    this.#ui.showToast('🔄 מיקום החניה הוחלף!', 'success');
+    this.#showParkingNotification(parking);
 
     reverseGeocode(loc.lat, loc.lng).then(addr => {
       if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
