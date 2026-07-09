@@ -32,6 +32,8 @@ class FindMyCarApp {
     gpsEndSuggested:      false, // true after GPS end suggestion shown this session
   };
 
+  #swapping  = false;  // guard against concurrent #swapParking() calls
+
   #map       = new MapController();
   #camera    = new CameraController();
   #voice     = new VoiceController();
@@ -176,6 +178,7 @@ class FindMyCarApp {
     Utils.el('shareBtn')?.addEventListener('click',        () => this.#shareParking(this.#state.current));
     Utils.el('whatsappBtn')?.addEventListener('click',     () => this.#openWhatsAppModal());
     Utils.el('resetParkingBtn')?.addEventListener('click', () => this.#ui.openModal('resetModal'));
+    Utils.el('swapParkingBtn')?.addEventListener('click',  () => this.#swapParking());
     Utils.el('endParkingBtn')?.addEventListener('click',   () => this.#resetParking());
 
     Utils.el('confirmResetBtn')?.addEventListener('click', () => {
@@ -457,6 +460,78 @@ class FindMyCarApp {
       if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
       this.#state.current.address = addr;
       VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+      this.#ui.updateAddress(this.#state.current);
+      this.#map.updateParkingMarkerPopup(addr);
+      this.#showParkingNotification(this.#state.current);
+    });
+  }
+
+  async #swapParking() {
+    if (this.#swapping || !this.#state.current) return;
+    this.#swapping = true;
+
+    // Close modals that could end the new parking if confirmed after the swap
+    this.#closeModal('gpsEndModal');
+    if (this.#state.btPendingVehicleId === this.#state.activeVehicleId) {
+      this.#closeModal('btParkingModal');
+    }
+
+    // Snapshot identity before the async GPS call so we can detect mid-swap state changes
+    const prevId    = this.#state.current.id;
+    const vehicleId = this.#state.activeVehicleId;
+
+    this.#ui.showToast('מחפש מיקום... ⏳', 'info');
+    let loc;
+    try {
+      loc = await this.#getCurrentLocation();
+    } catch {
+      loc = this.#state.userPos ?? null;
+    } finally {
+      this.#swapping = false;
+    }
+
+    if (!loc) {
+      this.#ui.showToast('לא ניתן לאתר מיקום. בדוק הרשאות GPS.', 'error');
+      return;
+    }
+
+    // Bail if the user ended/switched parking while GPS was pending
+    if (this.#state.activeVehicleId !== vehicleId || this.#state.current?.id !== prevId) return;
+
+    this.#addToHistory(this.#state.current);
+
+    const parking = {
+      id:            Utils.uuid(),
+      timestamp:     new Date().toISOString(),
+      location:      { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy || 0 },
+      address:       null,
+      description:   null,
+      photo:         null,
+      voice:         null,
+      voiceDuration: 0,
+      btStartDevice: null,
+      btEndDevice:   null,
+      btEndTime:     null,
+    };
+
+    this.#state.current         = parking;
+    this.#state.gpsEndSuggested = false;
+    this.#state.gpsSpeedSince   = null;
+    VehicleController.setCurrent(vehicleId, parking);
+
+    this.#map.addParkingMarker(loc.lat, loc.lng, null);
+    this.#map.flyTo(loc.lat, loc.lng, 17);
+    this.#stopTimer();
+    this.#startTimer();
+    this.#acquireWakeLock();
+    this.#ui.updateAll(this.#state);
+    this.#ui.showToast('🔄 מיקום החניה הוחלף!', 'success');
+    this.#showParkingNotification(parking);
+
+    reverseGeocode(loc.lat, loc.lng).then(addr => {
+      if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
+      this.#state.current.address = addr;
+      VehicleController.setCurrent(vehicleId, this.#state.current);
       this.#ui.updateAddress(this.#state.current);
       this.#map.updateParkingMarkerPopup(addr);
       this.#showParkingNotification(this.#state.current);

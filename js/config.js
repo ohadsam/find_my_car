@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.8.0',
+  version: '1.9.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -31,6 +31,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.9.0',
+      date: '2026-07-09',
+      items: Object.freeze([
+        'כפתור "החלף חניה" — שומר את החניה הנוכחית להיסטוריה ומיד מתחיל חניה חדשה במיקום GPS הנוכחי',
+      ]),
+    }),
     Object.freeze({
       version: '1.8.0',
       date: '2026-07-01',

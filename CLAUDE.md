@@ -133,6 +133,7 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | Method | Description |
 |--------|-------------|
 | `#saveNewParking()` | Get GPS → create parking object → save → geocode in bg |
+| `#swapParking()` | Archive current parking to history + immediately save new parking at current GPS (one atomic operation) |
 | `#resetParking()` | Move current to history → clear current → update UI |
 | `#geocodeCurrentParking()` | reverseGeocode → update ui + marker |
 | `#openCameraModal()` | open CameraController → show photo modal |
