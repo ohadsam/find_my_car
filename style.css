@@ -803,7 +803,6 @@ audio { width: 100%; }
   font-weight: 700;
   cursor: pointer;
   transition: var(--transition);
-  margin-top: 8px;
 }
 .swap-parking-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
 .swap-parking-btn:hover { background: rgba(71,118,230,0.22); }
