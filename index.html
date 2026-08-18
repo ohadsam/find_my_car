@@ -594,9 +594,17 @@
           🎙️ הקלטה קולית שמורה
         </div>
       </div>
-      <div class="modal-footer">
-        <button class="modal-btn warning" id="returnMoveBtn">זזתי</button>
-        <button class="modal-btn primary" id="returnContinueBtn">המשך לנווט ←</button>
+      <div class="modal-footer return-modal-footer">
+        <button class="modal-btn return-swap-btn" id="returnSwapBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/>
+          </svg>
+          <span>החלף חניה</span>
+        </button>
+        <div class="return-modal-row">
+          <button class="modal-btn warning" id="returnMoveBtn">זזתי</button>
+          <button class="modal-btn primary" id="returnContinueBtn">המשך לנווט ←</button>
+        </div>
       </div>
     </div>
   </div>

@@ -4,10 +4,12 @@ import { normalizeAddress } from './geocoder.js';
 export class ReturnModal {
   #onMove;
   #onDismiss;
+  #onSwap;
 
-  constructor({ onMove, onDismiss }) {
+  constructor({ onMove, onDismiss, onSwap }) {
     this.#onMove    = onMove;
     this.#onDismiss = onDismiss;
+    this.#onSwap    = onSwap;
   }
 
   bindEvents() {
@@ -18,6 +20,10 @@ export class ReturnModal {
     Utils.el('returnContinueBtn')?.addEventListener('click', () => {
       this.hide();
       this.#onDismiss?.();
+    });
+    Utils.el('returnSwapBtn')?.addEventListener('click', () => {
+      this.hide();
+      this.#onSwap?.();
     });
   }
 

@@ -22,7 +22,7 @@ FindMyCar is a Hebrew-language Progressive Web App (PWA) for saving and finding 
 | `js/camera.js` | `CameraController` — getUserMedia, capture, file fallback |
 | `js/voice.js` | `VoiceController` — MediaRecorder, blob URL lifecycle |
 | `js/ui.js` | `UIController` — DOM rendering, modals, toasts, theme, vehicle selector, settings view |
-| `js/return-modal.js` | `ReturnModal` — auto-show return-to-car flow on app entry |
+| `js/return-modal.js` | `ReturnModal` — auto-show return-to-car flow on app entry; callbacks: `onMove`, `onDismiss`, `onSwap` |
 | `js/vehicles.js` | `VehicleController` — vehicle CRUD + localStorage migration |
 | `js/bluetooth.js` | `BluetoothController` — device watch via `enumerateDevices` + `devicechange`; connect/disconnect callbacks; `checkNow()` for on-demand re-scan |
 | `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing, Bluetooth |

@@ -57,6 +57,7 @@ class FindMyCarApp {
     this.#returnModal = new ReturnModal({
       onMove:    () => this.#resetParking(),
       onDismiss: () => {},
+      onSwap:    () => this.#swapParking(),
     });
 
     this.#init();
