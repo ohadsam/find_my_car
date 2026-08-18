@@ -57,6 +57,7 @@ class FindMyCarApp {
     this.#returnModal = new ReturnModal({
       onMove:    () => this.#resetParking(),
       onDismiss: () => {},
+      onSwap:    () => this.#swapParking(),
     });
 
     this.#init();
@@ -467,7 +468,8 @@ class FindMyCarApp {
   }
 
   async #swapParking() {
-    if (this.#swapping || !this.#state.current) return;
+    if (this.#swapping) return;
+    if (!this.#state.current) { this.#ui.showToast('אין חניה פעילה להחלפה.', 'info'); return; }
     this.#swapping = true;
 
     // Close modals that could end the new parking if confirmed after the swap
