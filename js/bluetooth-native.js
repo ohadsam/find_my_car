@@ -67,7 +67,7 @@ export class NativeBluetoothController {
   async requestPermission() {
     if (!this.#plugin) return false;
     try {
-      const res = await this.#plugin.requestPermissions();
+      const res = await this.#plugin.requestBtPermission();
       return !!res?.granted;
     } catch {
       return false;

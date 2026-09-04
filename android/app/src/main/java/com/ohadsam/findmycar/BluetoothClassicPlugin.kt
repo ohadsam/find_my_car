@@ -40,8 +40,11 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         super.handleOnDestroy()
     }
 
+    // Named requestBtPermission (not requestPermissions) — Plugin already
+    // declares requestPermissions(call) itself, and Kotlin refuses to
+    // silently hide an inherited member without `override`.
     @PluginMethod
-    fun requestPermissions(call: PluginCall) {
+    fun requestBtPermission(call: PluginCall) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             val ret = JSObject(); ret.put("granted", true); call.resolve(ret); return
         }
