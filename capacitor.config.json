@@ -1,0 +1,11 @@
+{
+  "appId": "com.ohadsam.findmycar",
+  "appName": "FindMyCar",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

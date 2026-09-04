@@ -5,6 +5,25 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.11.0] — 2026-09-04
+
+### ✨ New Features
+
+#### אפליקציית Android (APK) — ערוץ הפצה נוסף
+- נוסף פרויקט Android native (Capacitor) שעוטף את אותו קוד PWA בדיוק — אין הבדל ב-UI/פיצ'רים בין שתי הגרסאות
+- **זיהוי Bluetooth אמיתי ברקע**: במקום הפרוקסי של הדפדפן (`enumerateDevices`/`devicechange`, שעובד רק כשהטאב פעיל בקדמה), האפליקציה הנייטיבית מאזינה ישירות לשידורי המערכת `ACL_CONNECTED`/`ACL_DISCONNECTED` — כך שסיום/התחלת חניה אוטומטיים לפי Bluetooth עובדים גם כשהמסך כבוי או האפליקציה ברקע
+- שירות קדמה (foreground service) עם התראה קבועה שומר את התהליך פעיל בזמן חניה או כשזיהוי Bluetooth מופעל — כך שגם זיהוי מהירות GPS ממשיך לפעול ברקע
+- **שלושה ווידג'טים למסך הבית**: "חניה פעילה" (כתובת + זמן), "שמירה מהירה" (כפתור לשמירת חניה בלחיצה אחת), "מפה מוקטנת" (תמונת מפה סטטית של מיקום החניה)
+- GitHub Action חדש (`build-android.yml`) מקמפל APK להתקנה בכל push ל-`main`, וניתן להריץ ידנית
+
+### 🔧 Technical
+- `js/bluetooth-native.js` — מימוש חלופי ל-`BluetoothController` עם אותו interface בדיוק, מגובה ע"י plugin נייטיבי; הבחירה בין הגרסה הדפדפנית לנייטיבית ב-`js/app.js` דרך `Capacitor.isNativePlatform()`
+- `js/widget-bridge.js` — מסנכרן את מצב החניה הנוכחי לווידג'טים; ללא פעולה בדפדפן
+- פרויקט `android/` חדש (Kotlin): `BluetoothClassicPlugin`, `ParkingForegroundService`, `WidgetDataPlugin`, ו-3 `AppWidgetProvider`
+- `capacitor.config.json` + `scripts/prepare-www.mjs` (מעתיק את קבצי ה-PWA ל-`www/` הזמני לפני `cap sync` — ה-root נשאר מקור האמת היחיד)
+
+---
+
 ## [1.10.0] — 2026-07-09
 
 ### ✨ New Features

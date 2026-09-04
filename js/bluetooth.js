@@ -56,6 +56,12 @@ export class BluetoothController {
     }
   }
 
+  // Instance form so callers can hold either BluetoothController or
+  // NativeBluetoothController behind one reference and call the same method.
+  async requestPermission() {
+    return BluetoothController.requestPermission();
+  }
+
   async #handleChange() {
     if (this.#handling) { this.#pendingCheck = true; return; }
     this.#handling = true;
