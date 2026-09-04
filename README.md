@@ -42,6 +42,16 @@
 2. לחץ על כפתור השיתוף 📤
 3. גלול מטה → **"הוסף למסך הבית"**
 
+## 🤖 אפליקציית Android (APK)
+
+בנוסף ל-PWA קיימת גם גרסת Android native (זהה לחלוטין ב-UI ובתכונות), עם שתי יכולות
+שדפדפן לא יכול לספק: זיהוי Bluetooth אמיתי ברקע (סיום/התחלת חניה אוטומטיים גם כשהמסך
+כבוי) ושלושה ווידג'טים למסך הבית (חניה פעילה / שמירה מהירה / מפה מוקטנת).
+
+APK להתקנה זמין בכל push ל-`main` תחת ה-Actions run של `Build Android APK` בטאב
+[Actions](https://github.com/ohadsam/find_my_car/actions) — פתח את ה-run האחרון והורד
+את `findmycar-debug-apk`. פרטים טכניים ב-`CLAUDE.md` תחת "Android APK (Capacitor)".
+
 ## 🛠️ טכנולוגיות
 
 - **HTML5 / CSS3 / Vanilla JavaScript** - ללא frameworks

@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.10.0',
+  version: '1.11.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -31,6 +31,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.11.0',
+      date: '2026-09-04',
+      items: Object.freeze([
+        'אפליקציית Android (APK) — גרסה נוספת, נפרדת מה-PWA, עם זיהוי Bluetooth אמיתי ברקע (לא רק בעת שהדפדפן פעיל) לסיום/התחלת חניה אוטומטיים',
+        'ווידג\'טים למסך הבית באנדרואיד: חניה פעילה, שמירה מהירה, מפה מוקטנת',
+      ]),
+    }),
     Object.freeze({
       version: '1.10.0',
       date: '2026-07-09',

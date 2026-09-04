@@ -5,9 +5,14 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "cap:prepare": "node scripts/prepare-www.mjs",
+    "cap:sync": "npm run cap:prepare && npx cap sync android"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.2.2",
+    "@capacitor/cli": "^6.2.2",
+    "@capacitor/core": "^6.2.2",
     "@playwright/test": "^1.44.0",
     "@vitest/coverage-v8": "^2.0.0",
     "jsdom": "^29.1.1",

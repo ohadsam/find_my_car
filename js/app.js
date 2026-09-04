@@ -9,6 +9,8 @@ import { UIController } from './ui.js';
 import { ReturnModal } from './return-modal.js';
 import { VehicleController } from './vehicles.js';
 import { BluetoothController } from './bluetooth.js';
+import { NativeBluetoothController } from './bluetooth-native.js';
+import { WidgetBridge } from './widget-bridge.js';
 
 class FindMyCarApp {
   #state = {
@@ -37,7 +39,9 @@ class FindMyCarApp {
   #map       = new MapController();
   #camera    = new CameraController();
   #voice     = new VoiceController();
-  #bluetooth = new BluetoothController();
+  #bluetooth = NativeBluetoothController.isSupported()
+    ? new NativeBluetoothController()
+    : new BluetoothController();
   #wakeLock  = null;
   #ui;
   #returnModal;
@@ -108,7 +112,7 @@ class FindMyCarApp {
       this.#map.init(this.#state.current);
     }, 100);
 
-    this.#ui.updateAll(this.#state);
+    this.#syncUI();
 
     if (this.#state.current && !this.#state.current.address) {
       this.#geocodeCurrentParking();
@@ -400,6 +404,11 @@ class FindMyCarApp {
   }
 
   // ── PARKING MANAGEMENT ────────────────────────────────────────
+  #syncUI() {
+    this.#ui.updateAll(this.#state);
+    WidgetBridge.sync(this.#state);
+  }
+
   async #handleSaveNew() {
     if (this.#state.current) {
       this.#ui.openModal('resetModal');
@@ -443,7 +452,7 @@ class FindMyCarApp {
 
     this.#map.addParkingMarker(loc.lat, loc.lng, null);
     this.#map.flyTo(loc.lat, loc.lng, 17);
-    this.#ui.updateAll(this.#state);
+    this.#syncUI();
     this.#startTimer();
     this.#ui.showToast('✅ מיקום חניה נשמר!', 'success');
     this.#acquireWakeLock();
@@ -526,7 +535,7 @@ class FindMyCarApp {
     this.#stopTimer();
     this.#startTimer();
     this.#acquireWakeLock();
-    this.#ui.updateAll(this.#state);
+    this.#syncUI();
     this.#ui.showToast('🔄 מיקום החניה הוחלף!', 'success');
     this.#showParkingNotification(parking);
 
@@ -582,7 +591,7 @@ class FindMyCarApp {
     this.#stopTimer();
     this.#releaseWakeLock();
     this.#cancelParkingNotification();
-    this.#ui.updateAll(this.#state);
+    this.#syncUI();
     this.#ui.showToast('✅ החניה הועברה להיסטוריה', 'success');
   }
 
@@ -617,7 +626,7 @@ class FindMyCarApp {
       this.#map.flyTo(this.#state.current.location.lat, this.#state.current.location.lng, 15);
       this.#startTimer();
     }
-    this.#ui.updateAll(this.#state);
+    this.#syncUI();
     if (this.#state.current) {
       this.#acquireWakeLock();
       this.#showParkingNotification(this.#state.current);
@@ -654,7 +663,7 @@ class FindMyCarApp {
 
     this.#state.vehicles = VehicleController.getAll();
     this.#closeModal('vehicleModal');
-    this.#ui.updateAll(this.#state);
+    this.#syncUI();
     this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
     this.#updateBtBadge();
   }
@@ -725,7 +734,7 @@ class FindMyCarApp {
       this.#stopTimer();
       this.#releaseWakeLock();
       this.#cancelParkingNotification();
-      this.#ui.updateAll(this.#state);
+      this.#syncUI();
     }
 
     this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
@@ -998,7 +1007,7 @@ class FindMyCarApp {
         return;
       }
       this.#ui.showBtPermissionRequest(async () => {
-        const granted = await BluetoothController.requestPermission();
+        const granted = await this.#bluetooth.requestPermission();
         if (granted) {
           await this.#btScanDevices(true);
         } else {
