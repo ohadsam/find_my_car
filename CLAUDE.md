@@ -293,6 +293,17 @@ to the two data-driven widgets (`ActiveParkingWidgetProvider`, `MiniMapWidgetPro
 `manifest.json` shortcut already triggers in `js/app.js` `#init()` — no separate
 native save path).
 
+**Why the WebView's JS keeps running in the background at all**: Capacitor's Android
+Activity lifecycle delegates to Cordova's `handlePause(keepRunning)`, which calls
+`pauseTimersForReal()` (stopping all JS execution, including `watchPosition` callbacks
+and plugin event listeners) *unless* the `KeepRunning` Cordova preference is `true`.
+`capacitor.config.json`'s `cordova.preferences.KeepRunning: "true"` makes this
+explicit rather than relying on Capacitor's (currently matching) default — **do not
+remove it**, or BT/GPS detection silently stops working the moment the Activity is
+backgrounded, even with the foreground service still running (the service only keeps
+the OS *process* alive; `KeepRunning` is what keeps the *WebView's JS* alive within it —
+both are required together).
+
 **Known limitation** (documented, not a bug to "fix"): the foreground service keeps
 the process alive across screen-off/backgrounded use, matching how virtually every
 non-headless Android BT/GPS tracking app works — but if the user force-kills the app

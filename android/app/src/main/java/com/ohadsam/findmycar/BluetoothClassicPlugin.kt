@@ -33,6 +33,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
 
     private var watching = false
     private var prevLabels: MutableSet<String> = mutableSetOf()
+    private val labelsLock = Any()
 
     override fun handleOnDestroy() {
         BtEventBus.removeListener(this)
@@ -63,7 +64,14 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
             watching = true
             BtEventBus.addListener(this)
             ParkingForegroundService.setReasonActive(context, "bluetooth", true)
-            prevLabels = connectedDeviceLabels()
+            // Seed prevLabels with currently-connected devices. This scan
+            // (connectedDeviceLabels()) can take up to ~1.5s waiting on the
+            // async profile-proxy callbacks, and BtEventBus.addListener()
+            // above is already active — so a real ACL event can land on the
+            // main thread while this runs on the plugin's background thread.
+            // Merge instead of overwrite so that event isn't lost.
+            val seeded = connectedDeviceLabels()
+            synchronized(labelsLock) { prevLabels = (prevLabels + seeded).toMutableSet() }
         }
         call.resolve()
     }
@@ -82,8 +90,9 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     fun checkNow(call: PluginCall) {
         if (!watching) { call.resolve(); return }
         val current = connectedDeviceLabels()
-        for (label in current) if (!prevLabels.contains(label)) emitAndTrack(label, connected = true)
-        for (label in prevLabels.toList()) if (!current.contains(label)) emitAndTrack(label, connected = false)
+        val prev = synchronized(labelsLock) { prevLabels.toSet() }
+        for (label in current) if (!prev.contains(label)) emitAndTrack(label, connected = true)
+        for (label in prev) if (!current.contains(label)) emitAndTrack(label, connected = false)
         call.resolve()
     }
 
@@ -109,7 +118,9 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     override fun onDisconnected(label: String) = emitAndTrack(label, connected = false)
 
     private fun emitAndTrack(label: String, connected: Boolean) {
-        prevLabels = prevLabels.toMutableSet().apply { if (connected) add(label) else remove(label) }
+        synchronized(labelsLock) {
+            prevLabels = prevLabels.toMutableSet().apply { if (connected) add(label) else remove(label) }
+        }
         val data = JSObject(); data.put("label", label)
         notifyListeners(if (connected) "connected" else "disconnected", data)
     }
