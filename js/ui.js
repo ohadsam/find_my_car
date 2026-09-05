@@ -37,7 +37,7 @@ export class UIController {
     if (list) list.style.display = 'none';
   }
 
-  showBtDeviceList(devices, onSelect) {
+  showBtDeviceList(devices, onSelect, emptyMessage) {
     const list = Utils.el('vehicleBtDeviceList');
     if (!list) return;
     list.innerHTML = '';
@@ -45,7 +45,11 @@ export class UIController {
     if (labels.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'bt-device-empty';
-      empty.textContent = 'לא נמצאו מכשירי שמע פעילים. חבר מכשיר Bluetooth ונסה שוב.';
+      // Default text assumes the web's audiooutput/audioinput-filtered,
+      // currently-active device list — the native app lists all *paired*
+      // devices regardless of audio class or live connection state, so
+      // app.js passes an override there.
+      empty.textContent = emptyMessage ?? 'לא נמצאו מכשירי שמע פעילים. חבר מכשיר Bluetooth ונסה שוב.';
       list.appendChild(empty);
     } else {
       labels.forEach(label => {
@@ -60,17 +64,20 @@ export class UIController {
     list.style.display = '';
   }
 
-  showBtPermissionRequest(onRequest) {
+  showBtPermissionRequest(onRequest, textOverride) {
     const list = Utils.el('vehicleBtDeviceList');
     if (!list) return;
     list.innerHTML = '';
     const msg = document.createElement('p');
     msg.className = 'bt-perm-msg';
-    msg.textContent = 'נדרש אישור גישה למיקרופון כדי לזהות מכשירי Bluetooth';
+    // Default text assumes the web workaround (mic access reveals device
+    // labels via enumerateDevices) — the native app requests real Bluetooth
+    // permission instead, so app.js passes an override there.
+    msg.textContent = textOverride?.message ?? 'נדרש אישור גישה למיקרופון כדי לזהות מכשירי Bluetooth';
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'bt-perm-btn modal-btn primary';
-    btn.textContent = '🎤 אשר גישה';
+    btn.textContent = textOverride?.buttonLabel ?? '🎤 אשר גישה';
     btn.addEventListener('click', () => onRequest());
     list.appendChild(msg);
     list.appendChild(btn);

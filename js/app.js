@@ -1006,16 +1006,23 @@ class FindMyCarApp {
         this.#ui.showToast('לא ניתן לזהות מכשירי Bluetooth', 'error');
         return;
       }
+      const isNative = NativeBluetoothController.isSupported();
       this.#ui.showBtPermissionRequest(async () => {
         const granted = await this.#bluetooth.requestPermission();
         if (granted) {
           await this.#btScanDevices(true);
         } else {
-          this.#ui.showToast('לא ניתן לגשת למיקרופון', 'error');
+          this.#ui.showToast(isNative ? 'לא ניתן לגשת ל-Bluetooth' : 'לא ניתן לגשת למיקרופון', 'error');
         }
-      });
+      }, isNative ? {
+        message:     'נדרש אישור גישה ל-Bluetooth כדי לזהות מכשירים מקושרים',
+        buttonLabel: '🔵 אשר גישה',
+      } : undefined);
     } else {
-      this.#ui.showBtDeviceList(devices, label => this.#ui.setBtDeviceValue(label));
+      const emptyMessage = NativeBluetoothController.isSupported()
+        ? 'לא נמצאו מכשירים מזווגים. זווג מכשיר Bluetooth בהגדרות האנדרואיד ונסה שוב.'
+        : undefined;
+      this.#ui.showBtDeviceList(devices, label => this.#ui.setBtDeviceValue(label), emptyMessage);
     }
   }
 
