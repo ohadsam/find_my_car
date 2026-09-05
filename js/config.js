@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.13.1',
+  version: '1.13.2',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.13.2',
+      date: '2026-09-05',
+      items: Object.freeze([
+        'תיקון גלילה במסך הרכבים/הגדרות — כל המסך גולל יחד כדי שרשימת הרכבים לא תיחתך',
+        'עדכון אפליקציית האנדרואיד ישירות מ-APK חדש בלי להסיר את הקיימת קודם',
+      ]),
+    }),
     Object.freeze({
       version: '1.13.1',
       date: '2026-09-05',

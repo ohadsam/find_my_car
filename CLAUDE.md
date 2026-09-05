@@ -281,6 +281,16 @@ workflow artifact. **`android/app/src/main/assets/public/` and `www/` are never
 committed** — `index.html`/`js/*`/`style.css` in the repo root are the only source of
 truth for both distributions.
 
+**`android/app/debug.keystore` is committed on purpose** (not a secret — it only
+signs debug builds, never a Play Store release) and explicitly wired via
+`signingConfigs.debug` in `android/app/build.gradle`. Without it, Gradle falls back
+to the per-machine `~/.android/debug.keystore` default — since every GitHub Actions
+run is a fresh VM with no persisted home directory, that meant a brand-new random
+signing key on every single CI build, and Android refuses to install an APK signed
+with a different key over an existing install (forces an uninstall before every
+update). **Never delete or regenerate this file** — doing so breaks in-place upgrades
+for anyone who already installed a build signed with the old key.
+
 ### Native plugin interface contract
 
 `js/bluetooth-native.js`'s `NativeBluetoothController` must keep the exact same public
@@ -384,6 +394,7 @@ stays the single implementation.
 - [ ] GPS: walking >300m away from a parked car with GPS auto-end enabled shows the end-parking suggestion (confirmation only, does not auto-end)
 - [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
+- [ ] Android APK: installing a new build over an already-installed older build works without uninstalling first
 - [ ] Android APK: `build-android.yml` workflow succeeds and produces a downloadable `app-debug.apk`
 - [ ] Android APK: BT connect/disconnect while screen is off ends/starts parking (real ACL broadcast, not the browser proxy)
 - [ ] Android APK: "חניה פעילה" widget shows the current address and updates after saving/swapping/ending parking
