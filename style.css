@@ -1843,6 +1843,15 @@ audio { width: 100%; }
 }
 
 /* ── SETTINGS VIEW ── */
+/* The settings view has grown to hold several fixed-height sections below
+   the vehicle list (BT/GPS toggles, reload, backup) — scroll the whole view
+   as one region instead of giving just .vehicles-list its own cramped
+   sub-scroll, which squeezes it down to almost nothing once everything
+   below it needs its own space. */
+#settingsView {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
 .settings-header {
   display: flex;
   align-items: center;
@@ -1851,8 +1860,6 @@ audio { width: 100%; }
 }
 .settings-title { font-size: 1.3rem; font-weight: 800; }
 .vehicles-list {
-  flex: 1;
-  overflow-y: auto;
   padding: 0 16px;
 }
 .vehicle-list-item {
