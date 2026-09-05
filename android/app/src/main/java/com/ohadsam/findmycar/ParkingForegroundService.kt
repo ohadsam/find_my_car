@@ -1,5 +1,6 @@
 package com.ohadsam.findmycar
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,6 +11,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -43,23 +45,53 @@ class ParkingForegroundService : Service() {
             val nowEmpty = activeReasons.isEmpty()
 
             val intent = Intent(context, ParkingForegroundService::class.java)
-            if (wasEmpty && !nowEmpty) {
-                ContextCompat.startForegroundService(context, intent)
-            } else if (!wasEmpty && nowEmpty) {
-                context.stopService(intent)
+            try {
+                if (wasEmpty && !nowEmpty) {
+                    ContextCompat.startForegroundService(context, intent)
+                } else if (!wasEmpty && nowEmpty) {
+                    context.stopService(intent)
+                }
+            } catch (e: Exception) {
+                // Never let this crash the caller (e.g. a rare background-start
+                // restriction) — BT/GPS detection just stays inactive this time.
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
-        createChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification())
+        try {
+            createChannel()
+            val type = resolveForegroundServiceType()
+            if (type != 0) {
+                startForeground(NOTIFICATION_ID, buildNotification(), type)
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+            registerBtReceiver()
+        } catch (e: Exception) {
+            // Starting this service must never crash the whole app — worst
+            // case BT/GPS background detection is inactive until the next
+            // successful start (e.g. once the user grants BLUETOOTH_CONNECT).
+            stopSelf()
         }
-        registerBtReceiver()
+    }
+
+    // connectedDevice requires BLUETOOTH_CONNECT to already be GRANTED at
+    // runtime on Android 12+ (enforced once targetSdk reaches 34) — that
+    // permission is only requested lazily when the user links a vehicle's BT
+    // device, so it's very often not granted yet when this service first
+    // starts (e.g. from any parking save, unrelated to Bluetooth). specialUse
+    // has no such prerequisite and is always safe to fall back to.
+    private fun resolveForegroundServiceType(): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0
+        val btGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+        return when {
+            btGranted -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE // pre-14: declaring it isn't runtime-permission-gated
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
