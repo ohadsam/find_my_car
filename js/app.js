@@ -1416,6 +1416,13 @@ class FindMyCarApp {
       this.#ui.showToast('שגיאה בייבוא הקובץ', 'error');
       return;
     }
+
+    // The imported backup can turn on settings this install never asked
+    // permission for (e.g. a vehicle with Bluetooth auto-end enabled, or GPS
+    // auto-end) — re-run the same priming sequence as first launch instead
+    // of relying on the reload below to happen to trigger it via #init().
+    await this.#primeNativePermissions();
+
     this.#ui.showToast('✅ הנתונים יובאו בהצלחה. טוען מחדש...', 'success');
     setTimeout(() => window.location.reload(), 1200);
   }

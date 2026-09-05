@@ -13,6 +13,29 @@
         android:visibility="gone"
         android:contentDescription="@null" />
 
+    <FrameLayout
+        android:id="@+id/widget_mini_map_caption_bg"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/widget_map_caption_bg"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/widget_mini_map_caption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="10dp"
+            android:layout_marginTop="24dp"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:gravity="end"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:text="" />
+    </FrameLayout>
+
     <TextView
         android:id="@+id/widget_mini_map_empty"
         android:layout_width="match_parent"

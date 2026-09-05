@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Full-bleed brand gradient for the adaptive icon background layer — the
+     OS applies its own mask (circle/squircle/rounded-square per launcher) on
+     top, so this just needs to fill the whole 108x108 canvas edge to edge. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <gradient
         android:angle="315"
         android:startColor="#5B8BF5"
         android:endColor="#8E54E9"
         android:type="linear" />
-    <corners android:radius="20dp" />
 </shape>

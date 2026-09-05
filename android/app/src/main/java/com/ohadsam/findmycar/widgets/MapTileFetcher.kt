@@ -5,6 +5,10 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
 import java.net.HttpURLConnection
@@ -58,16 +62,51 @@ object MapTileFetcher {
         // Pin at the coordinate's fractional position within the composite
         val px = ((xTileF - xTile) * TILE_SIZE).toFloat()
         val py = ((yTileF - yTile) * TILE_SIZE).toFloat()
-        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        val pin  = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E94B3C") }
-        canvas.drawCircle(px, py, 12f, ring)
-        canvas.drawCircle(px, py, 8f, pin)
+        drawPin(canvas, px, py)
 
         // Crop to a centered square around the pin for a tighter widget image
         val cropSize = TILE_SIZE
         val cropLeft = (px - cropSize / 2f).coerceIn(0f, (TILE_SIZE * 2 - cropSize).toFloat())
         val cropTop  = (py - cropSize / 2f).coerceIn(0f, (TILE_SIZE * 2 - cropSize).toFloat())
-        return Bitmap.createBitmap(composite, cropLeft.toInt(), cropTop.toInt(), cropSize, cropSize)
+        val cropped = Bitmap.createBitmap(composite, cropLeft.toInt(), cropTop.toInt(), cropSize, cropSize)
+        return roundCorners(cropped, 28f)
+    }
+
+    /** Google-Maps-style teardrop pin (ball + tail pointing at the exact coordinate) with a soft drop shadow. */
+    private fun drawPin(canvas: Canvas, cx: Float, tipY: Float) {
+        val ballRadius = 11f
+        val tailLength = 20f
+        val ballCy = tipY - tailLength - ballRadius
+
+        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#402A2A2A") }
+        canvas.drawOval(cx - 9f, tipY - 3f, cx + 9f, tipY + 5f, shadowPaint)
+
+        val pinPath = Path().apply {
+            addCircle(cx, ballCy, ballRadius, Path.Direction.CW)
+            moveTo(cx - ballRadius * 0.8f, ballCy + ballRadius * 0.6f)
+            lineTo(cx, tipY)
+            lineTo(cx + ballRadius * 0.8f, ballCy + ballRadius * 0.6f)
+            close()
+        }
+
+        canvas.drawPath(pinPath, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E94B3C") })
+        canvas.drawPath(pinPath, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 2.5f
+        })
+        canvas.drawCircle(cx, ballCy, ballRadius * 0.4f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
+    }
+
+    private fun roundCorners(src: Bitmap, radius: Float): Bitmap {
+        val output = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val rect = RectF(0f, 0f, src.width.toFloat(), src.height.toFloat())
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        canvas.drawRoundRect(rect, radius, radius, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(src, 0f, 0f, paint)
+        return output
     }
 
     private fun downloadTile(z: Int, x: Int, y: Int): Bitmap? {

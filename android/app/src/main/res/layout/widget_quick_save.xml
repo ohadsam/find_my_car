@@ -5,18 +5,19 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:gravity="center"
+    android:elevation="4dp"
     android:background="@drawable/widget_background_accent">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="📍"
-        android:textSize="28sp" />
+    <ImageView
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:src="@drawable/ic_widget_pin"
+        android:contentDescription="@null" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="6dp"
         android:text="שמור חניה"
         android:textColor="#FFFFFF"
         android:textSize="13sp"
