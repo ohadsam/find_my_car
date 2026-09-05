@@ -314,6 +314,29 @@
           <span>טען גרסה חדשה</span>
         </button>
       </div>
+      <div class="settings-backup-wrapper">
+        <div class="settings-backup-title">גיבוי ושחזור נתונים</div>
+        <p class="settings-backup-desc">
+          העבירו רכבים, היסטוריה והגדרות בין גרסת ה-PWA לאפליקציית האנדרואיד (ולהפך) באמצעות קובץ גיבוי.
+        </p>
+        <div class="settings-backup-actions">
+          <button class="settings-backup-btn" id="exportDataBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M12 15V3M12 3l-4 4M12 3l4 4"/>
+              <path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>
+            </svg>
+            <span>ייצוא נתונים</span>
+          </button>
+          <button class="settings-backup-btn" id="importDataBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M12 3v12M12 15l-4-4M12 15l4-4"/>
+              <path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>
+            </svg>
+            <span>ייבוא נתונים</span>
+          </button>
+        </div>
+        <input type="file" id="importDataInput" accept="application/json,.json" style="display:none;">
+      </div>
     </section>
 
     <!-- ─── HISTORY VIEW ─── -->

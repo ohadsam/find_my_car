@@ -1974,6 +1974,49 @@ audio { width: 100%; }
 }
 .settings-reload-btn:active { transform: scale(0.97); }
 
+/* ── BACKUP & RESTORE ── */
+.settings-backup-wrapper {
+  padding: 0 16px 20px;
+  flex-shrink: 0;
+}
+.settings-backup-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.settings-backup-desc {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+.settings-backup-actions {
+  display: flex;
+  gap: 10px;
+}
+.settings-backup-actions > * { flex: 1; }
+.settings-backup-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.settings-backup-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+.settings-backup-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.settings-backup-btn:active { transform: scale(0.97); }
+
 /* ── BLUETOOTH SETTINGS BUTTON ── */
 .settings-bt-wrapper {
   padding: 0 16px 12px;

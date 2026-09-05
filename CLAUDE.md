@@ -17,7 +17,7 @@ Since v1.11.0 the same web app also ships as a **native Android APK** (Capacitor
 | `index.html` | Complete app HTML — all views, modals, and components inline |
 | `style.css` | Full stylesheet with CSS variables, dark/light themes, RTL layout |
 | `js/config.js` | Frozen `CFG` constants (versions, keys, limits, vehicleIcons, URLs) |
-| `js/store.js` | `Store` — localStorage CRUD with JSON parsing |
+| `js/store.js` | `Store` — localStorage CRUD with JSON parsing; `exportAll()`/`importAll()` for backup/restore |
 | `js/utils.js` | `Utils` — pure helpers: uuid, formatters, Haversine, image compression, escHtml, dataUrlToFile |
 | `js/geocoder.js` | `reverseGeocode()` → structured `AddressObj`; `normalizeAddress()` |
 | `js/map.js` | `MapController` — Leaflet map + detail mini-map lifecycle |
@@ -166,6 +166,8 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | `#showParkingNotification(parking)` | Show/update persistent system notification with active parking address |
 | `#cancelParkingNotification()` | Close the active parking notification via SW |
 | `#updateBtBadge()` | Update BT settings button badge (count of linked vehicles) |
+| `#exportData()` | Serialize `Store.exportAll()` to a backup JSON file — browser download, or native Share sheet via `@capacitor/filesystem`+`@capacitor/share` |
+| `#importData(file)` | Confirm → `Store.importAll()` from a picked backup file → reload |
 
 ### `js/ui.js` — `UIController`
 
@@ -250,6 +252,16 @@ The APK is a **second distribution of the same app**, not a fork. Capacitor wrap
 set is identical to the PWA by construction. Native code only fills gaps the browser
 can't: real background Bluetooth detection and home-screen widgets.
 
+**No shared storage between the PWA and the APK**: the PWA runs on its real GitHub
+Pages origin; the APK's WebView serves from Capacitor's own local origin
+(`server.androidScheme: "https"` → `https://localhost`). Browsers sandbox
+`localStorage` per-origin, so the two are isolated even on the same physical device
+— there is no browser or Capacitor API to share storage across them, and bridging it
+would require a server (explicitly out of scope here). The **backup/restore**
+feature (`#exportData()`/`#importData()` in `js/app.js`, `Store.exportAll()`/
+`importAll()` in `js/store.js`) is the deliberate workaround: a manual JSON export
+from one installation, imported into the other — not automatic sync.
+
 **Why**: the PWA's Bluetooth auto-start/auto-end relies on
 `navigator.mediaDevices.enumerateDevices()` + `devicechange` as a *proxy* for "car BT
 connected" (there is no real classic-Bluetooth API for the web) — this only works
@@ -282,6 +294,8 @@ instance so the native swap-in keeps working.
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
+| *(official `@capacitor/filesystem`)* | `Filesystem` | Used only by `#exportData()` to write the backup JSON to the app's private Cache dir (no permissions needed) |
+| *(official `@capacitor/share`)* | `Share` | Used only by `#exportData()` to open the native Share sheet for the backup file — no custom Kotlin for either plugin, both auto-registered by `cap sync` |
 
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
 state change already goes through) calls `WidgetBridge.sync(state)` after
