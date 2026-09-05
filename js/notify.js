@@ -11,7 +11,10 @@
 export class Notify {
   static #nextId = 1;
 
-  static async #ensurePermission() {
+  // Public so app.js can prime the notification permission at first launch
+  // (see #primeNativePermissions()) instead of only asking reactively the
+  // first time a notification would actually fire.
+  static async ensurePermission() {
     const LocalNotifications = window.Capacitor?.Plugins?.LocalNotifications;
     if (window.Capacitor?.isNativePlatform?.() && LocalNotifications) {
       try {
@@ -36,7 +39,7 @@ export class Notify {
 
   static async show(title, body) {
     try {
-      const granted = await this.#ensurePermission();
+      const granted = await this.ensurePermission();
       if (!granted) return;
 
       const LocalNotifications = window.Capacitor?.Plugins?.LocalNotifications;

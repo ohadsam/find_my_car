@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.13.2',
+  version: '1.14.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.14.0',
+      date: '2026-09-05',
+      items: Object.freeze([
+        'תוקן: הרשאות מצלמה והקלטה קוליות היו חסרות באפליקציית האנדרואיד — התכונות לא עבדו כלל',
+        'בקשת כל ההרשאות (מיקום, Bluetooth, מצלמה, הקלטה, נוטיפיקציות) מוצגת מיד בפתיחה ראשונה של האפליקציה',
+        'הפעלת Bluetooth בהגדרות בודקת ומבקשת הרשאה מחדש אם צריך',
+      ]),
+    }),
     Object.freeze({
       version: '1.13.2',
       date: '2026-09-05',

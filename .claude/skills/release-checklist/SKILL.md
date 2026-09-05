@@ -51,7 +51,14 @@ available, report that check as a explicit FAIL/UNKNOWN with the reason, not omi
     that exists)
   - Permissions: `BLUETOOTH_CONNECT`, `FOREGROUND_SERVICE`,
     `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `POST_NOTIFICATIONS`,
-    `ACCESS_FINE_LOCATION`
+    `ACCESS_FINE_LOCATION`, `CAMERA`, `RECORD_AUDIO` — a permission missing here
+    isn't caught by any build step (the app compiles fine and only fails at
+    runtime when that specific feature is used), so check this list literally
+    every release, not just when a new native feature is added
+- Confirm `android/app/build.gradle` declares `signingConfigs.debug` pointing at
+  the committed `android/app/debug.keystore` (not the per-machine default) — a
+  fresh CI runner without this would sign every build with a different random
+  key, breaking in-place upgrades for anyone with an older build installed
 - Confirm `js/bluetooth-native.js` still implements the same public methods as
   `js/bluetooth.js`'s `BluetoothController` (`isSupported`, `init`, `startWatch`,
   `stopWatch`, `checkNow`, `getDevices`, `requestPermission`) — a drift here silently

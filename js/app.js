@@ -96,6 +96,12 @@ class FindMyCarApp {
     this.#bindEvents();
     this.#returnModal.bindEvents();
 
+    // Ask for everything the native app can possibly need right after
+    // install, instead of only surprising the user with scattered
+    // permission dialogs the first time they touch BT settings/camera/voice.
+    // Not awaited — runs alongside the rest of init, doesn't block the UI.
+    this.#primeNativePermissions();
+
     // Bluetooth setup
     this.#bluetooth.init({
       onDeviceConnected:    label => this.#onBtConnected(label),
@@ -159,6 +165,32 @@ class FindMyCarApp {
     if (params.get('action') === 'save') {
       setTimeout(() => this.#handleSaveNew(), 500);
     }
+  }
+
+  // No-op in the browser — each permission there is requested contextually
+  // by the browser itself the first time a feature actually needs it, which
+  // is already the right UX for a website. On native, ask for everything up
+  // front instead of only reactively (geolocation already prompts on its own
+  // via #startLocationWatch(), included here too for a single clear
+  // onboarding sequence rather than depending on init() call order).
+  async #primeNativePermissions() {
+    if (!window.Capacitor?.isNativePlatform?.()) return;
+
+    await new Promise(resolve => {
+      if (!navigator.geolocation) { resolve(); return; }
+      navigator.geolocation.getCurrentPosition(() => resolve(), () => resolve(), { timeout: 8000 });
+    });
+
+    try {
+      const stream = await navigator.mediaDevices?.getUserMedia?.({ video: true, audio: true });
+      stream?.getTracks().forEach(t => t.stop());
+    } catch {
+      // Denied or no camera/mic — the camera/voice modals already fall back
+      // to their own permission-error UI when actually opened.
+    }
+
+    await this.#bluetooth.requestPermission?.().catch(() => {});
+    await Notify.ensurePermission().catch(() => {});
   }
 
   #getTheme() {
@@ -1066,9 +1098,17 @@ class FindMyCarApp {
 
   #btSettingsCbs() {
     return {
-      onToggleEnabled: enabled => {
+      onToggleEnabled: async enabled => {
         Store.set(CFG.keys.bluetoothSettings, { ...this.#getBtSettings(), enabled });
-        if (enabled) this.#bluetooth.startWatch(); else this.#bluetooth.stopWatch();
+        if (enabled) {
+          // Re-check/re-prompt here too — priming at app open may have been
+          // denied, or the user could be granting it for the first time
+          // right now by turning this on.
+          await this.#bluetooth.requestPermission?.().catch(() => {});
+          this.#bluetooth.startWatch();
+        } else {
+          this.#bluetooth.stopWatch();
+        }
         this.#refreshBtModal();
       },
       onToggleVehicle: (vehicleId, updates) => {
