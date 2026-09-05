@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.13.0',
+  version: '1.13.1',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.13.1',
+      date: '2026-09-05',
+      items: Object.freeze([
+        'תיקון קריסה באפליקציית האנדרואיד בפתיחה ראשונה (Android 14) — שירות הרקע לא הצליח לעלות לפני שהורשתה גישת Bluetooth',
+      ]),
+    }),
     Object.freeze({
       version: '1.13.0',
       date: '2026-09-05',

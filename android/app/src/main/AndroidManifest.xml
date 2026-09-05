@@ -37,7 +37,21 @@
         <service
             android:name=".ParkingForegroundService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|specialUse">
+            <!-- Android 14+ requires BLUETOOTH_CONNECT to already be GRANTED
+                 (not just declared) before starting a connectedDevice-typed
+                 foreground service. That permission is only requested lazily
+                 (linking a vehicle's BT device in settings), so a fresh
+                 install has it started via the "parking" reason (any saved
+                 parking, GPS-only) long before Bluetooth is ever touched.
+                 specialUse has no such runtime-permission prerequisite —
+                 ParkingForegroundService.kt picks it whenever
+                 BLUETOOTH_CONNECT isn't granted yet, so starting the service
+                 never crashes regardless of which reason triggered it. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps Bluetooth and GPS parking detection active in the background" />
+        </service>
 
         <receiver
             android:name=".widgets.ActiveParkingWidgetProvider"
@@ -86,5 +100,6 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
