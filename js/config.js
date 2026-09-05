@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.12.0',
+  version: '1.13.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -14,8 +14,9 @@ export const CFG = Object.freeze({
     gpsAutoEnd:        'fmc_gps_auto_end_v1',
     notifTag:          'fmc-parking-active',
   }),
-  gpsSpeedThreshold: 7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
-  gpsSpeedDuration:  8000, // ms speed must be sustained before suggesting end
+  gpsSpeedThreshold:    7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
+  gpsSpeedDuration:     8000, // ms speed must be sustained before suggesting end
+  gpsDistanceThreshold: 300,  // meters from the saved parking spot before suggesting end (catches slow/no-speed-signal movement e.g. being driven away)
   maxHistory:        30,
   maxImgWidth:       900,
   imgQuality:        0.72,
@@ -31,6 +32,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.13.0',
+      date: '2026-09-05',
+      items: Object.freeze([
+        'הצעת סיום חניה גם לפי מרחק מהחניה (בנוסף למהירות) — מזהה תנועה גם כשאין נתוני מהירות אמינים',
+        'נוטיפיקציות מערכת לאירועי Bluetooth/GPS ברקע: סיום/התחלת חניה אוטומטיים והצעת סיום חניה — כדי שתדעו גם כשהמסך כבוי',
+      ]),
+    }),
     Object.freeze({
       version: '1.12.0',
       date: '2026-09-05',

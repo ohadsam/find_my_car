@@ -29,6 +29,7 @@ Since v1.11.0 the same web app also ships as a **native Android APK** (Capacitor
 | `js/bluetooth.js` | `BluetoothController` — device watch via `enumerateDevices` + `devicechange`; connect/disconnect callbacks; `checkNow()` for on-demand re-scan |
 | `js/bluetooth-native.js` | `NativeBluetoothController` — same interface as `BluetoothController`, backed by the native `BluetoothClassic` Capacitor plugin (real ACL connect/disconnect). Selected instead of `BluetoothController` in `js/app.js` when `NativeBluetoothController.isSupported()` |
 | `js/widget-bridge.js` | `WidgetBridge` — pushes the active-parking snapshot to the native `WidgetData` plugin so Android home-screen widgets stay current; no-op in the browser |
+| `js/notify.js` | `Notify` — one-off system notifications for background BT/GPS events; native uses `@capacitor/local-notifications`, browser uses `ServiceWorkerRegistration.showNotification()` |
 | `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing, Bluetooth |
 | `sw.js` | Service Worker — cache strategies for app shell, tiles, Leaflet CDN |
 | `manifest.json` | PWA manifest — Hebrew locale, icons, shortcuts |
@@ -156,7 +157,10 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | `#onBtDisconnected(label)` | BT disconnect → find matching vehicle → auto-start parking + optional popup |
 | `#markBtEnd(vehicleId, label)` | Annotate current parking with BT end device + timestamp before it moves to history |
 | `#getGpsSettings()` | Read GPS auto-end setting from localStorage |
-| `#checkGpsSpeed(speed)` | Called on each GPS position update; opens `gpsEndModal` if speed sustained ≥ threshold |
+| `#checkGpsSpeed(speed)` | Called on each GPS position update; suggests end if speed sustained ≥ `gpsSpeedThreshold` |
+| `#checkGpsDistance(lat, lng)` | Called on each GPS position update; suggests end if distance from the saved parking spot ≥ `gpsDistanceThreshold` (300m) — catches movement speed alone misses (e.g. unreliable `coords.speed`) |
+| `#suggestGpsEnd()` | Shared by speed/distance checks: opens `gpsEndModal` (a suggestion requiring confirmation, never auto-ends) + background notification |
+| `#notifyIfBackground(title, body)` | `Notify.show()` only when `document.visibilityState !== 'visible'` — avoids duplicating an on-screen toast/modal the user can already see |
 | `#btEndParking(vehicleId)` | End parking for a vehicle (active or background) |
 | `#btScanDevices()` | Scan audio devices; prompt mic permission if labels hidden |
 | `#openBtSettingsModal()` | Render and open `btSettingsModal` |
@@ -296,6 +300,7 @@ instance so the native swap-in keeps working.
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
 | *(official `@capacitor/filesystem`)* | `Filesystem` | Used only by `#exportData()` to write the backup JSON to the app's private Cache dir (no permissions needed) |
 | *(official `@capacitor/share`)* | `Share` | Used only by `#exportData()` to open the native Share sheet for the backup file — no custom Kotlin for either plugin, both auto-registered by `cap sync` |
+| *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification (`#showParkingNotification`), which keeps using the browser-safe `ServiceWorkerRegistration.showNotification()` path unchanged |
 
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
 state change already goes through) calls `WidgetBridge.sync(state)` after
@@ -376,9 +381,12 @@ stays the single implementation.
 - [ ] Bluetooth: global toggles in BT settings screen apply to all linked vehicles
 - [ ] Bluetooth: per-vehicle toggles in BT settings screen work independently
 - [ ] Bluetooth: unlink device from vehicle removes all auto-behavior
+- [ ] GPS: walking >300m away from a parked car with GPS auto-end enabled shows the end-parking suggestion (confirmation only, does not auto-end)
+- [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
 - [ ] Android APK: `build-android.yml` workflow succeeds and produces a downloadable `app-debug.apk`
 - [ ] Android APK: BT connect/disconnect while screen is off ends/starts parking (real ACL broadcast, not the browser proxy)
 - [ ] Android APK: "חניה פעילה" widget shows the current address and updates after saving/swapping/ending parking
 - [ ] Android APK: "שמירה מהירה" widget tap saves a new parking (same as the in-app button)
 - [ ] Android APK: "מפה מוקטנת" widget shows a map snapshot centered on the parking pin, and an empty state when there's no active parking
+- [ ] Android APK: with the app backgrounded/screen off, BT auto-end/auto-start and the GPS end-suggestion each show a system notification (not just an in-app toast/modal you'd never see)
