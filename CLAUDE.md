@@ -141,6 +141,7 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 
 | Method | Description |
 |--------|-------------|
+| `#primeNativePermissions()` | No-op in browser; on native, requests geolocation, camera+mic, Bluetooth, and notification permissions up front at first launch instead of scattered across first feature use — fire-and-forget from `#init()` |
 | `#saveNewParking()` | Get GPS → create parking object → save → geocode in bg |
 | `#swapParking()` | Archive current parking to history + immediately save new parking at current GPS (one atomic operation) |
 | `#resetParking()` | Move current to history → clear current → update UI |
