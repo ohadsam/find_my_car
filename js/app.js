@@ -11,6 +11,7 @@ import { VehicleController } from './vehicles.js';
 import { BluetoothController } from './bluetooth.js';
 import { NativeBluetoothController } from './bluetooth-native.js';
 import { WidgetBridge } from './widget-bridge.js';
+import { Notify } from './notify.js';
 
 class FindMyCarApp {
   #state = {
@@ -379,6 +380,7 @@ class FindMyCarApp {
     this.#map.updateUserMarker(lat, lng);
     this.#ui.updateDistance(this.#state);
     this.#checkGpsSpeed(speed);
+    this.#checkGpsDistance(lat, lng);
   }
 
   #getCurrentLocation() {
@@ -913,10 +915,35 @@ class FindMyCarApp {
     if (!this.#state.gpsSpeedSince) {
       this.#state.gpsSpeedSince = Date.now();
     } else if (Date.now() - this.#state.gpsSpeedSince >= CFG.gpsSpeedDuration) {
-      this.#state.gpsEndSuggested = true;
-      this.#state.gpsSpeedSince   = null;
-      this.#ui.openModal('gpsEndModal');
+      this.#state.gpsSpeedSince = null;
+      this.#suggestGpsEnd();
     }
+  }
+
+  // Second, independent signal alongside speed: catches movement that
+  // wouldn't cross the speed threshold (e.g. a device that never reports
+  // coords.speed, or being driven away slowly in traffic).
+  #checkGpsDistance(lat, lng) {
+    if (!this.#state.current || this.#state.gpsEndSuggested) return;
+    if (!this.#getGpsSettings().enabled) return;
+    const { lat: pLat, lng: pLng } = this.#state.current.location;
+    if (Utils.distance(lat, lng, pLat, pLng) >= CFG.gpsDistanceThreshold) this.#suggestGpsEnd();
+  }
+
+  #suggestGpsEnd() {
+    if (this.#state.gpsEndSuggested) return; // race guard: speed+distance can both fire on the same position update
+    this.#state.gpsEndSuggested = true;
+    this.#state.gpsSpeedSince   = null;
+    this.#ui.openModal('gpsEndModal');
+    this.#notifyIfBackground('🚗 מזוהה נסיעה', 'ייתכן שהרכב זז ממקום החניה. פתח את האפליקציה לסיים את החניה.');
+  }
+
+  // Background-only system notification alongside an in-app toast/modal —
+  // if the app is visible the on-screen UI already alerts the user, so a
+  // notification would just be redundant noise.
+  #notifyIfBackground(title, body) {
+    if (document.visibilityState === 'visible') return;
+    Notify.show(title, body);
   }
 
   // ── BLUETOOTH ─────────────────────────────────────────────────
@@ -933,6 +960,7 @@ class FindMyCarApp {
         this.#markBtEnd(v.id, label);
         this.#btEndParking(v.id);
         this.#ui.showToast(`🔵 ${v.icon} ${v.name} — חניה הסתיימה אוטומטית`, 'success');
+        this.#notifyIfBackground('🔵 חניה הסתיימה אוטומטית', `${v.icon} ${v.name} — זוהה חיבור Bluetooth`);
       } else {
         if (this.#state.btPendingVehicleId) continue; // confirm modal already open; keep processing autoEnd vehicles
         this.#state.btPendingVehicleId = v.id;
@@ -942,6 +970,7 @@ class FindMyCarApp {
         if (title) title.textContent = `${v.icon} הגעת לרכב?`;
         if (desc)  desc.textContent  = `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`;
         this.#ui.openModal('btParkingModal');
+        this.#notifyIfBackground(`${v.icon} הגעת לרכב?`, `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}. פתח את האפליקציה לאישור.`);
       }
     }
   }
@@ -972,6 +1001,8 @@ class FindMyCarApp {
           this.#state.current.btStartDevice = label;
         }
       }
+
+      this.#notifyIfBackground('🅿️ חניה חדשה נשמרה אוטומטית', `${v.icon} ${v.name} — זוהה ניתוק Bluetooth`);
 
       if (v.bluetoothStartPopup) {
         const subtitle = Utils.el('btStartPopupSubtitle');
