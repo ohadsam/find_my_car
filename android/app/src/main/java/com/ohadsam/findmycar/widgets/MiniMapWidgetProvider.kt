@@ -31,12 +31,17 @@ class MiniMapWidgetProvider : AppWidgetProvider() {
 
             if (!hasParking) {
                 views.setViewVisibility(R.id.widget_mini_map_image, View.GONE)
+                views.setViewVisibility(R.id.widget_mini_map_caption_bg, View.GONE)
                 views.setViewVisibility(R.id.widget_mini_map_empty, View.VISIBLE)
                 mgr.updateAppWidget(id, views)
                 continue
             }
 
+            val address = prefs.getString(WidgetDataPlugin.KEY_ADDRESS, "")
+            views.setTextViewText(R.id.widget_mini_map_caption, if (address.isNullOrBlank()) "מיקום נשמר" else address)
+
             views.setViewVisibility(R.id.widget_mini_map_image, View.VISIBLE)
+            views.setViewVisibility(R.id.widget_mini_map_caption_bg, View.VISIBLE)
             views.setViewVisibility(R.id.widget_mini_map_empty, View.GONE)
             mgr.updateAppWidget(id, views) // show layout immediately; tile image fills in async
 

@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.14.0',
+  version: '1.15.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.15.0',
+      date: '2026-09-05',
+      items: Object.freeze([
+        'ייבוא גיבוי בודק ומבקש מחדש את כל ההרשאות (מכיוון שהגדרות מיובאות עשויות להפעיל תכונות שההתקנה הזו עדיין לא ביקשה הרשאה עבורן)',
+        'עודכן עיצוב אייקון האפליקציה — הותאם למסכת האייקונים המסתגלים של אנדרואיד כך שלא ייחתך יותר',
+        'עוצבו מחדש הווידג׳טים למראה מהוקצע יותר: תג אייקון עגול ופריסה אופקית בווידג׳ט החניה הפעילה, אייקון וקטורי וצל בווידג׳ט השמירה המהירה, פינות מעוגלות וכיתוב כתובת בווידג׳ט המפה המוקטנת',
+      ]),
+    }),
     Object.freeze({
       version: '1.14.0',
       date: '2026-09-05',
