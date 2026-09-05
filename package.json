@@ -13,6 +13,8 @@
     "@capacitor/android": "^6.2.2",
     "@capacitor/cli": "^6.2.2",
     "@capacitor/core": "^6.2.2",
+    "@capacitor/filesystem": "^6.0.4",
+    "@capacitor/share": "^6.0.4",
     "@playwright/test": "^1.44.0",
     "@vitest/coverage-v8": "^2.0.0",
     "jsdom": "^29.1.1",

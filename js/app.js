@@ -201,6 +201,13 @@ class FindMyCarApp {
     Utils.el('centerUserBtn')?.addEventListener('click',    () => this.#centerOnUser());
     Utils.el('mapCollapseBtn')?.addEventListener('click',   () => this.#toggleMapCollapse());
     Utils.el('reloadAppBtn')?.addEventListener('click',     () => this.#reloadApp());
+    Utils.el('exportDataBtn')?.addEventListener('click',    () => this.#exportData());
+    Utils.el('importDataBtn')?.addEventListener('click',    () => Utils.el('importDataInput')?.click());
+    Utils.el('importDataInput')?.addEventListener('change', e => {
+      const file = e.target.files?.[0];
+      e.target.value = ''; // allow re-selecting the same file next time
+      if (file) this.#importData(file);
+    });
 
     const vBtn = Utils.el('versionTagBtn');
     if (vBtn) {
@@ -1272,6 +1279,74 @@ class FindMyCarApp {
       console.warn('reloadApp cleanup:', e);
     }
     window.location.reload();
+  }
+
+  // ── BACKUP & RESTORE ─────────────────────────────────────────
+  // Manual transfer between the PWA and the Android app: they run on
+  // different WebView/browser origins, so localStorage can't be shared
+  // directly — a backup file (exported from one, imported into the other)
+  // is the only way to move data across without a server.
+  async #exportData() {
+    const payload = {
+      app:        'findmycar',
+      formatVersion: 1,
+      appVersion: CFG.version,
+      exportedAt: new Date().toISOString(),
+      data:       Store.exportAll(),
+    };
+    const json     = JSON.stringify(payload, null, 2);
+    const filename = `findmycar-backup-${new Date().toISOString().slice(0, 10)}.json`;
+
+    const Filesystem = window.Capacitor?.Plugins?.Filesystem;
+    const Share      = window.Capacitor?.Plugins?.Share;
+    if (window.Capacitor?.isNativePlatform?.() && Filesystem && Share) {
+      try {
+        const { uri } = await Filesystem.writeFile({
+          path: filename, data: json, directory: 'CACHE', encoding: 'utf8',
+        });
+        await Share.share({ title: 'גיבוי FindMyCar', dialogTitle: 'שתף/שמור את קובץ הגיבוי', url: uri });
+      } catch (e) {
+        console.warn('Export failed:', e);
+        this.#ui.showToast('שגיאה בייצוא הנתונים', 'error');
+        return;
+      }
+    } else {
+      const blob = new Blob([json], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+    this.#ui.showToast('📤 קובץ הגיבוי מוכן', 'success');
+  }
+
+  async #importData(file) {
+    let payload;
+    try {
+      payload = JSON.parse(await file.text());
+    } catch {
+      this.#ui.showToast('קובץ הגיבוי אינו תקין', 'error');
+      return;
+    }
+    if (payload?.app !== 'findmycar' || !payload?.data || typeof payload.data !== 'object') {
+      this.#ui.showToast('קובץ הגיבוי אינו תקין', 'error');
+      return;
+    }
+    const ok = confirm('פעולה זו תחליף רכבים, היסטוריה והגדרות קיימים בנתונים מקובץ הגיבוי. להמשיך?');
+    if (!ok) return;
+
+    try {
+      Store.importAll(payload.data);
+    } catch (e) {
+      console.warn('Import failed:', e);
+      this.#ui.showToast('שגיאה בייבוא הקובץ', 'error');
+      return;
+    }
+    this.#ui.showToast('✅ הנתונים יובאו בהצלחה. טוען מחדש...', 'success');
+    setTimeout(() => window.location.reload(), 1200);
   }
 
   async #promptInstall() {

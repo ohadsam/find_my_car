@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.11.0',
+  version: '1.12.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -31,6 +31,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.12.0',
+      date: '2026-09-05',
+      items: Object.freeze([
+        'גיבוי ושחזור נתונים — קובץ גיבוי להעברת רכבים, היסטוריה והגדרות בין ה-PWA לאפליקציית האנדרואיד (ולהפך)',
+      ]),
+    }),
     Object.freeze({
       version: '1.11.0',
       date: '2026-09-04',

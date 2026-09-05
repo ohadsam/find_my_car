@@ -44,3 +44,40 @@ describe('Store', () => {
     expect(Store.get('nullval')).toBeNull();
   });
 });
+
+describe('Store.exportAll / importAll', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('exports only fmc_-prefixed keys', () => {
+    Store.set('fmc_theme_v1', 'dark');
+    Store.set('fmc_vehicles_v1', [{ id: '1' }]);
+    localStorage.setItem('unrelated_key', 'should not appear');
+
+    const exported = Store.exportAll();
+    expect(Object.keys(exported).sort()).toEqual(['fmc_theme_v1', 'fmc_vehicles_v1']);
+    expect(exported.fmc_theme_v1).toBe(JSON.stringify('dark'));
+  });
+
+  it('round-trips data through export then import into a clean store', () => {
+    Store.set('fmc_theme_v1', 'light');
+    Store.set('fmc_vehicles_v1', [{ id: 'abc', name: 'Tesla' }]);
+    const backup = Store.exportAll();
+
+    localStorage.clear();
+    Store.importAll(backup);
+
+    expect(Store.get('fmc_theme_v1')).toBe('light');
+    expect(Store.get('fmc_vehicles_v1')).toEqual([{ id: 'abc', name: 'Tesla' }]);
+  });
+
+  it('ignores non-fmc_ keys and rejects invalid input', () => {
+    expect(() => Store.importAll(null)).toThrow();
+    expect(() => Store.importAll('not an object')).toThrow();
+
+    Store.importAll({ fmc_theme_v1: JSON.stringify('dark'), evil_key: JSON.stringify('x') });
+    expect(Store.get('fmc_theme_v1')).toBe('dark');
+    expect(localStorage.getItem('evil_key')).toBeNull();
+  });
+});
