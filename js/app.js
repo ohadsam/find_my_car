@@ -161,9 +161,15 @@ class FindMyCarApp {
       }
     }
 
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('action') === 'save') {
+    const action = new URLSearchParams(window.location.search).get('action');
+    if (action === 'save') {
       setTimeout(() => this.#handleSaveNew(), 500);
+    } else if (action === 'swap') {
+      setTimeout(() => this.#swapParking(), 500);
+    } else if (action === 'end') {
+      setTimeout(() => this.#resetParking(), 500);
+    } else if (action === 'vehicles') {
+      setTimeout(() => this.#showView('settingsView'), 500);
     }
   }
 
@@ -1081,6 +1087,17 @@ class FindMyCarApp {
         const granted = await this.#bluetooth.requestPermission();
         if (granted) {
           await this.#btScanDevices(true);
+          return;
+        }
+        // Android stops showing the permission dialog after the user denies
+        // it a couple of times — requestPermission() then just silently
+        // resolves false forever, which looks exactly like a bug. Detect
+        // that state and send the user straight to the app's system
+        // settings screen instead of a dead-end error toast.
+        const status = isNative ? await this.#bluetooth.permissionStatus?.() : null;
+        if (status?.permanentlyDenied) {
+          this.#ui.showToast('הרשאת Bluetooth נחסמה. פתח את הגדרות האפליקציה כדי לאשר אותה', 'error');
+          await this.#bluetooth.openAppSettings?.();
         } else {
           this.#ui.showToast(isNative ? 'לא ניתן לגשת ל-Bluetooth' : 'לא ניתן לגשת למיקרופון', 'error');
         }
@@ -1092,7 +1109,10 @@ class FindMyCarApp {
       const emptyMessage = NativeBluetoothController.isSupported()
         ? 'לא נמצאו מכשירים מזווגים. זווג מכשיר Bluetooth בהגדרות האנדרואיד ונסה שוב.'
         : undefined;
-      this.#ui.showBtDeviceList(devices, label => this.#ui.setBtDeviceValue(label), emptyMessage);
+      this.#ui.showBtDeviceList(devices, label => {
+        this.#ui.setBtDeviceValue(label);
+        this.#ui.showToast('🔵 מכשיר קושר! פתח את הגדרות ה-Bluetooth כדי להפעיל התחלה/סיום חניה אוטומטיים', 'info');
+      }, emptyMessage);
     }
   }
 
@@ -1124,8 +1144,18 @@ class FindMyCarApp {
     };
   }
 
-  #refreshBtModal() {
-    this.#ui.renderBtSettingsModal(this.#getBtSettings(), this.#state.vehicles, this.#btSettingsCbs());
+  async #refreshBtModal() {
+    const isNative = NativeBluetoothController.isSupported();
+    const [btStatus, notifGranted] = isNative
+      ? await Promise.all([this.#bluetooth.permissionStatus?.(), Notify.checkPermission()])
+      : [null, true];
+    const needsSettings = !!btStatus?.permanentlyDenied || notifGranted === false;
+    this.#ui.renderBtSettingsModal(
+      this.#getBtSettings(),
+      this.#state.vehicles,
+      this.#btSettingsCbs(),
+      needsSettings ? { onOpenSettings: () => this.#bluetooth.openAppSettings?.() } : null
+    );
     this.#updateBtBadge();
   }
 

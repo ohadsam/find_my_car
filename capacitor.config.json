@@ -12,5 +12,11 @@
     "preferences": {
       "KeepRunning": "true"
     }
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_car",
+      "iconColor": "#5B8BF5"
+    }
   }
 }

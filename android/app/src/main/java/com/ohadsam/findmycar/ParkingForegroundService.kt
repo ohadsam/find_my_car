@@ -130,8 +130,12 @@ class ParkingForegroundService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // LOW (not MIN) — MIN notifications are collapsed under "show
+            // silent notifications" and require an extra tap to even see,
+            // which made it look like the app posts no notification at all.
+            // LOW still has no sound/heads-up popup, just a normal shade entry.
             val channel = NotificationChannel(
-                CHANNEL_ID, "פעילות ברקע", NotificationManager.IMPORTANCE_MIN
+                CHANNEL_ID, "פעילות ברקע", NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "שומר על זיהוי Bluetooth ומיקום פעילים ברקע בזמן חניה"
             }
@@ -148,8 +152,9 @@ class ParkingForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("FindMyCar פעיל ברקע")
             .setContentText("מזהה Bluetooth ומיקום כדי לשמור/לסיים חניה אוטומטית")
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSmallIcon(R.drawable.ic_stat_car)
+            .setColor(0xFF5B8BF5.toInt())
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
             .build()

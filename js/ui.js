@@ -30,7 +30,10 @@ export class UIController {
     const btDisplay = Utils.el('vehicleBtDeviceDisplay');
     const unlinkBtn = Utils.el('vehicleBtUnlinkBtn');
     if (btValue)   btValue.value     = label || '';
-    if (btDisplay) btDisplay.textContent = label || 'לא מקושר';
+    if (btDisplay) {
+      btDisplay.textContent = label ? `🔵 ${label}` : 'לא מקושר';
+      btDisplay.classList.toggle('is-linked', !!label);
+    }
     if (unlinkBtn) unlinkBtn.style.display = label ? '' : 'none';
     // Hide device list after selection
     const list = Utils.el('vehicleBtDeviceList');
@@ -84,10 +87,25 @@ export class UIController {
     list.style.display = '';
   }
 
-  renderBtSettingsModal(btSettings, vehicles, { onToggleEnabled, onToggleVehicle, onSetAll }) {
+  renderBtSettingsModal(btSettings, vehicles, { onToggleEnabled, onToggleVehicle, onSetAll }, permWarning) {
     const content = Utils.el('btSettingsContent');
     if (!content) return;
     content.innerHTML = '';
+
+    if (permWarning) {
+      const warn = document.createElement('div');
+      warn.className = 'bt-perm-warning';
+      const msg = document.createElement('p');
+      msg.textContent = '⚠️ הרשאת Bluetooth ו/או נוטיפיקציות אינה מאושרת — זיהוי אוטומטי או ההתראות עלולים לא לעבוד. אשר אותן מחדש בהגדרות האפליקציה';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'bt-perm-btn modal-btn primary';
+      btn.textContent = 'פתח הגדרות אפליקציה';
+      btn.addEventListener('click', () => permWarning.onOpenSettings());
+      warn.appendChild(msg);
+      warn.appendChild(btn);
+      content.appendChild(warn);
+    }
 
     // Master switch
     const masterRow = this.#makeBtRow(

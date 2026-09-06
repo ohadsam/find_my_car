@@ -73,4 +73,23 @@ export class NativeBluetoothController {
       return false;
     }
   }
+
+  // Distinguishes "not granted yet, will still prompt" from "permanently
+  // denied" (Android stops showing the dialog after the user declines twice
+  // or checks "don't ask again") — requestPermission() alone can't tell
+  // these apart, and a permanently-denied permission makes every future
+  // request silently resolve to granted:false with no dialog at all, which
+  // otherwise looks indistinguishable from a bug.
+  async permissionStatus() {
+    if (!this.#plugin) return { granted: false, permanentlyDenied: false };
+    try {
+      return await this.#plugin.permissionStatus();
+    } catch {
+      return { granted: false, permanentlyDenied: false };
+    }
+  }
+
+  async openAppSettings() {
+    await this.#plugin?.openAppSettings?.().catch(() => {});
+  }
 }

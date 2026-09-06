@@ -300,15 +300,22 @@ shape as `js/bluetooth.js`'s `BluetoothController` — `isSupported()`, `init()`
 so `js/app.js` can hold either behind one `#bluetooth` reference (selected once, at
 field-init time, via `NativeBluetoothController.isSupported()`). **Never call
 `BluetoothController`-specific statics from `js/app.js`** — always go through the
-instance so the native swap-in keeps working.
+instance so the native swap-in keeps working. `NativeBluetoothController` additionally
+exposes `permissionStatus()` and `openAppSettings()` — native-only extras (not part of
+the base contract, no web equivalent needed) that let the UI detect when Android has
+permanently stopped re-prompting for `BLUETOOTH_CONNECT` (after repeated denial) and
+send the user straight to the app's system settings screen instead of a silent,
+indistinguishable-from-a-bug dead end. `js/notify.js`'s `Notify.checkPermission()` is
+the equivalent non-requesting check for the notification permission.
 
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
-| `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestPermissions`; emits `connected`/`disconnected` events with `{label}` |
+| `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`; emits `connected`/`disconnected` events with `{label}` |
 | `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
+| `android/.../widgets/WidgetQuickActionsActivity.kt` | *(no JS-facing methods)* | Small floating dialog (not a plugin) opened from the "⋮" button on the Active Parking widget — real `AppWidgetProvider`s can't intercept long-press (the launcher reserves that gesture for move/resize/remove), so this tap-to-open popup with 4 buttons is the practical equivalent of a widget context menu. Each button just launches `MainActivity` with a different `?action=` value (`save`/`swap`/`end`/`vehicles`) and finishes itself — no native business logic, same deep-link mechanism as Quick Save |
 | *(official `@capacitor/filesystem`)* | `Filesystem` | Used only by `#exportData()` to write the backup JSON to the app's private Cache dir (no permissions needed) |
 | *(official `@capacitor/share`)* | `Share` | Used only by `#exportData()` to open the native Share sheet for the backup file — no custom Kotlin for either plugin, both auto-registered by `cap sync` |
 | *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification (`#showParkingNotification`), which keeps using the browser-safe `ServiceWorkerRegistration.showNotification()` path unchanged |
@@ -322,6 +329,16 @@ to the two data-driven widgets (`ActiveParkingWidgetProvider`, `MiniMapWidgetPro
 `?action=save` extra, reusing the **same** query-param handling the PWA's own
 `manifest.json` shortcut already triggers in `js/app.js` `#init()` — no separate
 native save path).
+
+**Widget deep-link actions**: `js/app.js` `#init()` reads `?action=` off `location.search`
+and dispatches to `save` (`#handleSaveNew()`), `swap` (`#swapParking()`), `end`
+(`#resetParking()`), or `vehicles` (`#showView('settingsView')`) — all four self-guard
+against having no active parking, so calling them from a cold app start is always safe.
+`MainActivity.java`'s `applyLaunchIntent()` reads a `widget_action` intent extra
+(`QuickSaveWidgetProvider.EXTRA_ACTION`) against an explicit allowlist of these four
+values and reloads the WebView at `?action=<value>` — both the Quick Save widget and
+`WidgetQuickActionsActivity`'s buttons go through this same mechanism, never a separate
+native code path per action.
 
 **Why the WebView's JS keeps running in the background at all**: Capacitor's Android
 Activity lifecycle delegates to Cordova's `handlePause(keepRunning)`, which calls
@@ -402,3 +419,8 @@ stays the single implementation.
 - [ ] Android APK: "שמירה מהירה" widget tap saves a new parking (same as the in-app button)
 - [ ] Android APK: "מפה מוקטנת" widget shows a map snapshot centered on the parking pin, and an empty state when there's no active parking
 - [ ] Android APK: with the app backgrounded/screen off, BT auto-end/auto-start and the GPS end-suggestion each show a system notification (not just an in-app toast/modal you'd never see)
+- [ ] Android APK: the "FindMyCar פעיל ברקע" background notification is visible directly in the shade (not collapsed under "show silent notifications") and shows the branded car icon, not a generic system icon
+- [ ] Android APK: after picking a Bluetooth device in vehicle settings, the linked-device field visibly changes color/weight (not still gray/muted)
+- [ ] Android APK: if Bluetooth permission is denied twice ("don't ask again"), opening Bluetooth settings shows the permanently-denied warning banner, and its "open app settings" button (and the one after a failed device scan) opens the app's system settings screen
+- [ ] Android APK: "חניה פעילה" and "שמירה מהירה" widgets render noticeably smaller than before; "מפה מוקטנת" is unchanged
+- [ ] Android APK: tapping "⋮" on the "חניה פעילה" widget opens a small popup with שמור חניה/החלף חניה/זזתי/בחר רכב, each performing the matching action

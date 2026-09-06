@@ -24,6 +24,12 @@
 
         </activity>
 
+        <activity
+            android:name=".widgets.WidgetQuickActionsActivity"
+            android:theme="@style/AppTheme.QuickActionsDialog"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

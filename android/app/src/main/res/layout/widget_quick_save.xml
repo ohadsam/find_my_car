@@ -9,17 +9,17 @@
     android:background="@drawable/widget_background_accent">
 
     <ImageView
-        android:layout_width="28dp"
-        android:layout_height="28dp"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
         android:src="@drawable/ic_widget_pin"
         android:contentDescription="@null" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="3dp"
         android:text="שמור חניה"
         android:textColor="#FFFFFF"
-        android:textSize="13sp"
+        android:textSize="10.5sp"
         android:textStyle="bold" />
 </LinearLayout>
