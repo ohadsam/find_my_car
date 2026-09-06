@@ -34,11 +34,26 @@ class ActiveParkingWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.widget_icon_badge, icon)
         }
 
-        val launchIntent = Intent(context, MainActivity::class.java)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+        val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
             (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0)
-        val pendingIntent = PendingIntent.getActivity(context, 0, launchIntent, flags)
-        views.setOnClickPendingIntent(R.id.widget_root, pendingIntent)
+
+        val launchIntent = Intent(context, MainActivity::class.java)
+        views.setOnClickPendingIntent(
+            R.id.widget_root,
+            PendingIntent.getActivity(context, 0, launchIntent, piFlags)
+        )
+
+        // Separate target (WidgetQuickActionsActivity, not MainActivity) on
+        // the "⋮" button — a real widget can't intercept long-press (the
+        // launcher reserves that for move/resize/remove), so this tap-to-open
+        // popup is the closest equivalent to a widget context menu.
+        val actionsIntent = Intent(context, WidgetQuickActionsActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        views.setOnClickPendingIntent(
+            R.id.widget_quick_actions_btn,
+            PendingIntent.getActivity(context, 1, actionsIntent, piFlags)
+        )
 
         mgr.updateAppWidget(id, views)
     }

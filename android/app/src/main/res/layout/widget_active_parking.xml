@@ -6,7 +6,7 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:background="@drawable/widget_background"
-    android:padding="16dp">
+    android:padding="10dp">
 
     <LinearLayout
         android:layout_width="0dp"
@@ -20,7 +20,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textColor="#FFFFFF"
-            android:textSize="15sp"
+            android:textSize="13sp"
             android:textStyle="bold"
             android:gravity="end"
             android:maxLines="1"
@@ -31,27 +31,44 @@
             android:id="@+id/widget_subtitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="2dp"
             android:textColor="#B8C4DB"
-            android:textSize="12.5sp"
+            android:textSize="11sp"
             android:gravity="end"
             android:maxLines="2"
             android:ellipsize="end"
             android:text="" />
     </LinearLayout>
 
-    <FrameLayout
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:layout_marginStart="12dp"
-        android:background="@drawable/widget_icon_badge_bg">
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <FrameLayout
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:background="@drawable/widget_icon_badge_bg">
+
+            <TextView
+                android:id="@+id/widget_icon_badge"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:textSize="16sp"
+                android:text="🚗" />
+        </FrameLayout>
 
         <TextView
-            android:id="@+id/widget_icon_badge"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
+            android:id="@+id/widget_quick_actions_btn"
+            android:layout_width="34dp"
+            android:layout_height="18dp"
+            android:layout_marginTop="2dp"
             android:gravity="center"
-            android:textSize="20sp"
-            android:text="🚗" />
-    </FrameLayout>
+            android:textSize="14sp"
+            android:textColor="#B8C4DB"
+            android:text="⋮" />
+    </LinearLayout>
 </LinearLayout>

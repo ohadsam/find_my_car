@@ -37,6 +37,22 @@ export class Notify {
     }
   }
 
+  // Non-requesting check, used to surface a settings nudge in the UI instead
+  // of only reactively finding out a notification never showed up.
+  static async checkPermission() {
+    const LocalNotifications = window.Capacitor?.Plugins?.LocalNotifications;
+    if (window.Capacitor?.isNativePlatform?.() && LocalNotifications) {
+      try {
+        const { display } = await LocalNotifications.checkPermissions();
+        return display === 'granted';
+      } catch {
+        return false;
+      }
+    }
+    if (!('Notification' in window)) return false;
+    return Notification.permission === 'granted';
+  }
+
   static async show(title, body) {
     try {
       const granted = await this.ensurePermission();

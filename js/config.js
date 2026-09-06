@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.15.0',
+  version: '1.16.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,18 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.16.0',
+      date: '2026-09-06',
+      items: Object.freeze([
+        'תוקן: מחוון "מכשיר מקושר" בהגדרות רכב לא השתנה חזותית לאחר בחירת מכשיר Bluetooth (נשאר אפור)',
+        'הגדרות Bluetooth מציגות אזהרה אם ההרשאה נחסמה על ידי המערכת, עם כפתור לפתיחת הגדרות האפליקציה ישירות',
+        'נוטיפיקציית הרקע הועלתה בעדיפות (Low במקום Min) כדי שתופיע בפועל בשורת ההתראות, עם אייקון ממותג במקום אייקון מערכת גנרי',
+        'לינוק מכשיר Bluetooth לרכב מציג כעת הודעה המפנה להגדרות Bluetooth כדי להפעיל התחלה/סיום חניה אוטומטיים',
+        'ווידג\'טים "חניה פעילה" ו"שמירה מהירה" הוקטנו משמעותית (גודל וגופן)',
+        'ווידג\'ט "חניה פעילה" מקבל כפתור פעולות מהירות (⋮) — שמור חניה, החלף חניה, זזתי, בחר רכב',
+      ]),
+    }),
     Object.freeze({
       version: '1.15.0',
       date: '2026-09-05',

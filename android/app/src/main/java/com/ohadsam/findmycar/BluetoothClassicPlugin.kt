@@ -3,7 +3,10 @@ package com.ohadsam.findmycar
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothProfile
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -56,6 +59,34 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     private fun permissionCallback(call: PluginCall) {
         val granted = getPermissionState("bluetooth") == PermissionState.GRANTED
         val ret = JSObject(); ret.put("granted", granted); call.resolve(ret)
+    }
+
+    // Android silently stops re-prompting after the user denies a runtime
+    // permission twice ("don't ask again") — requestBtPermission() then just
+    // resolves granted=false forever with no dialog at all, which looks
+    // identical to "nothing happening" from the JS side. This lets the UI
+    // detect that specific state and offer a way out.
+    @PluginMethod
+    fun permissionStatus(call: PluginCall) {
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            getPermissionState("bluetooth") == PermissionState.GRANTED
+        val canPrompt = granted || Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            activity == null ||
+            androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.BLUETOOTH_CONNECT)
+        val ret = JSObject()
+        ret.put("granted", granted)
+        ret.put("permanentlyDenied", !granted && !canPrompt)
+        call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun openAppSettings(call: PluginCall) {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", context.packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        call.resolve()
     }
 
     @PluginMethod

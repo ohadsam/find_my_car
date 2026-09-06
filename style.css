@@ -2078,6 +2078,13 @@ audio { width: 100%; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: var(--transition);
+}
+.bt-linked-name.is-linked {
+  color: var(--color-primary);
+  font-weight: 600;
+  background: var(--color-primary-glow);
+  border-color: var(--color-primary);
 }
 .bt-scan-btn,
 .bt-unlink-btn-sm {
@@ -2129,6 +2136,20 @@ audio { width: 100%; }
   display: block;
   width: calc(100% - 24px);
 }
+
+.bt-perm-warning {
+  margin: 12px 16px 0;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-glow);
+  border: 1px solid var(--color-danger-border);
+}
+.bt-perm-warning p {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+.bt-perm-warning .bt-perm-btn { margin: 0; width: 100%; }
 
 /* ── BLUETOOTH SETTINGS MODAL ── */
 .bt-settings-body {

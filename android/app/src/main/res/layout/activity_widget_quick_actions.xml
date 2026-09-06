@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="260dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/widget_background"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="10dp"
+        android:text="פעולות מהירות"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:gravity="end" />
+
+    <Button
+        android:id="@+id/actionSaveBtn"
+        style="@style/WidgetQuickActionButton"
+        android:text="🅿️ שמור חניה" />
+
+    <Button
+        android:id="@+id/actionSwapBtn"
+        style="@style/WidgetQuickActionButton"
+        android:text="🔄 החלף חניה" />
+
+    <Button
+        android:id="@+id/actionEndBtn"
+        style="@style/WidgetQuickActionButton"
+        android:text="✅ זזתי (סיים חניה)" />
+
+    <Button
+        android:id="@+id/actionVehiclesBtn"
+        style="@style/WidgetQuickActionButton"
+        android:text="🚗 בחר רכב" />
+</LinearLayout>
