@@ -2,6 +2,8 @@
 // Android home-screen widgets (active parking / quick save / mini map) stay
 // current. No-op in the browser/PWA — WidgetBridge.sync() is safe to call
 // unconditionally from js/app.js.
+import { CFG } from './config.js';
+import { Store } from './store.js';
 import { normalizeAddress } from './geocoder.js';
 
 export class WidgetBridge {
@@ -13,9 +15,11 @@ export class WidgetBridge {
     // Mirrors the vehicle list + active vehicle into native SharedPreferences
     // so the widgets' quick-actions popup can show a vehicle picker without
     // needing to read the WebView's own localStorage. Bluetooth-related
-    // fields are included too — not used by the widget picker, but this is
-    // the same mirror the native BtDecisionEngine (android/.../core/) reads
-    // to make headless connect/disconnect decisions without the WebView.
+    // fields (and hasParking, read directly from each vehicle's own
+    // fmc_cur_{id} key — not just the active vehicle's in-memory `current`)
+    // are included too — this is the same mirror the native BtDecisionEngine
+    // (android/.../core/) reads to make headless connect/disconnect
+    // decisions without the WebView.
     this.#plugin.syncVehicles?.({
       vehicles: (state.vehicles ?? []).map(v => ({
         id:                  v.id,
@@ -25,6 +29,7 @@ export class WidgetBridge {
         bluetoothAutoEnd:    !!v.bluetoothAutoEnd,
         bluetoothAutoStart:  !!v.bluetoothAutoStart,
         bluetoothStartPopup: v.bluetoothStartPopup !== false,
+        hasParking:          !!Store.get(CFG.keys.curPrefix + v.id),
       })),
       activeVehicleId: state.activeVehicleId ?? '',
     }).catch(() => {});

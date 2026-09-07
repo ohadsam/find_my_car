@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.20.0',
+  version: '1.21.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.21.0',
+      date: '2026-09-07',
+      items: Object.freeze([
+        'שלב שני בהעברת זיהוי Bluetooth לקוד נייטיבי — הקוד הנייטיבי מחשב עכשיו החלטה מקבילה בכל חיבור/ניתוק Bluetooth (מצב "צל") ורק רושם אותה ליומן האבחון להשוואה, בלי לבצע פעולה בפועל',
+      ]),
+    }),
     Object.freeze({
       version: '1.20.0',
       date: '2026-09-07',

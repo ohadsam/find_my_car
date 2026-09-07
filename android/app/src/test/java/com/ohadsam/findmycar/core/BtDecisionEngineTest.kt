@@ -11,13 +11,18 @@ import org.junit.Test
  * its decision logic ever changes.
  */
 class BtDecisionEngineTest {
+    // hasParking defaults to true and stays unused by BtDecisionEngine in
+    // these tests — the engine takes parking status via the separate
+    // hasCurrentParking lambda (matching real callers, which read a
+    // per-vehicle map keyed by id rather than trusting NativeVehicle's own
+    // field, since that field can go stale between plugin invocations).
     private fun vehicle(
         id: String = "v1",
         name: String = "Car",
         device: String? = "MyCar",
         autoEnd: Boolean = false,
         autoStart: Boolean = false,
-    ) = NativeVehicle(id, name, "🚗", device, autoEnd, autoStart, true)
+    ) = NativeVehicle(id, name, "🚗", device, autoEnd, autoStart, true, true)
 
     // ── onConnected ──────────────────────────────────────────────
 

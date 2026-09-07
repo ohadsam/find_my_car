@@ -311,7 +311,7 @@ the equivalent non-requesting check for the notification permission.
 
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
-| `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`; emits `connected`/`disconnected` events with `{label}` |
+| `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`; emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
 | `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh. `syncVehicles({vehicles, activeVehicleId})` additionally mirrors the vehicle list (id/name/icon only) so `WidgetQuickActionsActivity` can show a vehicle picker natively |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
@@ -359,9 +359,11 @@ values and reloads the WebView at `?action=<value>`. This is now only reached vi
 
 **Diagnostic log (`js/diag-log.js`)**: since background BT/GPS/notification behavior is
 impossible to observe without a connected device and `adb logcat`, every meaningful
-step of that pipeline logs to `DiagLog` (categories `BT`, `BT-RAW`, `GPS`, `NOTIFY`,
-`PERM`) — the raw native event handoff in `js/bluetooth-native.js`, the per-vehicle
-match/skip decisions in `#onBtConnected`/`#onBtDisconnected`, GPS threshold crossings,
+step of that pipeline logs to `DiagLog` (categories `BT`, `BT-RAW`, `BT-SHADOW`, `GPS`,
+`NOTIFY`, `PERM`) — the raw native event handoff in `js/bluetooth-native.js`, the
+per-vehicle match/skip decisions in `#onBtConnected`/`#onBtDisconnected`, what the
+native `BtDecisionEngine` would have decided for the same event in shadow mode
+(`BT-SHADOW` — see "Native background detection" below), GPS threshold crossings,
 `Notify.show()` outcomes, and every permission prompt result. Entries persist in
 localStorage (3-day retention, capped at 800 entries, deliberately not `fmc_`-prefixed
 so backups stay free of debug noise) and are viewed/filtered by vehicle or category,
@@ -440,11 +442,25 @@ small, independently-tested, non-breaking stages:
    not just id/name/icon). **Not wired into real event handling yet** — it exists
    standalone specifically so its decisions can be verified against the JS side
    before anything depends on it.
-2. **Not started**: wire `BtDecisionEngine` into `BluetoothClassicPlugin`'s real
-   `onConnected`/`onDisconnected` handlers in **shadow mode** — log what native
-   *would* do alongside what JS actually does, without native taking any real
-   action, to build confidence the two agree in real-world use before trusting
-   native alone.
+2. **✅ Done**: `BtDecisionEngine` is now wired into `BluetoothClassicPlugin`'s real
+   `onConnected`/`onDisconnected` handlers in **shadow mode** — after the real
+   `connected`/`disconnected` event is emitted (unchanged), `runShadowDecision()`
+   separately reads the same mirrored vehicle list (now also carrying
+   `hasParking`, read per-vehicle from `Store`'s `fmc_cur_{id}` keys in
+   `js/widget-bridge.js`, not just whichever vehicle is currently active),
+   evaluates `BtDecisionEngine` against it, formats the result with the new
+   `BtShadowFormatter`, and emits it as a **separate** `btShadowDecision` plugin
+   event (`{direction, label, decisions}`) — logged to Logcat (`FMC-BtPlugin`) and,
+   on the JS side, to the diagnostic log's new `BT-SHADOW` category
+   (`js/bluetooth-native.js`), so it's directly comparable against the matching
+   `BT` entries without adb. **Native takes no real action from this path** — the
+   entire shadow computation is wrapped in a hard try/catch backstop so a bug in
+   it can never affect the real (already-emitted) event or crash BT handling.
+   `BluetoothClassicPlugin.kt` itself has no unit tests (it's a Capacitor `Plugin`
+   subclass that needs a live `Bridge`/`Activity`, not something Robolectric can
+   cheaply stand up) — this is why the decision/formatting logic it calls into
+   stays isolated in `core` and unit-tested there instead; the plugin wiring
+   itself is only verified manually/via the diagnostic log on a real device.
 3. **Not started**: native `GpsDecisionEngine` mirroring `#checkGpsSpeed`/
    `#checkGpsDistance`, same pure/testable/shadow-mode pattern, fed by a
    `FusedLocationProviderClient`/`LocationManager` watch running directly in

@@ -14,17 +14,24 @@ import org.robolectric.RobolectricTestRunner
 class VehicleJsonParserTest {
     @Test
     fun `parses a full vehicle correctly`() {
-        val json = """[{"id":"v1","name":"Tesla","icon":"🚗","bluetoothDevice":"CarBT","bluetoothAutoEnd":true,"bluetoothAutoStart":true,"bluetoothStartPopup":false}]"""
+        val json = """[{"id":"v1","name":"Tesla","icon":"🚗","bluetoothDevice":"CarBT","bluetoothAutoEnd":true,"bluetoothAutoStart":true,"bluetoothStartPopup":false,"hasParking":true}]"""
         val result = VehicleJsonParser.parse(json)
         assertEquals(1, result.size)
-        assertEquals(NativeVehicle("v1", "Tesla", "🚗", "CarBT", true, true, false), result[0])
+        assertEquals(NativeVehicle("v1", "Tesla", "🚗", "CarBT", true, true, false, true), result[0])
     }
 
     @Test
     fun `missing optional fields fall back to defaults`() {
         val json = """[{"id":"v1","name":"Tesla","icon":"🚗"}]"""
         val result = VehicleJsonParser.parse(json)
-        assertEquals(NativeVehicle("v1", "Tesla", "🚗", null, false, false, true), result[0])
+        assertEquals(NativeVehicle("v1", "Tesla", "🚗", null, false, false, true, false), result[0])
+    }
+
+    @Test
+    fun `hasParking false is parsed correctly when explicitly present`() {
+        val json = """[{"id":"v1","name":"Tesla","icon":"🚗","hasParking":false}]"""
+        val result = VehicleJsonParser.parse(json)
+        assertEquals(false, result[0].hasParking)
     }
 
     @Test
