@@ -12,9 +12,20 @@ export class WidgetBridge {
 
     // Mirrors the vehicle list + active vehicle into native SharedPreferences
     // so the widgets' quick-actions popup can show a vehicle picker without
-    // needing to read the WebView's own localStorage.
+    // needing to read the WebView's own localStorage. Bluetooth-related
+    // fields are included too — not used by the widget picker, but this is
+    // the same mirror the native BtDecisionEngine (android/.../core/) reads
+    // to make headless connect/disconnect decisions without the WebView.
     this.#plugin.syncVehicles?.({
-      vehicles: (state.vehicles ?? []).map(v => ({ id: v.id, name: v.name, icon: v.icon })),
+      vehicles: (state.vehicles ?? []).map(v => ({
+        id:                  v.id,
+        name:                v.name,
+        icon:                v.icon,
+        bluetoothDevice:     v.bluetoothDevice ?? '',
+        bluetoothAutoEnd:    !!v.bluetoothAutoEnd,
+        bluetoothAutoStart:  !!v.bluetoothAutoStart,
+        bluetoothStartPopup: v.bluetoothStartPopup !== false,
+      })),
       activeVehicleId: state.activeVehicleId ?? '',
     }).catch(() => {});
 

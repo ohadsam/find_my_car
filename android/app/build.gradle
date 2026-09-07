@@ -8,8 +8,8 @@ android {
         applicationId "com.ohadsam.findmycar"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 11900
-        versionName "1.19.0"
+        versionCode 12000
+        versionName "1.20.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -57,6 +57,12 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    // Lets JVM unit tests (android/app/src/test/) exercise Android-framework
+    // classes (org.json, SharedPreferences, Context) without an emulator —
+    // this project has no local Android SDK/emulator available, so CI is the
+    // only place these can run; Robolectric is what makes that meaningful
+    // instead of every Android-touching class being untestable.
+    testImplementation "org.robolectric:robolectric:4.13"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

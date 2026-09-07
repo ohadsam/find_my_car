@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.19.0',
+  version: '1.20.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.20.0',
+      date: '2026-09-07',
+      items: Object.freeze([
+        'שלב ראשון בהעברת זיהוי Bluetooth/GPS לקוד נייטיבי (כמו Waze) כדי שלא יהיה תלוי במסך פתוח ברקע — עדיין לא פעיל בפועל, שלב תשתית בלבד',
+      ]),
+    }),
     Object.freeze({
       version: '1.19.0',
       date: '2026-09-07',
