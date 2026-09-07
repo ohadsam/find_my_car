@@ -112,4 +112,22 @@ export class NativeBluetoothController {
   async openAppSettings() {
     await this.#plugin?.openAppSettings?.().catch(() => {});
   }
+
+  // Standard Android battery optimization (Doze) is a very common,
+  // deterministic cause of "the foreground service and BT receiver all
+  // report success, yet nothing reaches the WebView again once the app is
+  // backgrounded" — many OEM skins reclaim the Activity/WebView unless the
+  // app is explicitly exempted, regardless of the foreground service.
+  async batteryOptimizationStatus() {
+    if (!this.#plugin) return { ignoring: true };
+    try {
+      return await this.#plugin.batteryOptimizationStatus();
+    } catch {
+      return { ignoring: true };
+    }
+  }
+
+  async requestIgnoreBatteryOptimizations() {
+    await this.#plugin?.requestIgnoreBatteryOptimizations?.().catch(() => {});
+  }
 }

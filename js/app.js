@@ -209,6 +209,17 @@ class FindMyCarApp {
     await this.#bluetooth.requestPermission?.().catch(() => {});
     const notifGranted = await Notify.ensurePermission().catch(() => false);
     DiagLog.log('PERM', `notifications: ${notifGranted ? 'granted' : 'denied'}`);
+
+    // Standard Android battery optimization is a very common, deterministic
+    // cause of BT/GPS background detection silently going dead — the OS (or
+    // an aggressive OEM skin) reclaims the Activity/WebView despite the
+    // foreground service unless the app is explicitly exempted. Only prompt
+    // if not already exempted, so this doesn't nag on every launch.
+    const battery = await this.#bluetooth.batteryOptimizationStatus?.().catch(() => null);
+    if (battery && !battery.ignoring) {
+      await this.#bluetooth.requestIgnoreBatteryOptimizations?.().catch(() => {});
+    }
+    DiagLog.log('PERM', `battery optimization: ${battery?.ignoring ? 'already exempted' : 'requested exemption'}`);
   }
 
   #getTheme() {
@@ -1243,15 +1254,24 @@ class FindMyCarApp {
 
   async #refreshBtModal() {
     const isNative = NativeBluetoothController.isSupported();
-    const [btStatus, notifGranted] = isNative
-      ? await Promise.all([this.#bluetooth.permissionStatus?.(), Notify.checkPermission()])
-      : [null, true];
-    const needsSettings = !!btStatus?.permanentlyDenied || notifGranted === false;
+    const [btStatus, notifGranted, batteryStatus] = isNative
+      ? await Promise.all([
+          this.#bluetooth.permissionStatus?.(),
+          Notify.checkPermission(),
+          this.#bluetooth.batteryOptimizationStatus?.(),
+        ])
+      : [null, true, null];
+    const batteryRestricted = batteryStatus != null && !batteryStatus.ignoring;
+    const needsSettings = !!btStatus?.permanentlyDenied || notifGranted === false || batteryRestricted;
     this.#ui.renderBtSettingsModal(
       this.#getBtSettings(),
       this.#state.vehicles,
       this.#btSettingsCbs(),
-      needsSettings ? { onOpenSettings: () => this.#bluetooth.openAppSettings?.() } : null
+      needsSettings ? {
+        batteryRestricted,
+        onOpenSettings: () => this.#bluetooth.openAppSettings?.(),
+        onRequestBattery: () => this.#bluetooth.requestIgnoreBatteryOptimizations?.(),
+      } : null
     );
     this.#updateBtBadge();
   }

@@ -311,7 +311,7 @@ the equivalent non-requesting check for the notification permission.
 
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
-| `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`; emits `connected`/`disconnected` events with `{label}` |
+| `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`; emits `connected`/`disconnected` events with `{label}` |
 | `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh. `syncVehicles({vehicles, activeVehicleId})` additionally mirrors the vehicle list (id/name/icon only) so `WidgetQuickActionsActivity` can show a vehicle picker natively |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
@@ -389,12 +389,35 @@ the OS *process* alive; `KeepRunning` is what keeps the *WebView's JS* alive wit
 both are required together).
 
 **Known limitation** (documented, not a bug to "fix"): the foreground service keeps
-the process alive across screen-off/backgrounded use, matching how virtually every
+the *process* alive across screen-off/backgrounded use, matching how virtually every
 non-headless Android BT/GPS tracking app works — but if the user force-kills the app
 from Recents, detection stops until it's reopened. A fully headless solution would
 require re-implementing the parking business logic (vehicle matching, history writes,
 geocoding) natively against WebView storage — out of scope; the existing JS logic
 stays the single implementation.
+
+**Battery optimization can silently disable everything, without a force-kill.** A
+foreground service keeps the *process* alive, but does not by itself guarantee
+`MainActivity`'s *Activity* (and therefore its WebView, where every bit of BT/GPS JS
+logic and `window.app` lives) survives being backgrounded — standard Android battery
+optimization (Doze) or an aggressive OEM skin can still reclaim it, especially on
+non-stock Android. When that happens: `ParkingForegroundService.isRunning` stays
+`true`, `BluetoothClassicPlugin`'s receiver keeps receiving real ACL broadcasts and
+logs them (`FMC-FgService`/`FMC-BtPlugin` in Logcat), but `notifyListeners()` has no
+live WebView to deliver to, so **nothing reaches JS** — no `BT-RAW` diagnostic-log
+entry, no toast, no widget action result. This is easy to misread as "the native side
+isn't working" when it's actually working perfectly and the JS side is simply gone.
+`BluetoothClassicPlugin.batteryOptimizationStatus()`/`requestIgnoreBatteryOptimizations()`
+(via `PowerManager.isIgnoringBatteryOptimizations()` / `ACTION_REQUEST_IGNORE_BATTERY
+_OPTIMIZATIONS`, both API 23+ only — minSdk here is 22, so both are gated behind an
+SDK check) let the app proactively request the standard Android exemption instead of
+asking the user to hunt for the equivalent toggle manually; `#primeNativePermissions()`
+requests it at first launch (only if not already exempted), and the Bluetooth settings
+warning banner offers it directly if it's still restricted. This does **not** fully
+solve OEM-specific background killers (Xiaomi's "autostart" permission, Huawei's
+"protected apps," Samsung's "put app to sleep," etc., and the "Don't keep activities"
+developer option) — those have no public API to query or toggle from an app, and
+remain something only the user can find in their device's own settings.
 
 ### Common Android tasks
 
@@ -467,3 +490,5 @@ stays the single implementation.
 - [ ] Android APK: "ניהול רכבים" in the quick-actions popup is the only button that opens the app (adding/editing a vehicle needs real UI)
 - [ ] Android APK: force-kill the app from Recents, then tap a widget action — falls back to opening the app with the matching screen (no live WebView to run headlessly against)
 - [ ] Android APK: the diagnostic log's `BT` category shows a "background service running check: YES" entry a couple seconds after opening the app (confirms `ParkingForegroundService` actually started) — if it shows NO or never appears, that's the root cause of BT/GPS not working in the background, not a separate bug
+- [ ] Android APK: first launch prompts to exempt the app from battery optimization (if not already exempted); the diagnostic log's `PERM` category logs "battery optimization: already exempted" or "requested exemption"
+- [ ] Android APK: if battery optimization is still restricting the app, Bluetooth settings shows a warning with a "בטל הגבלת חיסכון בסוללה" button that opens the system's battery-exemption dialog directly (not just generic app settings)
