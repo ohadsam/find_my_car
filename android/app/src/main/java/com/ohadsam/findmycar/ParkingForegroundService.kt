@@ -15,6 +15,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -34,15 +35,27 @@ class ParkingForegroundService : Service() {
     private var receiver: BroadcastReceiver? = null
 
     companion object {
+        private const val TAG = "FMC-FgService"
         private const val CHANNEL_ID = "findmycar_background"
         private const val NOTIFICATION_ID = 4201
         private val activeReasons = mutableSetOf<String>()
+
+        // Set true only after startForeground() actually succeeds, false the
+        // instant it fails or the service is torn down — lets the JS side
+        // (via BluetoothClassicPlugin.isForegroundServiceRunning) directly
+        // confirm the one fact it otherwise has no way to observe: whether
+        // the service that's supposed to keep BT/GPS alive in the background
+        // is really running, instead of silently having failed to start.
+        @Volatile
+        var isRunning = false
+            private set
 
         @Synchronized
         fun setReasonActive(context: Context, reason: String, active: Boolean) {
             val wasEmpty = activeReasons.isEmpty()
             if (active) activeReasons.add(reason) else activeReasons.remove(reason)
             val nowEmpty = activeReasons.isEmpty()
+            Log.d(TAG, "setReasonActive($reason, $active) — reasons=$activeReasons")
 
             val intent = Intent(context, ParkingForegroundService::class.java)
             try {
@@ -52,6 +65,7 @@ class ParkingForegroundService : Service() {
                     context.stopService(intent)
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "startForegroundService/stopService threw", e)
                 // Never let this crash the caller (e.g. a rare background-start
                 // restriction) — BT/GPS detection just stays inactive this time.
             }
@@ -69,10 +83,14 @@ class ParkingForegroundService : Service() {
                 startForeground(NOTIFICATION_ID, buildNotification())
             }
             registerBtReceiver()
+            isRunning = true
+            Log.i(TAG, "onCreate succeeded — foreground service running (type=$type)")
         } catch (e: Exception) {
             // Starting this service must never crash the whole app — worst
             // case BT/GPS background detection is inactive until the next
             // successful start (e.g. once the user grants BLUETOOTH_CONNECT).
+            Log.e(TAG, "onCreate failed — BT/GPS background detection inactive", e)
+            isRunning = false
             stopSelf()
         }
     }
@@ -97,6 +115,8 @@ class ParkingForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
+        isRunning = false
+        Log.i(TAG, "onDestroy — foreground service stopped")
         receiver?.let { try { unregisterReceiver(it) } catch (e: IllegalArgumentException) { /* already gone */ } }
         receiver = null
         super.onDestroy()
@@ -113,8 +133,15 @@ class ParkingForegroundService : Service() {
             override fun onReceive(context: Context, intent: Intent) {
                 val device: BluetoothDevice? =
                     intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                val label = try { device?.name } catch (e: SecurityException) { null }
-                if (label.isNullOrBlank()) return
+                val label = try { device?.name } catch (e: SecurityException) {
+                    Log.w(TAG, "device.getName() threw SecurityException — BLUETOOTH_CONNECT not granted?", e)
+                    null
+                }
+                if (label.isNullOrBlank()) {
+                    Log.w(TAG, "ACL broadcast (${intent.action}) received with no readable device name — dropped")
+                    return
+                }
+                Log.i(TAG, "ACL broadcast: ${intent.action} label=$label")
                 when (intent.action) {
                     BluetoothDevice.ACTION_ACL_CONNECTED    -> BtEventBus.emitConnected(label)
                     BluetoothDevice.ACTION_ACL_DISCONNECTED -> BtEventBus.emitDisconnected(label)
@@ -126,6 +153,7 @@ class ParkingForegroundService : Service() {
         // broadcasts and never needs to be reachable from other apps.
         ContextCompat.registerReceiver(this, r, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         receiver = r
+        Log.i(TAG, "BT ACL receiver registered")
     }
 
     private fun createChannel() {

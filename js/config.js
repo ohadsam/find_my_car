@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.16.0',
+  version: '1.17.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.17.0',
+      date: '2026-09-06',
+      items: Object.freeze([
+        'נוסף יומן אבחון (בהגדרות) — מציג בדיוק אילו אירועי Bluetooth/GPS/התראות האפליקציה קיבלה בפועל, נשמר 3 ימים, עם סינון לפי רכב, העתקה וייצוא',
+        'נוסף בדיקת "שירות רקע פעיל" — מאתרת ישירות אם השירות ששומר על זיהוי Bluetooth/GPS ברקע אכן עלה בהצלחה',
+        'נוספו רישומי Logcat מפורטים לצד הנייטיבי (Bluetooth, שירות רקע) לאבחון מעמיק יותר דרך adb',
+      ]),
+    }),
     Object.freeze({
       version: '1.16.0',
       date: '2026-09-06',

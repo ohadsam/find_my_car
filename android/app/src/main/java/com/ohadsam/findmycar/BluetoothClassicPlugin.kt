@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -33,6 +34,8 @@ import java.util.concurrent.TimeUnit
     ]
 )
 class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
+
+    companion object { private const val TAG = "FMC-BtPlugin" }
 
     private var watching = false
     private var prevLabels: MutableSet<String> = mutableSetOf()
@@ -79,6 +82,16 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         call.resolve(ret)
     }
 
+    // Diagnostic-only: lets the JS side directly confirm whether
+    // ParkingForegroundService (the thing that's supposed to keep BT/GPS
+    // detection alive in the background) actually started, instead of only
+    // ever finding out indirectly by waiting for an event that may never
+    // come. See js/diag-log.js and app.js's post-startWatch() check.
+    @PluginMethod
+    fun isForegroundServiceRunning(call: PluginCall) {
+        val ret = JSObject(); ret.put("running", ParkingForegroundService.isRunning); call.resolve(ret)
+    }
+
     @PluginMethod
     fun openAppSettings(call: PluginCall) {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -91,6 +104,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
 
     @PluginMethod
     fun startWatch(call: PluginCall) {
+        Log.i(TAG, "startWatch() called, already watching=$watching")
         if (!watching) {
             watching = true
             BtEventBus.addListener(this)
@@ -152,6 +166,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         synchronized(labelsLock) {
             prevLabels = prevLabels.toMutableSet().apply { if (connected) add(label) else remove(label) }
         }
+        Log.i(TAG, "emitting ${if (connected) "connected" else "disconnected"} label=$label to JS")
         val data = JSObject(); data.put("label", label)
         notifyListeners(if (connected) "connected" else "disconnected", data)
     }
