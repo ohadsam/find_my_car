@@ -31,6 +31,24 @@ class WidgetDataPlugin : Plugin() {
         const val KEY_TIMESTAMP    = "timestamp"
         const val KEY_VEHICLE_ICON = "vehicle_icon"
         const val KEY_VEHICLE_NAME = "vehicle_name"
+        const val KEY_VEHICLES_JSON     = "vehicles_json"
+        const val KEY_ACTIVE_VEHICLE_ID = "active_vehicle_id"
+    }
+
+    // Mirrors the full vehicle list (id/name/icon only) + active vehicle id
+    // so the widgets' quick-actions popup (WidgetQuickActionsActivity) can
+    // show a vehicle picker without needing to read the WebView's own
+    // localStorage, which a plain native Activity can't access directly.
+    @PluginMethod
+    fun syncVehicles(call: PluginCall) {
+        val vehiclesArray = call.getArray("vehicles")
+        val activeId = call.getString("activeVehicleId", "") ?: ""
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(KEY_VEHICLES_JSON, vehiclesArray?.toString() ?: "[]")
+            .putString(KEY_ACTIVE_VEHICLE_ID, activeId)
+            .apply()
+        call.resolve()
     }
 
     @PluginMethod

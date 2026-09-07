@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import com.ohadsam.findmycar.widgets.QuickSaveWidgetProvider;
+import java.lang.ref.WeakReference;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -17,12 +18,44 @@ public class MainActivity extends BridgeActivity {
     private static final Set<String> VALID_ACTIONS = new HashSet<>(
         Arrays.asList("save", "swap", "end", "vehicles")
     );
+
+    // Lets WidgetActionReceiver reach the already-running WebView (if the
+    // app is alive in the background — the common case, since
+    // ParkingForegroundService + KeepRunning keep it that way) and run a
+    // widget action via evaluateJavascript() without ever bringing this
+    // Activity to the foreground. WeakReference so this never keeps the
+    // Activity alive past its normal lifecycle.
+    private static WeakReference<MainActivity> activeInstance;
+
+    public static WebView getActiveWebView() {
+        MainActivity a = activeInstance != null ? activeInstance.get() : null;
+        return (a != null && a.getBridge() != null) ? a.getBridge().getWebView() : null;
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BluetoothClassicPlugin.class);
         registerPlugin(WidgetDataPlugin.class);
         super.onCreate(savedInstanceState);
+        activeInstance = new WeakReference<>(this);
+
+        WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+        if (webView != null) {
+            // Separate from Capacitor's own bridge — only used so
+            // WidgetActionReceiver's injected JS can report back a result
+            // string (for a Toast) after running headlessly. Safe: this
+            // WebView only ever loads our own bundled content, never
+            // arbitrary/remote pages.
+            webView.addJavascriptInterface(new WidgetJsBridge(getApplicationContext()), "AndroidWidgetBridge");
+        }
+
         applyLaunchIntent(getIntent());
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (activeInstance != null && activeInstance.get() == this) activeInstance = null;
+        super.onDestroy();
     }
 
     @Override
@@ -34,7 +67,9 @@ public class MainActivity extends BridgeActivity {
 
     // Reuses the PWA's own "?action=..." query-param handling (js/app.js
     // #init()) — widgets just need to get the WebView to that URL, no
-    // separate native business logic for save/swap/end/vehicles.
+    // separate native business logic for save/swap/end/vehicles. Only used
+    // as a fallback now (WidgetActionReceiver handles the headless path) —
+    // for when the app isn't already running in the background.
     private void applyLaunchIntent(Intent intent) {
         if (intent == null) return;
         String action = intent.getStringExtra(QuickSaveWidgetProvider.EXTRA_ACTION);

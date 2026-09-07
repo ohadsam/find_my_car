@@ -312,34 +312,50 @@ the equivalent non-requesting check for the notification permission.
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
 | `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`; emits `connected`/`disconnected` events with `{label}` |
-| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh |
+| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh. `syncVehicles({vehicles, activeVehicleId})` additionally mirrors the vehicle list (id/name/icon only) so `WidgetQuickActionsActivity` can show a vehicle picker natively |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
-| `android/.../widgets/WidgetQuickActionsActivity.kt` | *(no JS-facing methods)* | Small floating dialog (not a plugin) opened from the "⋮" button on the Active Parking widget — real `AppWidgetProvider`s can't intercept long-press (the launcher reserves that gesture for move/resize/remove), so this tap-to-open popup with 4 buttons is the practical equivalent of a widget context menu. Each button just launches `MainActivity` with a different `?action=` value (`save`/`swap`/`end`/`vehicles`) and finishes itself — no native business logic, same deep-link mechanism as Quick Save |
+| `android/.../widgets/WidgetQuickActionsActivity.kt` | *(no JS-facing methods)* | Small floating dialog (not a plugin) opened from the "⋮" button on every widget — real `AppWidgetProvider`s can't intercept long-press (the launcher reserves that gesture for move/resize/remove), so this tap-to-open popup is the practical equivalent of a widget context menu. Shows a vehicle picker (`Spinner`, populated from `WidgetData`'s synced vehicle list, defaulting to the active vehicle) plus שמור/החלף/סיים buttons that broadcast to `WidgetActionReceiver` — headless, never launches `MainActivity`. Only "ניהול רכבים" still opens the app, since adding/editing a vehicle needs real UI |
+| `android/.../WidgetActionReceiver.kt` | *(no JS-facing methods — receives, not called from JS)* | Runs a widget action (`save`/`swap`/`end`) headlessly: grabs `MainActivity`'s already-running `WebView` (via a static `WeakReference` set in `onCreate`/cleared in `onDestroy`) and calls `window.app.performWidgetAction(action, vehicleId)` through `evaluateJavascript()` — the app's JS keeps running in the background already (see `KeepRunning` below), so this normally reaches a live page without ever bringing the Activity forward. Falls back to actually launching `MainActivity` with the old `?action=` deep link only if the WebView isn't alive (app fully killed) |
+| `android/.../WidgetJsBridge.kt` | *(no JS-facing methods — receives, not called from JS)* | Registered on the WebView as `window.AndroidWidgetBridge` (in `MainActivity.onCreate`). `performWidgetAction()`'s resolved result string comes back here (`@JavascriptInterface fun onResult`) since `evaluateJavascript()`'s own callback only sees the un-awaited return value, not a Promise's resolution — shown as a `Toast` (posted to the main thread, since `@JavascriptInterface` methods run on a WebView-internal thread) |
 | *(official `@capacitor/filesystem`)* | `Filesystem` | Used only by `#exportData()` to write the backup JSON to the app's private Cache dir (no permissions needed) |
 | *(official `@capacitor/share`)* | `Share` | Used only by `#exportData()` to open the native Share sheet for the backup file — no custom Kotlin for either plugin, both auto-registered by `cap sync` |
 | *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification (`#showParkingNotification`), which keeps using the browser-safe `ServiceWorkerRegistration.showNotification()` path unchanged |
 
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
 state change already goes through) calls `WidgetBridge.sync(state)` after
-`this.#ui.updateAll(state)`. `WidgetBridge` calls `WidgetData.update()`/`.clear()`,
-which writes `SharedPreferences` and broadcasts `AppWidgetManager.ACTION_APPWIDGET_UPDATE`
-to the two data-driven widgets (`ActiveParkingWidgetProvider`, `MiniMapWidgetProvider`;
-`QuickSaveWidgetProvider` is stateless — it only launches `MainActivity` with the
-`?action=save` extra, reusing the **same** query-param handling the PWA's own
-`manifest.json` shortcut already triggers in `js/app.js` `#init()` — no separate
-native save path).
+`this.#ui.updateAll(state)`. `WidgetBridge` calls `WidgetData.update()`/`.clear()`
+(parking snapshot) and `WidgetData.syncVehicles()` (vehicle list + active id), which
+write `SharedPreferences` and broadcast `AppWidgetManager.ACTION_APPWIDGET_UPDATE` to
+the two data-driven widgets (`ActiveParkingWidgetProvider`, `MiniMapWidgetProvider`).
 
-**Widget deep-link actions**: `js/app.js` `#init()` reads `?action=` off `location.search`
-and dispatches to `save` (`#handleSaveNew()`), `swap` (`#swapParking()`), `end`
-(`#resetParking()`), or `vehicles` (`#showView('settingsView')`) — all four self-guard
-against having no active parking, so calling them from a cold app start is always safe.
-`MainActivity.java`'s `applyLaunchIntent()` reads a `widget_action` intent extra
+**Headless widget actions (`FindMyCarApp.performWidgetAction`)**: every direct widget
+action — Quick Save's single tap, and Save/Swap/End inside the "⋮" quick-actions popup
+— runs **without opening the app**. `js/app.js` exposes a public (not `#`-private)
+`performWidgetAction(action, vehicleId)` on the `FindMyCarApp` instance (`window.app`)
+specifically so `WidgetActionReceiver.kt` can call it via `evaluateJavascript()` against
+the already-running WebView. It optionally switches to `vehicleId` first (silently, via
+the same `#switchVehicle(id, {silent:true})` the BT auto-start flow already uses in the
+background), performs the action, and returns a result string that
+`WidgetJsBridge`/`AndroidWidgetBridge` turns into a `Toast` — the same code paths that
+already run while the app is backgrounded for Bluetooth/GPS auto-detection, just now
+reachable from a widget tap too, so a regression here is easy to miss because the PWA
+(no widgets) and a foregrounded APK (deep-link fallback) would both keep working fine.
+`QuickSaveWidgetProvider` broadcasts straight to `WidgetActionReceiver` (`PendingIntent
+.getBroadcast`, not `.getActivity`); the fallback deep-link mechanism below only fires
+when `MainActivity`'s WebView isn't alive at all.
+
+**Widget deep-link actions (fallback only)**: `js/app.js` `#init()` reads `?action=` off
+`location.search` and dispatches to `save` (`#handleSaveNew()`), `swap`
+(`#swapParking()`), `end` (`#resetParking()`), or `vehicles`
+(`#showView('settingsView')`) — all four self-guard against having no active parking, so
+calling them from a cold app start is always safe. `MainActivity.java`'s
+`applyLaunchIntent()` reads a `widget_action` intent extra
 (`QuickSaveWidgetProvider.EXTRA_ACTION`) against an explicit allowlist of these four
-values and reloads the WebView at `?action=<value>` — both the Quick Save widget and
-`WidgetQuickActionsActivity`'s buttons go through this same mechanism, never a separate
-native code path per action.
+values and reloads the WebView at `?action=<value>`. This is now only reached via
+`WidgetActionReceiver`'s fallback (app fully killed) or the "ניהול רכבים" button
+(`vehicles`, which always needs real UI) — never the normal, app-alive case.
 
 **Diagnostic log (`js/diag-log.js`)**: since background BT/GPS/notification behavior is
 impossible to observe without a connected device and `adb logcat`, every meaningful
@@ -446,5 +462,8 @@ stays the single implementation.
 - [ ] Android APK: after picking a Bluetooth device in vehicle settings, the linked-device field visibly changes color/weight (not still gray/muted)
 - [ ] Android APK: if Bluetooth permission is denied twice ("don't ask again"), opening Bluetooth settings shows the permanently-denied warning banner, and its "open app settings" button (and the one after a failed device scan) opens the app's system settings screen
 - [ ] Android APK: "חניה פעילה" and "שמירה מהירה" widgets render noticeably smaller than before; "מפה מוקטנת" is unchanged
-- [ ] Android APK: tapping "⋮" on the "חניה פעילה" widget opens a small popup with שמור חניה/החלף חניה/זזתי/בחר רכב, each performing the matching action
+- [ ] Android APK: tapping "⋮" on any of the 3 widgets opens a small popup with a vehicle picker (defaulting to the active vehicle) and שמור חניה/החלף חניה/זזתי buttons — each performs the action on the SELECTED vehicle immediately, without opening the app, and shows a Toast confirming what happened
+- [ ] Android APK: tapping "שמירה מהירה" widget's main body saves a parking spot without opening the app (Toast confirms); its "⋮" corner button still opens the quick-actions popup
+- [ ] Android APK: "ניהול רכבים" in the quick-actions popup is the only button that opens the app (adding/editing a vehicle needs real UI)
+- [ ] Android APK: force-kill the app from Recents, then tap a widget action — falls back to opening the app with the matching screen (no live WebView to run headlessly against)
 - [ ] Android APK: the diagnostic log's `BT` category shows a "background service running check: YES" entry a couple seconds after opening the app (confirms `ParkingForegroundService` actually started) — if it shows NO or never appears, that's the root cause of BT/GPS not working in the background, not a separate bug

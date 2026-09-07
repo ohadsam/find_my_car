@@ -10,6 +10,14 @@ export class WidgetBridge {
   static sync(state) {
     if (!this.#plugin) return;
 
+    // Mirrors the vehicle list + active vehicle into native SharedPreferences
+    // so the widgets' quick-actions popup can show a vehicle picker without
+    // needing to read the WebView's own localStorage.
+    this.#plugin.syncVehicles?.({
+      vehicles: (state.vehicles ?? []).map(v => ({ id: v.id, name: v.name, icon: v.icon })),
+      activeVehicleId: state.activeVehicleId ?? '',
+    }).catch(() => {});
+
     const current = state.current;
     const vehicle = state.vehicles?.find(v => v.id === state.activeVehicleId) ?? null;
 

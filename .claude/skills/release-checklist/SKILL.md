@@ -116,7 +116,43 @@ pipeline (Bluetooth, GPS auto-end, or `Notify`):
   keeps BT/GPS alive in the background actually running," so a regression here silently
   removes the most useful signal for diagnosing background-detection reports.
 
-## 5. Cross-channel behavior parity
+## 5. Headless widget actions
+
+Widget actions (Quick Save's tap; Save/Swap/End in the "⋮" quick-actions popup) must
+run without ever opening the app — a regression here silently falls back to opening
+the app instead (still "works," just not headlessly), so nothing else catches it:
+
+- Confirm `js/app.js` still exposes a PUBLIC (not `#`-private) `performWidgetAction`
+  method on the `FindMyCarApp` class — grep `performWidgetAction(action, vehicleId)`
+  with no `#` prefix. A private method here would silently break every widget action
+  (native `evaluateJavascript()` can't reach a JS private class field), degrading them
+  all to the app-opening fallback with no test to catch it.
+- Confirm `android/.../WidgetActionReceiver.kt` exists, is registered in
+  `AndroidManifest.xml` as `android:exported="false"`, and its `onReceive()` calls
+  `MainActivity.getActiveWebView()` before falling back to launching `MainActivity`.
+- Confirm `android/.../MainActivity.java` sets a static `activeInstance` (or
+  equivalent) in `onCreate()`, clears it in `onDestroy()`, and registers
+  `WidgetJsBridge` on the WebView as `"AndroidWidgetBridge"`.
+- Confirm `android/.../WidgetJsBridge.kt` exists with an `@JavascriptInterface fun
+  onResult` method — this is the only way a widget action's result reaches a Toast;
+  losing the `@JavascriptInterface` annotation makes Android silently refuse to expose
+  the method to JS (no compile error, no crash, the callback just never fires).
+- Confirm `QuickSaveWidgetProvider.kt` targets `WidgetActionReceiver` via
+  `PendingIntent.getBroadcast` (not `.getActivity` targeting `MainActivity`) for its
+  main tap — that's the difference between headless and opening the app.
+- Confirm `WidgetDataPlugin.kt` declares `syncVehicles` and `js/widget-bridge.js`
+  calls it (`this.#plugin.syncVehicles?.(`) — this is what lets
+  `WidgetQuickActionsActivity`'s vehicle picker show real vehicles instead of an
+  empty list.
+- Confirm all 3 widget layouts (`widget_active_parking.xml`, `widget_quick_save.xml`,
+  `widget_mini_map.xml`) declare a `widget_quick_actions_btn` view, and all 3
+  providers (`ActiveParkingWidgetProvider`, `QuickSaveWidgetProvider`,
+  `MiniMapWidgetProvider`) wire it to `WidgetQuickActionsActivity` — the user asked
+  for this to "work the same way" across every widget type, so a new widget or a
+  layout change that drops this button is a regression even if the widget's primary
+  function still works.
+
+## 6. Cross-channel behavior parity
 
 - Confirm `js/widget-bridge.js` and every `Capacitor.isNativePlatform()` /
   `window.Capacitor` branch in `js/app.js` is genuinely a no-op in the browser (no
