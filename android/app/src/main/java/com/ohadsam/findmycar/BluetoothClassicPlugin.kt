@@ -3,9 +3,11 @@ package com.ohadsam.findmycar
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothProfile
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import com.getcapacitor.JSArray
@@ -94,11 +96,55 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
 
     @PluginMethod
     fun openAppSettings(call: PluginCall) {
+        openAppSettingsInternal()
+        call.resolve()
+    }
+
+    private fun openAppSettingsInternal() {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", context.packageName, null)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
+    }
+
+    // Standard Android battery optimization (Doze) restricts background work
+    // for apps the user hasn't exempted — a very common, deterministic cause
+    // of "the foreground service and BT receiver all report success, yet no
+    // event or widget action ever reaches the WebView again once the app is
+    // backgrounded": on many devices the OS (or an aggressive OEM skin) will
+    // still reclaim the Activity/WebView unless the app is explicitly
+    // exempted. Requesting the exemption directly is far more effective than
+    // asking the user to hunt for it manually.
+    @PluginMethod
+    fun batteryOptimizationStatus(call: PluginCall) {
+        // isIgnoringBatteryOptimizations() and the Doze/battery-optimization
+        // concept itself don't exist before API 23 (minSdk here is 22) —
+        // calling it unguarded would throw NoSuchMethodError on those devices.
+        val ignoring = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            true
+        } else {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+        }
+        val ret = JSObject(); ret.put("ignoring", ignoring); call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun requestIgnoreBatteryOptimizations(call: PluginCall) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) { call.resolve(); return }
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:${context.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            // Some OEMs block this specific intent — app settings is the
+            // next best place for the user to find the equivalent toggle.
+            Log.w(TAG, "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS failed, falling back to app settings", e)
+            openAppSettingsInternal()
+        }
         call.resolve()
     }
 

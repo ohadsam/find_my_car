@@ -61,10 +61,18 @@ available, report that check as a explicit FAIL/UNKNOWN with the reason, not omi
     that exists)
   - Permissions: `BLUETOOTH_CONNECT`, `FOREGROUND_SERVICE`,
     `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `POST_NOTIFICATIONS`,
-    `ACCESS_FINE_LOCATION`, `CAMERA`, `RECORD_AUDIO` — a permission missing here
+    `ACCESS_FINE_LOCATION`, `CAMERA`, `RECORD_AUDIO`,
+    `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` — a permission missing here
     isn't caught by any build step (the app compiles fine and only fails at
     runtime when that specific feature is used), so check this list literally
     every release, not just when a new native feature is added
+- Confirm `BluetoothClassicPlugin.kt`'s `batteryOptimizationStatus`/
+  `requestIgnoreBatteryOptimizations` both guard `Build.VERSION.SDK_INT` against
+  `Build.VERSION_CODES.M` before touching `PowerManager.isIgnoringBatteryOptimizations`
+  or `Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` — both are API 23+ only,
+  and this project's minSdk is 22, so an unguarded call is a `NoSuchMethodError`
+  crash waiting to happen on real (if now rare) devices, not something any emulator
+  running a normal API level would catch
 - Confirm `android/app/build.gradle` declares `signingConfigs.debug` pointing at
   the committed `android/app/debug.keystore` (not the per-machine default) — a
   fresh CI runner without this would sign every build with a different random

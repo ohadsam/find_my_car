@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.18.0',
+  version: '1.19.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.19.0',
+      date: '2026-09-07',
+      items: Object.freeze([
+        'האפליקציה מבקשת כעת פטור מחיסכון בסוללה בפתיחה ראשונה — חיסכון בסוללה יכול לעצור זיהוי Bluetooth/GPS ברקע גם כששירות הרקע פעיל',
+        'הגדרות Bluetooth מציגות אזהרה ייעודית וכפתור לביטול הגבלת חיסכון בסוללה אם היא עדיין פעילה',
+      ]),
+    }),
     Object.freeze({
       version: '1.18.0',
       date: '2026-09-07',
