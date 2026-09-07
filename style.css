@@ -2022,6 +2022,53 @@ audio { width: 100%; }
   border-color: var(--color-primary);
   color: var(--color-primary);
 }
+
+/* ── DIAGNOSTIC LOG MODAL ── */
+.diag-log-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.diag-log-desc {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+.diag-log-filters {
+  display: flex;
+  gap: 8px;
+}
+.diag-log-select {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+.diag-log-content {
+  flex: 1;
+  min-height: 240px;
+  max-height: 50vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: pre-wrap;
+  word-break: break-word;
+  direction: ltr;
+  text-align: left;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin: 0;
+}
+.diag-log-footer > * { font-size: 0.78rem; }
 .settings-backup-btn:active { transform: scale(0.97); }
 
 /* ── BLUETOOTH SETTINGS BUTTON ── */

@@ -8,6 +8,8 @@
 // WebView — Capacitor apps use the official @capacitor/local-notifications
 // plugin for real native notifications instead. This module picks the right
 // mechanism per platform so callers just call Notify.show(title, body).
+import { DiagLog } from './diag-log.js';
+
 export class Notify {
   static #nextId = 1;
 
@@ -56,17 +58,24 @@ export class Notify {
   static async show(title, body) {
     try {
       const granted = await this.ensurePermission();
-      if (!granted) return;
+      if (!granted) {
+        DiagLog.log('NOTIFY', `show() skipped — permission not granted: "${title}"`);
+        return;
+      }
 
       const LocalNotifications = window.Capacitor?.Plugins?.LocalNotifications;
       if (window.Capacitor?.isNativePlatform?.() && LocalNotifications) {
         await LocalNotifications.schedule({
           notifications: [{ id: this.#nextId++, title, body }],
         });
+        DiagLog.log('NOTIFY', `scheduled native notification: "${title}"`);
         return;
       }
 
-      if (!('Notification' in window)) return;
+      if (!('Notification' in window)) {
+        DiagLog.log('NOTIFY', `show() failed — Notification API unavailable: "${title}"`);
+        return;
+      }
       const reg = await navigator.serviceWorker?.ready?.catch(() => null);
       if (reg) {
         reg.showNotification(title, {
@@ -74,8 +83,12 @@ export class Notify {
           icon:  './icons/icon-192.png',
           badge: './icons/icon-192.png',
         });
+        DiagLog.log('NOTIFY', `shown via service worker: "${title}"`);
+      } else {
+        DiagLog.log('NOTIFY', `show() failed — no ready service worker: "${title}"`);
       }
-    } catch {
+    } catch (e) {
+      DiagLog.log('NOTIFY', `show() threw — ${e?.message || e}: "${title}"`);
       // Notifications are a best-effort convenience — never break the
       // caller's own flow (BT/GPS handling) if this fails.
     }

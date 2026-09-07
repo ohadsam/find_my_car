@@ -25,6 +25,16 @@ available, report that check as a explicit FAIL/UNKNOWN with the reason, not omi
   bumped (any increase is fine — it just must be higher than the previous release).
 - Confirm `capacitor.config.json` exists and its `appId`/`appName` are unchanged
   (these should almost never change between releases — flag if they did unexpectedly).
+- Confirm `js/config.js`'s `changelog` array actually gained a NEW first entry for
+  this release (not just the top-level `version` field bumped with the changelog
+  left stale) — a version bump without a matching changelog entry means the
+  "מה חדש" (What's New) modal silently shows last release's notes instead of this
+  one's. Also confirm `CHANGELOG.md` gained a matching `## [x.y.z]` section.
+- Confirm `index.html` still has `id="versionTagBtn"` in the header and
+  `id="whatsNewModal"` — and that `js/app.js` sets the button's text to
+  `` `v${CFG.version}` `` and wires it to `this.#ui.showWhatsNew(CFG.changelog[0])`.
+  This is the only place a user sees the app actually advanced versions; a
+  regression here is silent (the app still works, it just never shows it upgraded).
 
 ## 2. PWA channel
 
@@ -78,7 +88,35 @@ available, report that check as a explicit FAIL/UNKNOWN with the reason, not omi
 - If a run has succeeded, confirm the `findmycar-debug-apk` artifact is attached
   (list run artifacts).
 
-## 4. Cross-channel behavior parity
+## 4. Diagnostic log (Bluetooth/GPS/notifications)
+
+Background BT/GPS/notification behavior is otherwise unobservable without a connected
+device and `adb logcat` — the in-app diagnostic log is the only way a user can report
+back what actually happened. It must stay wired on every release that touches that
+pipeline (Bluetooth, GPS auto-end, or `Notify`):
+
+- Confirm `js/diag-log.js` exists and exports `DiagLog` with `log`/`getAll`/`clear`/
+  `formatText`.
+- Confirm `DiagLog` is imported and called from `js/bluetooth.js`,
+  `js/bluetooth-native.js`, `js/notify.js`, and `js/app.js` — grep `DiagLog.log(` in
+  each; a file that stopped logging silently blinds that part of the pipeline without
+  any test catching it.
+- Confirm `index.html` still has `id="diagLogModal"`, `id="openDiagLogBtn"`,
+  `id="diagLogContent"`, `id="diagLogVehicleFilter"`, `id="diagLogCategoryFilter"`,
+  and the copy/export/clear/refresh buttons (`diagLogCopyBtn`/`diagLogExportBtn`/
+  `diagLogClearBtn`/`diagLogRefreshBtn`) — and that `js/app.js` binds all of them
+  (grep `Utils.el('diagLog`).
+- Confirm `js/diag-log.js` is in `sw.js`'s `STATIC_ASSETS` and has a
+  `<link rel="modulepreload">` in `index.html` (covered generically by section 2's
+  checks, but call it out by name here since a miss would silently break the whole
+  diagnostic feature rather than a cosmetic one).
+- Confirm `android/.../BluetoothClassicPlugin.kt` still declares
+  `isForegroundServiceRunning` and `js/bluetooth-native.js` still calls it after
+  `startWatch()` — this is the one diagnostic that directly answers "is the thing that
+  keeps BT/GPS alive in the background actually running," so a regression here silently
+  removes the most useful signal for diagnosing background-detection reports.
+
+## 5. Cross-channel behavior parity
 
 - Confirm `js/widget-bridge.js` and every `Capacitor.isNativePlatform()` /
   `window.Capacitor` branch in `js/app.js` is genuinely a no-op in the browser (no

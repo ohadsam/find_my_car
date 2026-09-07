@@ -28,6 +28,7 @@
   <!-- Module preloads for faster startup -->
   <link rel="modulepreload" href="js/config.js">
   <link rel="modulepreload" href="js/store.js">
+  <link rel="modulepreload" href="js/diag-log.js">
   <link rel="modulepreload" href="js/utils.js">
   <link rel="modulepreload" href="js/geocoder.js">
   <link rel="modulepreload" href="js/map.js">
@@ -337,6 +338,23 @@
           </button>
         </div>
         <input type="file" id="importDataInput" accept="application/json,.json" style="display:none;">
+      </div>
+      <div class="settings-backup-wrapper">
+        <div class="settings-backup-title">יומן אבחון (Bluetooth / GPS / התראות)</div>
+        <p class="settings-backup-desc">
+          עוזר לאתר למה זיהוי אוטומטי לא עובד — רואים בדיוק אילו אירועים האפליקציה קיבלה בפועל.
+        </p>
+        <div class="settings-backup-actions">
+          <button class="settings-backup-btn" id="openDiagLogBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M4 4h16v16H4z" opacity="0"/>
+              <line x1="4" y1="6" x2="20" y2="6"/>
+              <line x1="4" y1="12" x2="20" y2="12"/>
+              <line x1="4" y1="18" x2="14" y2="18"/>
+            </svg>
+            <span>פתח יומן אבחון</span>
+          </button>
+        </div>
       </div>
     </section>
 
@@ -853,6 +871,45 @@
       </div>
       <div class="modal-footer">
         <button class="modal-btn primary" data-close="btSettingsModal">סגור</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DIAGNOSTIC LOG MODAL ── -->
+  <div id="diagLogModal" class="modal" role="dialog" aria-modal="true" aria-label="יומן אבחון" style="display:none;">
+    <div class="modal-backdrop" data-close="diagLogModal"></div>
+    <div class="modal-sheet modal-sheet-tall">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">🪵 יומן אבחון</h3>
+        <button class="modal-close-btn" data-close="diagLogModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body diag-log-body">
+        <p class="diag-log-desc">רישום אירועי Bluetooth, GPS והתראות שהאפליקציה זיהתה בפועל — נשמר 3 ימים. עוזר לאתר למה זיהוי אוטומטי לא עובד.</p>
+        <div class="diag-log-filters">
+          <select id="diagLogVehicleFilter" class="diag-log-select" aria-label="סינון לפי רכב">
+            <option value="">כל הרכבים</option>
+          </select>
+          <select id="diagLogCategoryFilter" class="diag-log-select" aria-label="סינון לפי קטגוריה">
+            <option value="">כל הקטגוריות</option>
+            <option value="BT">Bluetooth</option>
+            <option value="BT-RAW">Bluetooth (גולמי)</option>
+            <option value="GPS">GPS</option>
+            <option value="NOTIFY">התראות</option>
+            <option value="PERM">הרשאות</option>
+          </select>
+        </div>
+        <pre class="diag-log-content" id="diagLogContent">אין רשומות עדיין.</pre>
+      </div>
+      <div class="modal-footer diag-log-footer">
+        <button class="modal-btn" id="diagLogClearBtn">🗑️ נקה</button>
+        <button class="modal-btn" id="diagLogCopyBtn">📋 העתק</button>
+        <button class="modal-btn" id="diagLogExportBtn">📤 ייצוא</button>
+        <button class="modal-btn primary" id="diagLogRefreshBtn">🔄 רענן</button>
       </div>
     </div>
   </div>

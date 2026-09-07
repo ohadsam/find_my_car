@@ -4,6 +4,8 @@
 // — but backed by real classic-Bluetooth ACL connect/disconnect broadcasts from
 // the native BluetoothClassicPlugin (android/.../BluetoothClassicPlugin.kt)
 // instead of the enumerateDevices()/devicechange proxy the browser is limited to.
+import { DiagLog } from './diag-log.js';
+
 export class NativeBluetoothController {
   #onDeviceConnected    = null;
   #onDeviceDisconnected = null;
@@ -22,23 +24,38 @@ export class NativeBluetoothController {
   }
 
   async startWatch() {
-    if (this.#listening || !this.#plugin) return;
+    if (this.#listening || !this.#plugin) {
+      DiagLog.log('BT', `startWatch skipped (listening=${this.#listening}, plugin=${!!this.#plugin})`);
+      return;
+    }
     this.#listening = true; // guard before await so rapid calls don't attach two listener sets
 
     const h1 = this.#plugin.addListener('connected', ({ label }) => {
+      DiagLog.log('BT-RAW', `native "connected" event received, label=${label || '(empty)'}`);
       if (label) this.#onDeviceConnected?.(label);
     });
     const h2 = this.#plugin.addListener('disconnected', ({ label }) => {
+      DiagLog.log('BT-RAW', `native "disconnected" event received, label=${label || '(empty)'}`);
       if (label) this.#onDeviceDisconnected?.(label);
     });
     this.#handles = await Promise.all([h1, h2]);
 
     try {
       await this.#plugin.startWatch();
-    } catch {
+      DiagLog.log('BT', 'startWatch: native plugin call resolved');
+    } catch (e) {
+      DiagLog.log('BT', `startWatch: native plugin call threw — ${e?.message || e}`);
       // Foreground service or permission failed to start; listeners stay
       // registered so a later checkNow()/permission grant still works.
     }
+
+    // Confirm (rather than assume) that ParkingForegroundService actually
+    // started — setReasonActive() on the native side is fire-and-forget, so
+    // a silent startup failure there would otherwise be invisible from here.
+    setTimeout(async () => {
+      const running = await this.#plugin?.isForegroundServiceRunning?.().catch(() => null);
+      DiagLog.log('BT', `background service running check: ${running?.running === true ? 'YES' : running?.running === false ? 'NO — background BT/GPS detection will not work' : 'unknown (check failed)'}`);
+    }, 1500);
   }
 
   stopWatch() {
@@ -51,7 +68,8 @@ export class NativeBluetoothController {
 
   async checkNow() {
     if (!this.#listening || !this.#plugin) return;
-    await this.#plugin.checkNow?.().catch(() => {});
+    DiagLog.log('BT', 'checkNow() invoked (app resumed / re-sync)');
+    await this.#plugin.checkNow?.().catch(e => DiagLog.log('BT', `checkNow threw — ${e?.message || e}`));
   }
 
   async getDevices() {
@@ -68,8 +86,10 @@ export class NativeBluetoothController {
     if (!this.#plugin) return false;
     try {
       const res = await this.#plugin.requestBtPermission();
+      DiagLog.log('PERM', `Bluetooth permission request result: ${res?.granted ? 'granted' : 'denied'}`);
       return !!res?.granted;
-    } catch {
+    } catch (e) {
+      DiagLog.log('PERM', `Bluetooth permission request threw — ${e?.message || e}`);
       return false;
     }
   }

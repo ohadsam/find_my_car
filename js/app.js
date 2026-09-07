@@ -12,6 +12,7 @@ import { BluetoothController } from './bluetooth.js';
 import { NativeBluetoothController } from './bluetooth-native.js';
 import { WidgetBridge } from './widget-bridge.js';
 import { Notify } from './notify.js';
+import { DiagLog } from './diag-log.js';
 
 class FindMyCarApp {
   #state = {
@@ -108,7 +109,10 @@ class FindMyCarApp {
       onDeviceDisconnected: label => this.#onBtDisconnected(label),
     });
     if (this.#getBtSettings().enabled) {
+      DiagLog.log('BT', 'app init: starting Bluetooth watch (master switch is on)');
       this.#bluetooth.startWatch();
+    } else {
+      DiagLog.log('BT', 'app init: Bluetooth watch NOT started — master switch is off');
     }
 
     const gpsToggle = Utils.el('gpsAutoEndToggle');
@@ -181,22 +185,30 @@ class FindMyCarApp {
   // onboarding sequence rather than depending on init() call order).
   async #primeNativePermissions() {
     if (!window.Capacitor?.isNativePlatform?.()) return;
+    DiagLog.log('PERM', 'priming permissions (geolocation, camera/mic, Bluetooth, notifications)');
 
     await new Promise(resolve => {
       if (!navigator.geolocation) { resolve(); return; }
-      navigator.geolocation.getCurrentPosition(() => resolve(), () => resolve(), { timeout: 8000 });
+      navigator.geolocation.getCurrentPosition(
+        () => { DiagLog.log('PERM', 'geolocation: granted'); resolve(); },
+        () => { DiagLog.log('PERM', 'geolocation: denied or unavailable'); resolve(); },
+        { timeout: 8000 }
+      );
     });
 
     try {
       const stream = await navigator.mediaDevices?.getUserMedia?.({ video: true, audio: true });
       stream?.getTracks().forEach(t => t.stop());
+      DiagLog.log('PERM', 'camera/mic: granted');
     } catch {
+      DiagLog.log('PERM', 'camera/mic: denied or unavailable');
       // Denied or no camera/mic — the camera/voice modals already fall back
       // to their own permission-error UI when actually opened.
     }
 
     await this.#bluetooth.requestPermission?.().catch(() => {});
-    await Notify.ensurePermission().catch(() => {});
+    const notifGranted = await Notify.ensurePermission().catch(() => false);
+    DiagLog.log('PERM', `notifications: ${notifGranted ? 'granted' : 'denied'}`);
   }
 
   #getTheme() {
@@ -247,6 +259,14 @@ class FindMyCarApp {
       e.target.value = ''; // allow re-selecting the same file next time
       if (file) this.#importData(file);
     });
+
+    Utils.el('openDiagLogBtn')?.addEventListener('click',   () => this.#openDiagLogModal());
+    Utils.el('diagLogRefreshBtn')?.addEventListener('click', () => this.#refreshDiagLogView());
+    Utils.el('diagLogVehicleFilter')?.addEventListener('change', () => this.#refreshDiagLogView());
+    Utils.el('diagLogCategoryFilter')?.addEventListener('change', () => this.#refreshDiagLogView());
+    Utils.el('diagLogCopyBtn')?.addEventListener('click',   () => this.#copyDiagLog());
+    Utils.el('diagLogExportBtn')?.addEventListener('click', () => this.#exportDiagLog());
+    Utils.el('diagLogClearBtn')?.addEventListener('click',  () => this.#clearDiagLog());
 
     const vBtn = Utils.el('versionTagBtn');
     if (vBtn) {
@@ -405,9 +425,13 @@ class FindMyCarApp {
   // ── GEOLOCATION ───────────────────────────────────────────────
   #startLocationWatch() {
     if (!navigator.geolocation) return;
+    DiagLog.log('GPS', 'watchPosition started');
     this.#state.watchId = navigator.geolocation.watchPosition(
       pos => this.#onPosition(pos),
-      err => console.warn('GPS error', err.code),
+      err => {
+        console.warn('GPS error', err.code);
+        DiagLog.log('GPS', `watchPosition error, code=${err.code} (${err.message || ''})`);
+      },
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
     );
   }
@@ -952,6 +976,7 @@ class FindMyCarApp {
     }
     if (!this.#state.gpsSpeedSince) {
       this.#state.gpsSpeedSince = Date.now();
+      DiagLog.log('GPS', `sustained speed above threshold (${speed.toFixed(1)} m/s) — timing before suggesting end`);
     } else if (Date.now() - this.#state.gpsSpeedSince >= CFG.gpsSpeedDuration) {
       this.#state.gpsSpeedSince = null;
       this.#suggestGpsEnd();
@@ -972,6 +997,7 @@ class FindMyCarApp {
     if (this.#state.gpsEndSuggested) return; // race guard: speed+distance can both fire on the same position update
     this.#state.gpsEndSuggested = true;
     this.#state.gpsSpeedSince   = null;
+    DiagLog.log('GPS', 'showing end-parking suggestion (speed or distance threshold crossed)');
     this.#ui.openModal('gpsEndModal');
     this.#notifyIfBackground('🚗 מזוהה נסיעה', 'ייתכן שהרכב זז ממקום החניה. פתח את האפליקציה לסיים את החניה.');
   }
@@ -990,17 +1016,25 @@ class FindMyCarApp {
   }
 
   #onBtConnected(label) {
+    DiagLog.log('BT', `connected event received, label=${label}`);
     const vehicles = this.#state.vehicles;
+    let matched = false;
     for (const v of vehicles) {
       if (v.bluetoothDevice !== label) continue;
-      if (!VehicleController.getCurrent(v.id)) continue;
+      matched = true;
+      if (!VehicleController.getCurrent(v.id)) {
+        DiagLog.log('BT', `no active parking for this vehicle — ignoring connect event`, { vehicleName: v.name, vehicleIcon: v.icon });
+        continue;
+      }
       if (v.bluetoothAutoEnd) {
+        DiagLog.log('BT', 'auto-ending parking (bluetoothAutoEnd is on)', { vehicleName: v.name, vehicleIcon: v.icon });
         this.#markBtEnd(v.id, label);
         this.#btEndParking(v.id);
         this.#ui.showToast(`🔵 ${v.icon} ${v.name} — חניה הסתיימה אוטומטית`, 'success');
         this.#notifyIfBackground('🔵 חניה הסתיימה אוטומטית', `${v.icon} ${v.name} — זוהה חיבור Bluetooth`);
       } else {
         if (this.#state.btPendingVehicleId) continue; // confirm modal already open; keep processing autoEnd vehicles
+        DiagLog.log('BT', 'showing end-parking confirmation modal', { vehicleName: v.name, vehicleIcon: v.icon });
         this.#state.btPendingVehicleId = v.id;
         this.#state.btPendingLabel     = label;
         const title = Utils.el('btParkingTitle');
@@ -1011,14 +1045,25 @@ class FindMyCarApp {
         this.#notifyIfBackground(`${v.icon} הגעת לרכב?`, `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}. פתח את האפליקציה לאישור.`);
       }
     }
+    if (!matched) DiagLog.log('BT', `no vehicle is linked to device label="${label}" — event ignored`);
   }
 
   async #onBtDisconnected(label) {
+    DiagLog.log('BT', `disconnected event received, label=${label}`);
     const vehicles = this.#state.vehicles;
+    let matched = false;
     for (const v of vehicles) {
       if (v.bluetoothDevice !== label) continue;
-      if (!v.bluetoothAutoStart) continue;
-      if (VehicleController.getCurrent(v.id)) continue; // already has parking
+      matched = true;
+      if (!v.bluetoothAutoStart) {
+        DiagLog.log('BT', 'bluetoothAutoStart is off — ignoring disconnect event', { vehicleName: v.name, vehicleIcon: v.icon });
+        continue;
+      }
+      if (VehicleController.getCurrent(v.id)) {
+        DiagLog.log('BT', 'vehicle already has an active parking — ignoring disconnect event', { vehicleName: v.name, vehicleIcon: v.icon });
+        continue; // already has parking
+      }
+      DiagLog.log('BT', 'auto-starting parking (bluetoothAutoStart is on)', { vehicleName: v.name, vehicleIcon: v.icon });
 
       // Switch to this vehicle if needed silently, then save parking.
       // Roll back the switch if GPS fails so the user's active parking remains visible.
@@ -1027,6 +1072,7 @@ class FindMyCarApp {
       if (needsSwitch) this.#switchVehicle(v.id, { silent: true });
       await this.#saveNewParking();
       if (!this.#state.current) {
+        DiagLog.log('BT', 'auto-start aborted — GPS location unavailable', { vehicleName: v.name, vehicleIcon: v.icon });
         if (needsSwitch) this.#switchVehicle(prevId, { silent: true }); // GPS failed — restore previous vehicle
         break;
       }
@@ -1048,6 +1094,7 @@ class FindMyCarApp {
         this.#ui.openModal('btStartPopupModal');
       }
     }
+    if (!matched) DiagLog.log('BT', `no vehicle is linked to device label="${label}" — event ignored`);
   }
 
   #markBtEnd(vehicleId, label) {
@@ -1119,6 +1166,7 @@ class FindMyCarApp {
   #btSettingsCbs() {
     return {
       onToggleEnabled: async enabled => {
+        DiagLog.log('BT', `master switch turned ${enabled ? 'ON' : 'OFF'}`);
         Store.set(CFG.keys.bluetoothSettings, { ...this.#getBtSettings(), enabled });
         if (enabled) {
           // Re-check/re-prompt here too — priming at app open may have been
@@ -1132,11 +1180,14 @@ class FindMyCarApp {
         this.#refreshBtModal();
       },
       onToggleVehicle: (vehicleId, updates) => {
+        const v = VehicleController.getById(vehicleId);
+        DiagLog.log('BT', `per-vehicle settings changed: ${JSON.stringify(updates)}`, { vehicleName: v?.name, vehicleIcon: v?.icon });
         VehicleController.updateBluetooth(vehicleId, updates);
         this.#state.vehicles = VehicleController.getAll();
         this.#refreshBtModal();
       },
       onSetAll: updates => {
+        DiagLog.log('BT', `settings changed for all vehicles: ${JSON.stringify(updates)}`);
         VehicleController.updateAllBluetooth(updates);
         this.#state.vehicles = VehicleController.getAll();
         this.#refreshBtModal();
@@ -1387,6 +1438,29 @@ class FindMyCarApp {
   // different WebView/browser origins, so localStorage can't be shared
   // directly — a backup file (exported from one, imported into the other)
   // is the only way to move data across without a server.
+  // Shared by #exportData() and #exportDiagLog() — native uses Filesystem
+  // (private Cache dir, no permissions needed) + the Share sheet; browser
+  // falls back to a plain download link.
+  async #writeAndShareFile(filename, content, mimeType, shareTitle) {
+    const Filesystem = window.Capacitor?.Plugins?.Filesystem;
+    const Share      = window.Capacitor?.Plugins?.Share;
+    if (window.Capacitor?.isNativePlatform?.() && Filesystem && Share) {
+      const { uri } = await Filesystem.writeFile({
+        path: filename, data: content, directory: 'CACHE', encoding: 'utf8',
+      });
+      await Share.share({ title: shareTitle, dialogTitle: shareTitle, url: uri });
+    } else {
+      const blob = new Blob([content], { type: mimeType });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+  }
+
   async #exportData() {
     const payload = {
       app:        'findmycar',
@@ -1398,28 +1472,12 @@ class FindMyCarApp {
     const json     = JSON.stringify(payload, null, 2);
     const filename = `findmycar-backup-${new Date().toISOString().slice(0, 10)}.json`;
 
-    const Filesystem = window.Capacitor?.Plugins?.Filesystem;
-    const Share      = window.Capacitor?.Plugins?.Share;
-    if (window.Capacitor?.isNativePlatform?.() && Filesystem && Share) {
-      try {
-        const { uri } = await Filesystem.writeFile({
-          path: filename, data: json, directory: 'CACHE', encoding: 'utf8',
-        });
-        await Share.share({ title: 'גיבוי FindMyCar', dialogTitle: 'שתף/שמור את קובץ הגיבוי', url: uri });
-      } catch (e) {
-        console.warn('Export failed:', e);
-        this.#ui.showToast('שגיאה בייצוא הנתונים', 'error');
-        return;
-      }
-    } else {
-      const blob = new Blob([json], { type: 'application/json' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href = url; a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+    try {
+      await this.#writeAndShareFile(filename, json, 'application/json', 'גיבוי FindMyCar');
+    } catch (e) {
+      console.warn('Export failed:', e);
+      this.#ui.showToast('שגיאה בייצוא הנתונים', 'error');
+      return;
     }
     this.#ui.showToast('📤 קובץ הגיבוי מוכן', 'success');
   }
@@ -1455,6 +1513,71 @@ class FindMyCarApp {
 
     this.#ui.showToast('✅ הנתונים יובאו בהצלחה. טוען מחדש...', 'success');
     setTimeout(() => window.location.reload(), 1200);
+  }
+
+  // ── DIAGNOSTIC LOG ───────────────────────────────────────────
+  #openDiagLogModal() {
+    const select = Utils.el('diagLogVehicleFilter');
+    if (select) {
+      const current = select.value;
+      select.innerHTML = '<option value="">כל הרכבים</option>';
+      for (const v of this.#state.vehicles) {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = `${v.icon} ${v.name}`;
+        select.appendChild(opt);
+      }
+      select.value = current;
+    }
+    this.#refreshDiagLogView();
+    this.#ui.openModal('diagLogModal');
+  }
+
+  #filteredDiagLogEntries() {
+    const vehicleName = Utils.el('diagLogVehicleFilter')?.value || '';
+    const category     = Utils.el('diagLogCategoryFilter')?.value || '';
+    return DiagLog.getAll()
+      .filter(e => !vehicleName || e.vehicleName === vehicleName)
+      .filter(e => !category || e.category === category)
+      .reverse(); // newest first
+  }
+
+  #refreshDiagLogView() {
+    const content = Utils.el('diagLogContent');
+    if (!content) return;
+    const entries = this.#filteredDiagLogEntries();
+    content.textContent = entries.length ? DiagLog.formatText(entries) : 'אין רשומות תואמות לסינון שנבחר.';
+  }
+
+  async #copyDiagLog() {
+    const text = DiagLog.formatText(this.#filteredDiagLogEntries());
+    if (!text) { this.#ui.showToast('אין מה להעתיק', 'info'); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      this.#ui.showToast('📋 היומן הועתק', 'success');
+    } catch {
+      this.#ui.showToast('שגיאה בהעתקה', 'error');
+    }
+  }
+
+  async #exportDiagLog() {
+    const text = DiagLog.formatText(this.#filteredDiagLogEntries());
+    if (!text) { this.#ui.showToast('אין מה לייצא', 'info'); return; }
+    const filename = `findmycar-diag-log-${new Date().toISOString().slice(0, 10)}.txt`;
+    try {
+      await this.#writeAndShareFile(filename, text, 'text/plain', 'יומן אבחון FindMyCar');
+      this.#ui.showToast('📤 היומן יוצא', 'success');
+    } catch (e) {
+      console.warn('Log export failed:', e);
+      this.#ui.showToast('שגיאה בייצוא היומן', 'error');
+    }
+  }
+
+  #clearDiagLog() {
+    if (!confirm('למחוק את כל רשומות היומן?')) return;
+    DiagLog.clear();
+    this.#refreshDiagLogView();
+    this.#ui.showToast('🗑️ היומן נוקה', 'success');
   }
 
   async #promptInstall() {

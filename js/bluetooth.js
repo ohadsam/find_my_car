@@ -1,3 +1,5 @@
+import { DiagLog } from './diag-log.js';
+
 export class BluetoothController {
   #onDeviceConnected    = null;
   #onDeviceDisconnected = null;
@@ -73,10 +75,16 @@ export class BluetoothController {
       this.#prevLabels = current;  // update before firing callbacks to prevent re-entrancy confusion
 
       for (const label of current) {
-        if (!prev.has(label)) this.#onDeviceConnected?.(label);
+        if (!prev.has(label)) {
+          DiagLog.log('BT-RAW', `web enumerateDevices() diff: connected label=${label}`);
+          this.#onDeviceConnected?.(label);
+        }
       }
       for (const label of prev) {
-        if (!current.has(label)) this.#onDeviceDisconnected?.(label);
+        if (!current.has(label)) {
+          DiagLog.log('BT-RAW', `web enumerateDevices() diff: disconnected label=${label}`);
+          this.#onDeviceDisconnected?.(label);
+        }
       }
     } finally {
       this.#handling = false;
