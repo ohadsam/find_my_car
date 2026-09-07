@@ -13,11 +13,19 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.ohadsam.findmycar.core.GpsDecision
+import com.ohadsam.findmycar.core.GpsDecisionEngine
+import com.ohadsam.findmycar.core.GpsDecisionState
+import com.ohadsam.findmycar.core.GpsMath
+import java.lang.ref.WeakReference
 
 /**
  * Keeps the app process alive while the screen is off or the app is
@@ -40,6 +48,17 @@ class ParkingForegroundService : Service() {
         private const val NOTIFICATION_ID = 4201
         private val activeReasons = mutableSetOf<String>()
 
+        // Stage 4 of the native background-detection migration: GPS shadow
+        // thresholds mirroring js/config.js's CFG.gpsSpeedThreshold/
+        // gpsSpeedDuration/gpsDistanceThreshold — keep these in sync if
+        // those ever change (there is no single shared source between JS
+        // and Kotlin for these constants).
+        private const val GPS_SPEED_THRESHOLD_MPS = 7.0
+        private const val GPS_SPEED_DURATION_MS = 8000L
+        private const val GPS_DISTANCE_THRESHOLD_M = 300.0
+        private const val LOCATION_MIN_TIME_MS = 3000L
+        private const val LOCATION_MIN_DISTANCE_M = 5f
+
         // Set true only after startForeground() actually succeeds, false the
         // instant it fails or the service is torn down — lets the JS side
         // (via BluetoothClassicPlugin.isForegroundServiceRunning) directly
@@ -50,11 +69,21 @@ class ParkingForegroundService : Service() {
         var isRunning = false
             private set
 
+        // Lets setReasonActive() reach the running instance directly to
+        // start/stop the GPS shadow location watch when the "parking"
+        // reason toggles, even if the service is already running for a
+        // different reason (e.g. bluetooth) and onCreate() won't fire again.
+        // Mirrors MainActivity's activeInstance WeakReference pattern.
+        @Volatile
+        private var instanceRef: WeakReference<ParkingForegroundService>? = null
+
         @Synchronized
         fun setReasonActive(context: Context, reason: String, active: Boolean) {
             val wasEmpty = activeReasons.isEmpty()
+            val parkingWasActive = activeReasons.contains("parking")
             if (active) activeReasons.add(reason) else activeReasons.remove(reason)
             val nowEmpty = activeReasons.isEmpty()
+            val parkingIsActive = activeReasons.contains("parking")
             Log.d(TAG, "setReasonActive($reason, $active) — reasons=$activeReasons")
 
             val intent = Intent(context, ParkingForegroundService::class.java)
@@ -69,8 +98,25 @@ class ParkingForegroundService : Service() {
                 // Never let this crash the caller (e.g. a rare background-start
                 // restriction) — BT/GPS detection just stays inactive this time.
             }
+
+            // Only react to a genuine "parking" transition, not every
+            // WidgetDataPlugin.update() call (which fires on every parking
+            // state sync, not just session start — see CLAUDE.md) — otherwise
+            // the location watch would restart constantly and its
+            // GpsDecisionState would never accumulate a sustained-speed
+            // window.
+            if (reason == "parking" && parkingWasActive != parkingIsActive) {
+                instanceRef?.get()?.updateLocationWatch(parkingIsActive)
+            }
         }
+
+        @Synchronized
+        private fun isParkingReasonActive(): Boolean = activeReasons.contains("parking")
     }
+
+    private var locationManager: LocationManager? = null
+    private var locationListener: LocationListener? = null
+    private var gpsShadowState = GpsDecisionState()
 
     override fun onCreate() {
         super.onCreate()
@@ -83,6 +129,12 @@ class ParkingForegroundService : Service() {
                 startForeground(NOTIFICATION_ID, buildNotification())
             }
             registerBtReceiver()
+            instanceRef = WeakReference(this)
+            // Covers the case where "parking" was already active before this
+            // instance started (e.g. the service starts fresh because of the
+            // "parking" reason itself) — setReasonActive()'s direct nudge to
+            // instanceRef only helps once an instance already exists.
+            if (isParkingReasonActive()) updateLocationWatch(true)
             isRunning = true
             Log.i(TAG, "onCreate succeeded — foreground service running (type=$type)")
         } catch (e: Exception) {
@@ -119,6 +171,8 @@ class ParkingForegroundService : Service() {
         Log.i(TAG, "onDestroy — foreground service stopped")
         receiver?.let { try { unregisterReceiver(it) } catch (e: IllegalArgumentException) { /* already gone */ } }
         receiver = null
+        updateLocationWatch(false)
+        if (instanceRef?.get() === this) instanceRef = null
         super.onDestroy()
     }
 
@@ -154,6 +208,94 @@ class ParkingForegroundService : Service() {
         ContextCompat.registerReceiver(this, r, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         receiver = r
         Log.i(TAG, "BT ACL receiver registered")
+    }
+
+    // Stage 4 of the native background-detection migration (see CLAUDE.md
+    // "Native background detection"): runs GpsDecisionEngine in shadow mode
+    // against real location updates while a parking session is active —
+    // purely for comparison against the real JS decision, via
+    // GpsShadowEventBus -> WidgetDataPlugin -> notifyListeners. Takes no
+    // real action itself (never opens gpsEndModal, never touches parking
+    // state). Wrapped in its own try/catch backstop, independent of BT
+    // handling and of onCreate()'s own backstop, so a permission/provider
+    // failure here can never crash the foreground service.
+    private fun updateLocationWatch(active: Boolean) {
+        try {
+            if (active) {
+                if (locationListener != null) return // already watching
+                val fineGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+                val coarseGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (!fineGranted && !coarseGranted) {
+                    Log.w(TAG, "GPS shadow watch not started — no location permission")
+                    return
+                }
+                val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                if (lm == null) {
+                    Log.w(TAG, "GPS shadow watch not started — no LocationManager")
+                    return
+                }
+                val provider = when {
+                    lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+                    lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+                    else -> null
+                }
+                if (provider == null) {
+                    Log.w(TAG, "GPS shadow watch not started — no enabled location provider")
+                    return
+                }
+                // New parking session — reset the sustained-speed/already-
+                // suggested state, matching js/app.js resetting
+                // #state.gpsSpeedSince/#state.gpsEndSuggested on every save/swap.
+                gpsShadowState = GpsDecisionState()
+                val listener = LocationListener { location -> onLocationShadow(location) }
+                lm.requestLocationUpdates(provider, LOCATION_MIN_TIME_MS, LOCATION_MIN_DISTANCE_M, listener)
+                locationManager = lm
+                locationListener = listener
+                Log.i(TAG, "GPS shadow watch started (provider=$provider)")
+            } else {
+                locationListener?.let { locationManager?.removeUpdates(it) }
+                locationListener = null
+                locationManager = null
+                Log.i(TAG, "GPS shadow watch stopped")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "updateLocationWatch($active) failed (non-fatal)", e)
+        }
+    }
+
+    private fun onLocationShadow(location: Location) {
+        try {
+            val prefs = getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
+            val hasParking = prefs.getBoolean(WidgetDataPlugin.KEY_HAS_PARKING, false)
+            val gpsEnabled = prefs.getBoolean(WidgetDataPlugin.KEY_GPS_AUTO_END_ENABLED, false)
+            val parkLat = prefs.getFloat(WidgetDataPlugin.KEY_LAT, 0f).toDouble()
+            val parkLng = prefs.getFloat(WidgetDataPlugin.KEY_LNG, 0f).toDouble()
+
+            val speed = if (location.hasSpeed()) location.speed.toDouble() else null
+            val (afterSpeed, speedDecision) = GpsDecisionEngine.checkSpeed(
+                gpsShadowState, hasParking, gpsEnabled, speed,
+                GPS_SPEED_THRESHOLD_MPS, GPS_SPEED_DURATION_MS, System.currentTimeMillis(),
+            )
+            gpsShadowState = afterSpeed
+            emitGpsShadowDecision("speed", speedDecision)
+
+            val distance = GpsMath.distanceMeters(location.latitude, location.longitude, parkLat, parkLng)
+            val (afterDistance, distanceDecision) = GpsDecisionEngine.checkDistance(
+                gpsShadowState, hasParking, gpsEnabled, distance, GPS_DISTANCE_THRESHOLD_M,
+            )
+            gpsShadowState = afterDistance
+            emitGpsShadowDecision("distance", distanceDecision)
+        } catch (e: Exception) {
+            Log.w(TAG, "onLocationShadow failed (non-fatal)", e)
+        }
+    }
+
+    private fun emitGpsShadowDecision(trigger: String, decision: GpsDecision?) {
+        if (decision == null) return
+        Log.i(TAG, "GPS shadow decision ($trigger): suggestEnd")
+        GpsShadowEventBus.emit(trigger, decision)
     }
 
     private fun createChannel() {

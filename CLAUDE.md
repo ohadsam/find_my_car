@@ -312,8 +312,8 @@ the equivalent non-requesting check for the notification permission.
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
 | `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`; emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
-| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh. `syncVehicles({vehicles, activeVehicleId})` additionally mirrors the vehicle list (id/name/icon only) so `WidgetQuickActionsActivity` can show a vehicle picker natively |
-| `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app |
+| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking`) and the global GPS auto-end setting so `WidgetQuickActionsActivity` can show a vehicle picker natively and the native decision engines have real settings to read. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
+| `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app. Since Stage 4 of the native migration (shadow mode only), also runs a plain `LocationManager` watch (`updateLocationWatch()`/`onLocationShadow()`) precisely while the `"parking"` reason is active, feeding `GpsDecisionEngine` — wrapped in its own independent try/catch backstop |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
 | `android/.../widgets/WidgetQuickActionsActivity.kt` | *(no JS-facing methods)* | Small floating dialog (not a plugin) opened from the "⋮" button on every widget — real `AppWidgetProvider`s can't intercept long-press (the launcher reserves that gesture for move/resize/remove), so this tap-to-open popup is the practical equivalent of a widget context menu. Shows a vehicle picker (`Spinner`, populated from `WidgetData`'s synced vehicle list, defaulting to the active vehicle) plus שמור/החלף/סיים buttons that broadcast to `WidgetActionReceiver` — headless, never launches `MainActivity`. Only "ניהול רכבים" still opens the app, since adding/editing a vehicle needs real UI |
@@ -360,11 +360,12 @@ values and reloads the WebView at `?action=<value>`. This is now only reached vi
 **Diagnostic log (`js/diag-log.js`)**: since background BT/GPS/notification behavior is
 impossible to observe without a connected device and `adb logcat`, every meaningful
 step of that pipeline logs to `DiagLog` (categories `BT`, `BT-RAW`, `BT-SHADOW`, `GPS`,
-`NOTIFY`, `PERM`) — the raw native event handoff in `js/bluetooth-native.js`, the
-per-vehicle match/skip decisions in `#onBtConnected`/`#onBtDisconnected`, what the
-native `BtDecisionEngine` would have decided for the same event in shadow mode
-(`BT-SHADOW` — see "Native background detection" below), GPS threshold crossings,
-`Notify.show()` outcomes, and every permission prompt result. Entries persist in
+`GPS-SHADOW`, `NOTIFY`, `PERM`) — the raw native event handoff in
+`js/bluetooth-native.js`, the per-vehicle match/skip decisions in
+`#onBtConnected`/`#onBtDisconnected`, what the native `BtDecisionEngine`/
+`GpsDecisionEngine` would have decided for the same event in shadow mode
+(`BT-SHADOW`/`GPS-SHADOW` — see "Native background detection" below), GPS threshold
+crossings, `Notify.show()` outcomes, and every permission prompt result. Entries persist in
 localStorage (3-day retention, capped at 800 entries, deliberately not `fmc_`-prefixed
 so backups stay free of debug noise) and are viewed/filtered by vehicle or category,
 copied, exported, or cleared from the "יומן אבחון" modal in Settings
@@ -475,11 +476,40 @@ small, independently-tested, non-breaking stages:
    `Utils.distance()`'s Haversine calculation as its own pure/testable unit.
    **Not wired into a real location watch yet** — same "engine first" pattern as
    Bluetooth's step 1.
-4. **Not started**: wire `GpsDecisionEngine` to a real
-   `FusedLocationProviderClient`/`LocationManager` watch running directly in
-   `ParkingForegroundService`, in **shadow mode** (log what native would decide
-   alongside the real JS decision, same as Bluetooth's step 2) — before this exists,
-   GPS auto-end stays JS/WebView-only exactly like today.
+4. **✅ Done**: `GpsDecisionEngine` is wired to a real `LocationManager` watch
+   (`updateLocationWatch()`/`onLocationShadow()` in `ParkingForegroundService.kt`;
+   plain `LocationManager`, not `FusedLocationProviderClient` — no Play Services
+   dependency needed, keeps this stage's footprint minimal) in **shadow mode**,
+   mirroring Bluetooth's step 2 exactly: it only logs/emits what native would
+   decide, never takes real action. The watch starts/stops precisely when the
+   `"parking"` reason genuinely transitions (not on every `WidgetDataPlugin.update()`
+   call, which fires on every parking-state sync, not just session start — a naive
+   "reset on every active=true call" would wipe the sustained-speed timer far more
+   often than the real JS code ever does) — tracked via a small
+   `parkingWasActive != parkingIsActive` check in `setReasonActive()`, nudging the
+   running instance directly (via a `WeakReference`, same pattern as
+   `MainActivity.activeInstance`) since the service may already be running for the
+   `"bluetooth"` reason alone when parking starts. `js/widget-bridge.js` now also
+   mirrors the global GPS auto-end setting (`gpsAutoEndEnabled`) alongside the
+   per-vehicle fields, since `GpsDecisionEngine` needs it just like `BtDecisionEngine`
+   needs the BT fields; the parking location/hasParking it reads are the same
+   `KEY_LAT`/`KEY_LNG`/`KEY_HAS_PARKING` `WidgetDataPlugin.update()`/`clear()`
+   already store for the mini-map widget — no new per-vehicle mirroring needed,
+   since only the active vehicle's parking is ever geolocation-relevant (matching
+   `js/app.js`'s own `#state.current`, which is likewise the active vehicle only).
+   Emitted via a new `GpsShadowEventBus` (mirrors `BtEventBus`'s Service -> Plugin
+   bridge, since `ParkingForegroundService` isn't itself a Capacitor `Plugin`) to
+   `WidgetDataPlugin`, which relays it to JS as a `gpsShadowDecision` event, logged
+   under the diagnostic log's new `GPS-SHADOW` category
+   (`WidgetBridge.initShadowListener()`, called once from `js/app.js`'s `#init()`).
+   Like `BluetoothClassicPlugin.kt`, `ParkingForegroundService.kt`'s watch wiring has
+   no unit tests of its own (needs a live `Service`/`Context`) — `GpsDecisionEngine`/
+   `GpsMath` stay the unit-tested layer (Stage 3); the wiring itself is only
+   verified manually/via the diagnostic log on a real device. The speed/distance/
+   duration threshold constants are duplicated as Kotlin constants in
+   `ParkingForegroundService` (there is no single shared source between JS and
+   Kotlin) — keep them in sync with `js/config.js`'s `CFG.gpsSpeedThreshold`/
+   `gpsSpeedDuration`/`gpsDistanceThreshold` if those ever change.
 5. **Not started**: flip Bluetooth to live — native actually mutates a
    `ParkingStateStore` (new `SharedPreferences`-backed store, becoming the source of
    truth for save/swap/end decisions) and shows a native notification; JS reconciles
