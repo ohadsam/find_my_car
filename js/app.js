@@ -711,6 +711,52 @@ class FindMyCarApp {
     }
   }
 
+  // Public (not #-private) on purpose — the Active Parking / Quick Save /
+  // Mini Map widgets' quick-actions popup runs this directly against the
+  // app's already-running WebView via evaluateJavascript() from
+  // WidgetActionReceiver.kt, without ever bringing the app to the
+  // foreground. Same idea as the existing BT-triggered background saves
+  // (#onBtDisconnected already calls #switchVehicle/#saveNewParking while
+  // the app isn't foregrounded) — just reachable from a widget tap too now.
+  async performWidgetAction(action, vehicleId) {
+    try {
+      if (vehicleId && vehicleId !== this.#state.activeVehicleId &&
+          this.#state.vehicles.some(v => v.id === vehicleId)) {
+        this.#switchVehicle(vehicleId, { silent: true });
+      }
+      const v = VehicleController.getById(this.#state.activeVehicleId);
+      const vLabel = v ? `${v.icon} ${v.name}` : '';
+      let message;
+      if (action === 'save') {
+        if (this.#state.current) {
+          message = 'יש כבר חניה פעילה — להחלפה השתמש ב"החלף חניה"';
+        } else {
+          await this.#saveNewParking();
+          message = this.#state.current ? `🅿️ חניה נשמרה — ${vLabel}` : 'שמירת חניה נכשלה (בדוק מיקום GPS)';
+        }
+      } else if (action === 'swap') {
+        if (!this.#state.current) {
+          message = 'אין חניה פעילה להחלפה';
+        } else {
+          const prevId = this.#state.current.id;
+          await this.#swapParking();
+          message = this.#state.current?.id !== prevId ? `🔄 החניה הוחלפה — ${vLabel}` : 'החלפת חניה נכשלה (בדוק מיקום GPS)';
+        }
+      } else if (action === 'end') {
+        const had = !!this.#state.current;
+        this.#resetParking();
+        message = had ? `✅ החניה הסתיימה — ${vLabel}` : 'אין חניה פעילה לסיום';
+      } else {
+        message = 'פעולה לא מוכרת';
+      }
+      DiagLog.log('WIDGET', `performWidgetAction(${action}) → ${message}`, { vehicleName: v?.name, vehicleIcon: v?.icon });
+      return message;
+    } catch (e) {
+      DiagLog.log('WIDGET', `performWidgetAction(${action}) threw — ${e?.message || e}`);
+      return 'שגיאה בביצוע הפעולה';
+    }
+  }
+
   #openVehicleModal(vehicle) {
     this.#state.vehicleEditId = vehicle ? vehicle.id : null;
     const title = Utils.el('vehicleModalTitle');

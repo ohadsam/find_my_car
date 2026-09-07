@@ -21,12 +21,21 @@ class MiniMapWidgetProvider : AppWidgetProvider() {
         for (id in ids) {
             val views = RemoteViews(context.packageName, R.layout.widget_mini_map)
 
-            val launchIntent = Intent(context, MainActivity::class.java)
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0)
+
+            val launchIntent = Intent(context, MainActivity::class.java)
             views.setOnClickPendingIntent(
                 R.id.widget_mini_map_root,
-                PendingIntent.getActivity(context, 0, launchIntent, flags)
+                PendingIntent.getActivity(context, id, launchIntent, piFlags)
+            )
+
+            val actionsIntent = Intent(context, WidgetQuickActionsActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            views.setOnClickPendingIntent(
+                R.id.widget_quick_actions_btn,
+                PendingIntent.getActivity(context, id + 300000, actionsIntent, piFlags)
             )
 
             if (!hasParking) {

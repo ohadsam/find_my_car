@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.17.0',
+  version: '1.18.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.18.0',
+      date: '2026-09-07',
+      items: Object.freeze([
+        'תפריט "⋮" בכל הווידג\'טים כולל עכשיו בורר רכב, ומבצע שמור/החלף/סיים חניה ישירות מהווידג\'ט — בלי לפתוח את האפליקציה',
+        'ווידג\'ט "שמירה מהירה" שומר חניה ישירות בלי לפתוח את האפליקציה, עם הודעה קצרה שמאשרת מה קרה',
+      ]),
+    }),
     Object.freeze({
       version: '1.17.0',
       date: '2026-09-06',

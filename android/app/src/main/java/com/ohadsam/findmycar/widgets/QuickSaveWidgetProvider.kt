@@ -7,14 +7,15 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.widget.RemoteViews
-import com.ohadsam.findmycar.MainActivity
 import com.ohadsam.findmycar.R
+import com.ohadsam.findmycar.WidgetActionReceiver
 
 /**
- * Single-tap "שמירה מהירה" widget. Launches MainActivity with the same
- * ?action=save deep-link the PWA's own home-screen shortcut already uses
- * (see js/app.js #init(), which reads location.search on load) — no new
- * save-parking code path, just a native launcher for the existing one.
+ * Single-tap "שמירה מהירה" widget. Broadcasts straight to
+ * WidgetActionReceiver (headless — see that class) instead of launching
+ * MainActivity, so tapping it saves a parking spot without ever opening the
+ * app. The "⋮" button opens the same quick-actions popup as the other
+ * widgets, for swap/end/vehicle-picker.
  */
 class QuickSaveWidgetProvider : AppWidgetProvider() {
     companion object {
@@ -24,14 +25,25 @@ class QuickSaveWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, mgr: AppWidgetManager, ids: IntArray) {
         for (id in ids) {
             val views = RemoteViews(context.packageName, R.layout.widget_quick_save)
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
-                putExtra(EXTRA_ACTION, "save")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0)
-            val pendingIntent = PendingIntent.getActivity(context, id, launchIntent, flags)
-            views.setOnClickPendingIntent(R.id.widget_quick_save_root, pendingIntent)
+
+            val saveIntent = Intent(context, WidgetActionReceiver::class.java).apply {
+                putExtra(EXTRA_ACTION, "save")
+            }
+            views.setOnClickPendingIntent(
+                R.id.widget_quick_save_root,
+                PendingIntent.getBroadcast(context, id, saveIntent, piFlags)
+            )
+
+            val actionsIntent = Intent(context, WidgetQuickActionsActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            views.setOnClickPendingIntent(
+                R.id.widget_quick_actions_btn,
+                PendingIntent.getActivity(context, id + 200000, actionsIntent, piFlags)
+            )
+
             mgr.updateAppWidget(id, views)
         }
     }

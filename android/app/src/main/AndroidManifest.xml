@@ -30,6 +30,12 @@
             android:excludeFromRecents="true"
             android:exported="false" />
 
+        <!-- Only ever targeted by this app's own PendingIntents/explicit
+             Intents (widget taps) — no intent-filter needed or wanted. -->
+        <receiver
+            android:name=".WidgetActionReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="260dp"
+    android:layout_width="270dp"
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@drawable/widget_background"
@@ -16,23 +16,49 @@
         android:textStyle="bold"
         android:gravity="end" />
 
-    <Button
-        android:id="@+id/actionSaveBtn"
-        style="@style/WidgetQuickActionButton"
-        android:text="🅿️ שמור חניה" />
+    <TextView
+        android:id="@+id/actionEmptyMsg"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"
+        android:text="אין רכבים זמינים עדיין — פתח את האפליקציה פעם אחת כדי לסנכרן"
+        android:textColor="#B8C4DB"
+        android:textSize="12.5sp"
+        android:gravity="end"
+        android:visibility="gone" />
 
-    <Button
-        android:id="@+id/actionSwapBtn"
-        style="@style/WidgetQuickActionButton"
-        android:text="🔄 החלף חניה" />
+    <Spinner
+        android:id="@+id/actionVehicleSpinner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="10dp"
+        android:background="@drawable/widget_background_accent" />
 
-    <Button
-        android:id="@+id/actionEndBtn"
-        style="@style/WidgetQuickActionButton"
-        android:text="✅ זזתי (סיים חניה)" />
+    <LinearLayout
+        android:id="@+id/actionButtonsGroup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <Button
+            android:id="@+id/actionSaveBtn"
+            style="@style/WidgetQuickActionButton"
+            android:text="🅿️ שמור חניה" />
+
+        <Button
+            android:id="@+id/actionSwapBtn"
+            style="@style/WidgetQuickActionButton"
+            android:text="🔄 החלף חניה" />
+
+        <Button
+            android:id="@+id/actionEndBtn"
+            style="@style/WidgetQuickActionButton"
+            android:text="✅ זזתי (סיים חניה)" />
+    </LinearLayout>
 
     <Button
         android:id="@+id/actionVehiclesBtn"
         style="@style/WidgetQuickActionButton"
-        android:text="🚗 בחר רכב" />
+        android:layout_marginTop="10dp"
+        android:text="🚘 ניהול רכבים" />
 </LinearLayout>
