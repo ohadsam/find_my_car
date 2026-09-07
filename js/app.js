@@ -108,6 +108,12 @@ class FindMyCarApp {
       onDeviceConnected:    label => this.#onBtConnected(label),
       onDeviceDisconnected: label => this.#onBtDisconnected(label),
     });
+
+    // Stage 4 of the native background-detection migration (see CLAUDE.md):
+    // listen for the native GPS shadow-mode decision so it's visible in the
+    // diagnostic log alongside the real BT-SHADOW entries — no-op in the
+    // browser/PWA.
+    WidgetBridge.initShadowListener();
     if (this.#getBtSettings().enabled) {
       DiagLog.log('BT', 'app init: starting Bluetooth watch (master switch is on)');
       this.#bluetooth.startWatch();

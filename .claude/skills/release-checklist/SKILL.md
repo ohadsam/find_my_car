@@ -142,9 +142,10 @@ step broken or skipped:
   itself must only call `Log.i`/`notifyListeners("btShadowDecision", ...)` inside
   its try/catch — never `WidgetDataPlugin.update`/`.clear`,
   `ParkingForegroundService.setReasonActive`, or any other call with a real side
-  effect. Shadow mode existing specifically to build confidence before Stage 4
-  flips Bluetooth to live — a shadow-mode change that quietly starts taking real
-  action skips that entire verification step.
+  effect. Shadow mode existing specifically to build confidence before Bluetooth is
+  flipped to live (see CLAUDE.md's migration stage list for the current stage
+  number) — a shadow-mode change that quietly starts taking real action skips that
+  entire verification step.
 - Confirm `runShadowDecision` is wrapped in a top-level try/catch — a bug in shadow
   evaluation (bad JSON, an engine exception) must never prevent the real
   `connected`/`disconnected` event from having already reached JS, since it's
@@ -156,12 +157,29 @@ step broken or skipped:
   keeps its tests deterministic; a version that reads `System.currentTimeMillis()`
   internally would make its own tests flaky/order-dependent without any obvious
   symptom until they start failing intermittently in CI.
-- If `GpsDecisionEngine` has been wired into a real location watch (Stage 4+ —
-  check CLAUDE.md's migration stage list for current status), apply the same
-  shadow-mode-stays-inert check used for Bluetooth above: the wiring code must only
-  log/emit a shadow event, never itself open `gpsEndModal`, call
-  `WidgetDataPlugin.update`/`.clear`, or otherwise take real action, until the
-  migration plan says GPS has been explicitly flipped to live.
+- Confirm `ParkingForegroundService.kt`'s GPS shadow wiring
+  (`updateLocationWatch`/`onLocationShadow`) stays a no-op the same way Bluetooth's
+  does: it must only call `Log.i`/`GpsShadowEventBus.emit(...)` inside its own
+  try/catch, never `gpsEndModal`, `WidgetDataPlugin.update`/`.clear`, or any other
+  real-action call — until the migration plan says GPS has been explicitly flipped
+  to live (check CLAUDE.md's stage list for the current stage number).
+- Confirm the location watch only starts/stops on a genuine `"parking"` reason
+  transition in `setReasonActive()` (`parkingWasActive != parkingIsActive`), not on
+  every call — `WidgetDataPlugin.update()` fires on every parking-state sync (photo
+  added, description edited, etc.), not just session start; a regression back to
+  "reset on every active=true call" would silently wipe the sustained-speed timer
+  before it ever reaches `CFG.gpsSpeedDuration`, making the speed check permanently
+  unable to fire without any test catching it (this logic lives in a `Service`,
+  which the `core` package's unit tests can't reach).
+- Confirm `js/widget-bridge.js`'s `syncVehicles()` call includes
+  `gpsAutoEndEnabled` at the top level (not per-vehicle) — `GpsDecisionEngine`'s
+  shadow evaluation reads it from `WidgetDataPlugin`'s `KEY_GPS_AUTO_END_ENABLED`;
+  a regression here would silently make every GPS shadow decision evaluate as if
+  the setting were off, masking whatever the real JS setting actually is.
+- Confirm `index.html`'s `diagLogCategoryFilter` has a `GPS-SHADOW` option and
+  `js/widget-bridge.js`'s `initShadowListener()` is called once from `js/app.js`'s
+  `#init()` — losing this wiring has no other symptom (shadow mode has no real
+  effect), so nothing else would catch it.
 
 ## 5. Diagnostic log (Bluetooth/GPS/notifications)
 

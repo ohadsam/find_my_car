@@ -9,6 +9,7 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.ohadsam.findmycar.core.GpsDecision
 import com.ohadsam.findmycar.widgets.ActiveParkingWidgetProvider
 import com.ohadsam.findmycar.widgets.MiniMapWidgetProvider
 
@@ -18,9 +19,16 @@ import com.ohadsam.findmycar.widgets.MiniMapWidgetProvider
  * can't read the WebView's localStorage) and triggers an AppWidgetManager
  * refresh. Also keeps ParkingForegroundService alive while a parking
  * session is active, so GPS-speed auto-end keeps working in the background.
+ *
+ * Also implements GpsShadowEventBus.Listener: ParkingForegroundService's
+ * location watch (Stage 4 of the native background-detection migration —
+ * shadow mode only) isn't itself a Capacitor Plugin and has no
+ * notifyListeners() of its own, so it emits through that in-process bus and
+ * this plugin relays it to JS — mirrors how BluetoothClassicPlugin relays
+ * BtEventBus.
  */
 @CapacitorPlugin(name = "WidgetData")
-class WidgetDataPlugin : Plugin() {
+class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
 
     companion object {
         const val PREFS            = "findmycar_widget_data"
@@ -33,20 +41,42 @@ class WidgetDataPlugin : Plugin() {
         const val KEY_VEHICLE_NAME = "vehicle_name"
         const val KEY_VEHICLES_JSON     = "vehicles_json"
         const val KEY_ACTIVE_VEHICLE_ID = "active_vehicle_id"
+        const val KEY_GPS_AUTO_END_ENABLED = "gps_auto_end_enabled"
     }
 
-    // Mirrors the full vehicle list (id/name/icon only) + active vehicle id
-    // so the widgets' quick-actions popup (WidgetQuickActionsActivity) can
-    // show a vehicle picker without needing to read the WebView's own
-    // localStorage, which a plain native Activity can't access directly.
+    override fun load() {
+        super.load()
+        GpsShadowEventBus.addListener(this)
+    }
+
+    override fun handleOnDestroy() {
+        GpsShadowEventBus.removeListener(this)
+        super.handleOnDestroy()
+    }
+
+    override fun onGpsShadowDecision(trigger: String, decision: GpsDecision) {
+        val data = JSObject()
+        data.put("trigger", trigger)
+        data.put("decision", "suggestEnd") // the only GpsDecision variant today
+        notifyListeners("gpsShadowDecision", data)
+    }
+
+    // Mirrors the full vehicle list (BT-relevant fields + hasParking) + active
+    // vehicle id + the global GPS auto-end setting, so both BtDecisionEngine
+    // (Stage 2) and GpsDecisionEngine (Stage 4) — and the widgets'
+    // quick-actions popup — can read real settings without needing the
+    // WebView's own localStorage, which a plain native Activity/Service
+    // can't access directly.
     @PluginMethod
     fun syncVehicles(call: PluginCall) {
         val vehiclesArray = call.getArray("vehicles")
         val activeId = call.getString("activeVehicleId", "") ?: ""
+        val gpsAutoEndEnabled = call.getBoolean("gpsAutoEndEnabled", false) ?: false
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putString(KEY_VEHICLES_JSON, vehiclesArray?.toString() ?: "[]")
             .putString(KEY_ACTIVE_VEHICLE_ID, activeId)
+            .putBoolean(KEY_GPS_AUTO_END_ENABLED, gpsAutoEndEnabled)
             .apply()
         call.resolve()
     }
