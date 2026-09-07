@@ -149,6 +149,19 @@ step broken or skipped:
   evaluation (bad JSON, an engine exception) must never prevent the real
   `connected`/`disconnected` event from having already reached JS, since it's
   emitted first, and must never crash BT event handling.
+- Confirm `android/.../core/GpsDecisionEngine.kt` and `GpsMath.kt` exist with zero
+  `org.json`/Android framework imports (same purity requirement as
+  `BtDecisionEngine.kt`) — `GpsDecisionEngine`'s functions must take the current
+  time as a parameter (never read the wall clock internally), since that's what
+  keeps its tests deterministic; a version that reads `System.currentTimeMillis()`
+  internally would make its own tests flaky/order-dependent without any obvious
+  symptom until they start failing intermittently in CI.
+- If `GpsDecisionEngine` has been wired into a real location watch (Stage 4+ —
+  check CLAUDE.md's migration stage list for current status), apply the same
+  shadow-mode-stays-inert check used for Bluetooth above: the wiring code must only
+  log/emit a shadow event, never itself open `gpsEndModal`, call
+  `WidgetDataPlugin.update`/`.clear`, or otherwise take real action, until the
+  migration plan says GPS has been explicitly flipped to live.
 
 ## 5. Diagnostic log (Bluetooth/GPS/notifications)
 

@@ -461,16 +461,31 @@ small, independently-tested, non-breaking stages:
    cheaply stand up) — this is why the decision/formatting logic it calls into
    stays isolated in `core` and unit-tested there instead; the plugin wiring
    itself is only verified manually/via the diagnostic log on a real device.
-3. **Not started**: native `GpsDecisionEngine` mirroring `#checkGpsSpeed`/
-   `#checkGpsDistance`, same pure/testable/shadow-mode pattern, fed by a
+3. **✅ Done**: `android/.../core/GpsDecisionEngine.kt` — a pure, Android-framework-
+   free port of `#checkGpsSpeed`/`#checkGpsDistance`/`#suggestGpsEnd`, split out as
+   its own step for the same reason Bluetooth's engine (step 1) and its real-event
+   wiring (step 2) were two separate steps rather than one: it's testable and
+   shippable on its own before any native location watch exists to feed it. Unlike
+   `BtDecisionEngine` (a pure function of external inputs with no internal state),
+   GPS end-suggestion is inherently stateful across position updates (`speedSince`/
+   `endSuggested`, matching `#state.gpsSpeedSince`/`#state.gpsEndSuggested`), so it's
+   modeled as an explicit `(GpsDecisionState, inputs) -> (GpsDecisionState,
+   GpsDecision?)` reducer — no internal mutable state, no wall-clock reads (current
+   time is a parameter), so tests are fully deterministic. `GpsMath.kt` ports
+   `Utils.distance()`'s Haversine calculation as its own pure/testable unit.
+   **Not wired into a real location watch yet** — same "engine first" pattern as
+   Bluetooth's step 1.
+4. **Not started**: wire `GpsDecisionEngine` to a real
    `FusedLocationProviderClient`/`LocationManager` watch running directly in
-   `ParkingForegroundService`.
-4. **Not started**: flip Bluetooth to live — native actually mutates a
+   `ParkingForegroundService`, in **shadow mode** (log what native would decide
+   alongside the real JS decision, same as Bluetooth's step 2) — before this exists,
+   GPS auto-end stays JS/WebView-only exactly like today.
+5. **Not started**: flip Bluetooth to live — native actually mutates a
    `ParkingStateStore` (new `SharedPreferences`-backed store, becoming the source of
    truth for save/swap/end decisions) and shows a native notification; JS reconciles
    from that store on next resume instead of owning the decision itself.
-5. **Not started**: flip GPS to live, same pattern.
-6. **Not started**: route widget quick actions through the native store directly
+6. **Not started**: flip GPS to live, same pattern.
+7. **Not started**: route widget quick actions through the native store directly
    too, as a further fallback layer alongside the existing `evaluateJavascript()`
    path.
 
