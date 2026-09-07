@@ -19,6 +19,9 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import com.ohadsam.findmycar.core.BtDecisionEngine
+import com.ohadsam.findmycar.core.BtShadowFormatter
+import com.ohadsam.findmycar.core.VehicleJsonParser
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -205,8 +208,45 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     }
 
     // BtEventBus.Listener — fired from ParkingForegroundService's receiver
-    override fun onConnected(label: String) = emitAndTrack(label, connected = true)
-    override fun onDisconnected(label: String) = emitAndTrack(label, connected = false)
+    override fun onConnected(label: String) {
+        emitAndTrack(label, connected = true)
+        runShadowDecision(label, connected = true)
+    }
+    override fun onDisconnected(label: String) {
+        emitAndTrack(label, connected = false)
+        runShadowDecision(label, connected = false)
+    }
+
+    // Stage 2 of the native background-detection migration (see CLAUDE.md
+    // "Native background detection"): computes what BtDecisionEngine *would*
+    // decide for this real event, purely to compare against what the JS side
+    // actually does with the connected/disconnected event already emitted
+    // above — takes no real action itself (no save/end/start call here).
+    // Wrapped in a hard try/catch backstop: a bug in shadow evaluation must
+    // never affect the real event, which has already been emitted by the
+    // time this runs.
+    private fun runShadowDecision(label: String, connected: Boolean) {
+        try {
+            val json = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
+                .getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]"
+            val vehicles = VehicleJsonParser.parse(json)
+            val hasParking: (String) -> Boolean = { id -> vehicles.find { it.id == id }?.hasParking ?: false }
+            val summary = if (connected) {
+                BtShadowFormatter.summarizeConnect(BtDecisionEngine.onConnected(vehicles, label, hasParking))
+            } else {
+                BtShadowFormatter.summarizeDisconnect(BtDecisionEngine.onDisconnected(vehicles, label, hasParking))
+            }
+            val direction = if (connected) "connected" else "disconnected"
+            Log.i(TAG, "shadow decision ($direction, label=$label): $summary")
+            val data = JSObject()
+            data.put("direction", direction)
+            data.put("label", label)
+            data.put("decisions", summary)
+            notifyListeners("btShadowDecision", data)
+        } catch (e: Exception) {
+            Log.w(TAG, "shadow decision failed (non-fatal, real BT event already handled)", e)
+        }
+    }
 
     private fun emitAndTrack(label: String, connected: Boolean) {
         synchronized(labelsLock) {

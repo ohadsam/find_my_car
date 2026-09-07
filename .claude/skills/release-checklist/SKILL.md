@@ -125,11 +125,30 @@ step broken or skipped:
   silently make future tests slower and more fragile without anyone deciding that
   on purpose.
 - Confirm `js/widget-bridge.js`'s `syncVehicles()` call includes `bluetoothDevice`/
-  `bluetoothAutoEnd`/`bluetoothAutoStart`/`bluetoothStartPopup`, not just
-  `id`/`name`/`icon` — `VehicleJsonParser`/`BtDecisionEngine` depend on these fields
-  being mirrored; a regression here wouldn't fail any test (the JSON would just
-  parse to `NativeVehicle`s with default `false` BT fields) but would silently make
-  every future-staged native decision wrong once the engine is actually wired up.
+  `bluetoothAutoEnd`/`bluetoothAutoStart`/`bluetoothStartPopup`/`hasParking`, not
+  just `id`/`name`/`icon` — `VehicleJsonParser`/`BtDecisionEngine` depend on these
+  fields being mirrored; a regression here wouldn't fail any test (the JSON would
+  just parse to `NativeVehicle`s with default `false` BT/parking fields) but would
+  silently make every native decision wrong. `hasParking` specifically must be read
+  per-vehicle from `Store.get(CFG.keys.curPrefix + v.id)`, not from `state.current`
+  (which only reflects whichever vehicle is currently active) — a regression back to
+  the active-only shape would make shadow decisions silently wrong for every
+  non-active vehicle without any test catching it (`VehicleJsonParser`/
+  `BtDecisionEngine`'s own tests only cover parsing/deciding from already-correct
+  input, not where that input comes from).
+- Confirm Stage 2's shadow-mode wiring in `BluetoothClassicPlugin.kt` stays a
+  no-op: `onConnected`/`onDisconnected` must call `emitAndTrack(...)` (the real,
+  unchanged behavior) before `runShadowDecision(...)`, and `runShadowDecision`
+  itself must only call `Log.i`/`notifyListeners("btShadowDecision", ...)` inside
+  its try/catch — never `WidgetDataPlugin.update`/`.clear`,
+  `ParkingForegroundService.setReasonActive`, or any other call with a real side
+  effect. Shadow mode existing specifically to build confidence before Stage 4
+  flips Bluetooth to live — a shadow-mode change that quietly starts taking real
+  action skips that entire verification step.
+- Confirm `runShadowDecision` is wrapped in a top-level try/catch — a bug in shadow
+  evaluation (bad JSON, an engine exception) must never prevent the real
+  `connected`/`disconnected` event from having already reached JS, since it's
+  emitted first, and must never crash BT event handling.
 
 ## 5. Diagnostic log (Bluetooth/GPS/notifications)
 
@@ -158,6 +177,12 @@ pipeline (Bluetooth, GPS auto-end, or `Notify`):
   `startWatch()` — this is the one diagnostic that directly answers "is the thing that
   keeps BT/GPS alive in the background actually running," so a regression here silently
   removes the most useful signal for diagnosing background-detection reports.
+- Confirm `index.html`'s `diagLogCategoryFilter` still has a `BT-SHADOW` option and
+  `js/bluetooth-native.js` still listens for the native `btShadowDecision` plugin
+  event and logs it under that category — this is the only way to compare native's
+  Stage-2 shadow decisions against the real JS ones without adb; losing this listener
+  wouldn't break anything else (shadow mode has no real effect) so no other check
+  would catch it.
 
 ## 6. Headless widget actions
 

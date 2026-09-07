@@ -38,7 +38,17 @@ export class NativeBluetoothController {
       DiagLog.log('BT-RAW', `native "disconnected" event received, label=${label || '(empty)'}`);
       if (label) this.#onDeviceDisconnected?.(label);
     });
-    this.#handles = await Promise.all([h1, h2]);
+    // Stage 2 of the native background-detection migration (see CLAUDE.md):
+    // BluetoothClassicPlugin computes what its native BtDecisionEngine
+    // *would* decide for each real event, purely for comparison against
+    // what this JS side actually did above — native takes no real action.
+    // Logged under its own category so it's easy to filter and compare
+    // against the matching 'BT' entries without native ever driving
+    // behavior yet.
+    const h3 = this.#plugin.addListener('btShadowDecision', ({ direction, label, decisions }) => {
+      DiagLog.log('BT-SHADOW', `native would decide (${direction}, label=${label || '(empty)'}): ${decisions}`);
+    });
+    this.#handles = await Promise.all([h1, h2, h3]);
 
     try {
       await this.#plugin.startWatch();

@@ -20,4 +20,9 @@ data class NativeVehicle(
     val bluetoothAutoEnd: Boolean,
     val bluetoothAutoStart: Boolean,
     val bluetoothStartPopup: Boolean,
+    // Whether this vehicle currently has an active parking session — mirrored
+    // per-vehicle (not just the active one) by js/widget-bridge.js reading
+    // Store's fmc_cur_{vehicleId} keys directly, since BtDecisionEngine needs
+    // this for every vehicle, not only whichever one is currently active.
+    val hasParking: Boolean,
 )
