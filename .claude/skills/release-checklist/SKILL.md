@@ -96,7 +96,42 @@ available, report that check as a explicit FAIL/UNKNOWN with the reason, not omi
 - If a run has succeeded, confirm the `findmycar-debug-apk` artifact is attached
   (list run artifacts).
 
-## 4. Diagnostic log (Bluetooth/GPS/notifications)
+## 4. Native unit tests (background-detection migration)
+
+FindMyCar is migrating Bluetooth/GPS decision-making from the WebView into native
+Kotlin, in small independently-tested stages (see CLAUDE.md "Native background
+detection (`core` package)") — this sandbox has no local Android SDK/emulator, so
+these tests only ever run in CI, never locally. A release must never land with this
+step broken or skipped:
+
+- Confirm `.github/workflows/build-android.yml` runs `./gradlew testDebugUnitTest`
+  as its own step, **before** `assembleDebug` — if a native unit test step doesn't
+  exist at all, or runs after/without blocking the APK build, a regression in the
+  `core` package's decision logic would ship silently, the same failure mode the
+  Diagnostic log and Headless widget action sections below exist to prevent.
+- Confirm the most recent `build-android.yml` run's "Run native unit tests" step
+  succeeded (not just "Build debug APK") — check the job's step list, not only the
+  overall run conclusion, since a run can still show green if a later step masks an
+  earlier one in some misconfigurations. If a `findmycar-native-test-report`
+  artifact was uploaded, that confirms the test step actually executed.
+- Confirm `android/app/build.gradle` declares
+  `testImplementation "org.robolectric:robolectric:..."` — without it, any test
+  touching `org.json`, `SharedPreferences`, or `Context` fails with "not mocked"
+  rather than actually verifying anything.
+- Confirm `android/.../core/BtDecisionEngine.kt` exists with zero `org.json`/Android
+  framework imports (it must stay a pure function of `NativeVehicle` + plain
+  Kotlin/lambda inputs) — this is what keeps its tests fast, reliable, and runnable
+  without Robolectric; letting Android/org.json dependencies creep into it would
+  silently make future tests slower and more fragile without anyone deciding that
+  on purpose.
+- Confirm `js/widget-bridge.js`'s `syncVehicles()` call includes `bluetoothDevice`/
+  `bluetoothAutoEnd`/`bluetoothAutoStart`/`bluetoothStartPopup`, not just
+  `id`/`name`/`icon` — `VehicleJsonParser`/`BtDecisionEngine` depend on these fields
+  being mirrored; a regression here wouldn't fail any test (the JSON would just
+  parse to `NativeVehicle`s with default `false` BT fields) but would silently make
+  every future-staged native decision wrong once the engine is actually wired up.
+
+## 5. Diagnostic log (Bluetooth/GPS/notifications)
 
 Background BT/GPS/notification behavior is otherwise unobservable without a connected
 device and `adb logcat` — the in-app diagnostic log is the only way a user can report
@@ -124,7 +159,7 @@ pipeline (Bluetooth, GPS auto-end, or `Notify`):
   keeps BT/GPS alive in the background actually running," so a regression here silently
   removes the most useful signal for diagnosing background-detection reports.
 
-## 5. Headless widget actions
+## 6. Headless widget actions
 
 Widget actions (Quick Save's tap; Save/Swap/End in the "⋮" quick-actions popup) must
 run without ever opening the app — a regression here silently falls back to opening
@@ -160,7 +195,7 @@ the app instead (still "works," just not headlessly), so nothing else catches it
   layout change that drops this button is a regression even if the widget's primary
   function still works.
 
-## 6. Cross-channel behavior parity
+## 7. Cross-channel behavior parity
 
 - Confirm `js/widget-bridge.js` and every `Capacitor.isNativePlatform()` /
   `window.Capacitor` branch in `js/app.js` is genuinely a no-op in the browser (no

@@ -5,6 +5,30 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.20.0] — 2026-09-07
+
+### 🔧 Technical — שלב 1 מתוך העברת זיהוי Bluetooth/GPS לקוד נייטיבי
+
+תחילת מיגרציה בשלבים של קבלת ההחלטות (לא כל לוגיקת החניה — תמונות/הקלטה/תיאור/היסטוריה
+נשארים ב-JS) מה-WebView לקוד Kotlin נייטיבי, כדי שזיהוי הרקע יעבוד באופן דומה ל-Waze:
+הלוגיקה עצמה תרוץ בתוך שירות הרקע ולא תהיה תלויה בשרידות ה-WebView/Activity ברקע.
+**שלב זה תשתיתי בלבד — אין עדיין שינוי בהתנהגות בפועל.**
+
+- `android/.../core/` — חבילת Kotlin טהורה (ללא תלות ב-Android/org.json):
+  `NativeVehicle`, `BtDecisionEngine` — פורט מדויק של ענפי ההחלטה ב-
+  `#onBtConnected`/`#onBtDisconnected` (js/app.js), **לא** עדיין מחובר לטיפול
+  האמיתי באירועי Bluetooth
+- `VehicleJsonParser` — קורא את רשימת הרכבים שכבר מסונכרנת ל-SharedPreferences;
+  `js/widget-bridge.js` מסנכרן כעת גם את השדות `bluetoothDevice`/`bluetoothAutoEnd`/
+  `bluetoothAutoStart`/`bluetoothStartPopup`, לא רק id/name/icon
+- נוסף Robolectric (`android/app/build.gradle`) כדי שבדיקות JVM יוכלו להריץ קוד
+  שנוגע ב-org.json/SharedPreferences/Context בלי אמולטור — הסביבה הזו חסרת Android
+  SDK מקומי, כך שבדיקות נייטיביות רצות רק ב-CI
+- `.github/workflows/build-android.yml` מריץ כעת `./gradlew testDebugUnitTest`
+  **לפני** `assembleDebug` — בדיקה נייטיבית שנכשלת תעצור את בניית ה-APK
+- `release-checklist` עודכן לבדוק ששלב הבדיקות הנייטיבי קיים ומצליח בכל שחרור,
+  ושה-`core` package נשאר טהור (ללא תלות ב-Android) כדי להישאר ניתן לבדיקה מהירה
+
 ## [1.19.0] — 2026-09-07
 
 ### 🐛 Bug Fixes

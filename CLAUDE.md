@@ -419,6 +419,58 @@ solve OEM-specific background killers (Xiaomi's "autostart" permission, Huawei's
 developer option) — those have no public API to query or toggle from an app, and
 remain something only the user can find in their device's own settings.
 
+### Native background detection (`core` package) — in-progress migration
+
+The battery-optimization exemption above is a mitigation, not a structural fix — it
+still depends on `MainActivity`'s WebView surviving in the background. Apps like Waze
+don't have this problem at all: their location/tracking logic runs as native code
+*inside* the foreground service itself, with no WebView or Activity dependency —
+there's nothing for Android to reclaim out from under it. FindMyCar is migrating
+Bluetooth/GPS **decision-making** (not the full parking business logic — photos,
+voice, history, description editing stay JS-only) to match that architecture, in
+small, independently-tested, non-breaking stages:
+
+1. **✅ Done**: `android/.../core/` — a pure, Android-framework-free package
+   (`NativeVehicle`, `BtDecisionEngine`) that ports js/app.js's
+   `#onBtConnected`/`#onBtDisconnected` *decision* branches (not their side effects)
+   to Kotlin, plus `VehicleJsonParser` to read the vehicle list
+   `WidgetDataPlugin.syncVehicles()` already mirrors into `SharedPreferences`
+   (`js/widget-bridge.js` now includes the BT-relevant fields —
+   `bluetoothDevice`/`bluetoothAutoEnd`/`bluetoothAutoStart`/`bluetoothStartPopup` —
+   not just id/name/icon). **Not wired into real event handling yet** — it exists
+   standalone specifically so its decisions can be verified against the JS side
+   before anything depends on it.
+2. **Not started**: wire `BtDecisionEngine` into `BluetoothClassicPlugin`'s real
+   `onConnected`/`onDisconnected` handlers in **shadow mode** — log what native
+   *would* do alongside what JS actually does, without native taking any real
+   action, to build confidence the two agree in real-world use before trusting
+   native alone.
+3. **Not started**: native `GpsDecisionEngine` mirroring `#checkGpsSpeed`/
+   `#checkGpsDistance`, same pure/testable/shadow-mode pattern, fed by a
+   `FusedLocationProviderClient`/`LocationManager` watch running directly in
+   `ParkingForegroundService`.
+4. **Not started**: flip Bluetooth to live — native actually mutates a
+   `ParkingStateStore` (new `SharedPreferences`-backed store, becoming the source of
+   truth for save/swap/end decisions) and shows a native notification; JS reconciles
+   from that store on next resume instead of owning the decision itself.
+5. **Not started**: flip GPS to live, same pattern.
+6. **Not started**: route widget quick actions through the native store directly
+   too, as a further fallback layer alongside the existing `evaluateJavascript()`
+   path.
+
+**Testing**: this sandbox has no local Android SDK/emulator, so native code can only
+be verified through CI, not locally — unlike the JS side's `npm test` (Vitest), which
+runs instantly in this environment. `android/app/build.gradle` adds Robolectric
+(`testImplementation "org.robolectric:robolectric:..."`) so JVM unit tests
+(`android/app/src/test/`) can exercise Android-framework classes (`org.json`,
+`SharedPreferences`, `Context`) without a device — plain `org.junit.Test` classes need
+no special runner; classes touching Android framework classes need
+`@RunWith(RobolectricTestRunner::class)`. `.github/workflows/build-android.yml` runs
+`./gradlew testDebugUnitTest` **before** `assembleDebug`, so a failing native test
+blocks the APK build the same way a failing `npm test` should block a PWA release —
+every stage of this migration must land with tests covering it, verified via a CI
+round-trip, before the next stage builds on it.
+
 ### Common Android tasks
 
 - **Add a Capacitor plugin method**: add `@PluginMethod fun ... (call: PluginCall)` to
