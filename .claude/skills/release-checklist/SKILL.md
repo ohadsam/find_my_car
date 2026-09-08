@@ -306,7 +306,28 @@ the app instead (still "works," just not headlessly), so nothing else catches it
   all to the app-opening fallback with no test to catch it.
 - Confirm `android/.../WidgetActionReceiver.kt` exists, is registered in
   `AndroidManifest.xml` as `android:exported="false"`, and its `onReceive()` calls
-  `MainActivity.getActiveWebView()` before falling back to launching `MainActivity`.
+  `MainActivity.getActiveWebView()` first — if reachable, runs `evaluateJavascript()`
+  against it; if not (Stage 8 of the native migration), records a
+  `PendingWidgetAction` to `PendingWidgetActionStore` and shows a `Toast` directly,
+  rather than launching `MainActivity` (the pre-Stage-8 fallback — a regression back
+  to that would still "work" from the user's perspective but silently lose the
+  headless-when-killed behavior Stage 8 exists to provide, so verify by reading the
+  code, not just checking the receiver exists).
+- Confirm `js/app.js`'s `#reconcilePendingWidgetActions()` replays each entry via the
+  real `performWidgetAction(a.action, a.vehicleId ?? null)` (not a separate
+  reimplementation), processes them sequentially, and calls
+  `WidgetBridge.clearPendingWidgetActions()` unconditionally after the loop (a
+  per-entry throw is caught individually so it can't skip the clear) — a regression
+  that only clears on full success would replay the same already-applied action
+  again on every future app resume.
+- Confirm `core/PendingWidgetAction.kt` has zero `org.json`/Android framework
+  imports, and its `vehicleId` field is nullable (`QuickSaveWidgetProvider`'s
+  main-tap "save" never sets one) — `PendingWidgetActionJson.kt`'s tests should
+  cover both a present and a null `vehicleId` round-tripping correctly.
+- Confirm `index.html`'s `diagLogCategoryFilter` includes `WIDGET` (a prior release
+  shipped the `WIDGET` diagnostic-log category — used by both live and replayed
+  widget actions — without ever adding it to this dropdown; check it explicitly
+  rather than assuming past coverage was complete, same lesson as `BT-PENDING`).
 - Confirm `android/.../MainActivity.java` sets a static `activeInstance` (or
   equivalent) in `onCreate()`, clears it in `onDestroy()`, and registers
   `WidgetJsBridge` on the WebView as `"AndroidWidgetBridge"`.

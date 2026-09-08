@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.widget.Toast
+import com.ohadsam.findmycar.core.PendingWidgetAction
 import com.ohadsam.findmycar.widgets.QuickSaveWidgetProvider
 import org.json.JSONObject
 
@@ -16,9 +18,13 @@ import org.json.JSONObject
  * alive in the background (the same precondition BT/GPS auto-detection
  * already relies on), so there's normally a live window.app to call into.
  *
- * Falls back to actually opening the app (the old behavior) only when the
- * WebView isn't alive at all (app fully killed, not just backgrounded) —
- * there is no JS to run against in that case.
+ * When the WebView isn't alive at all (app fully killed, not just
+ * backgrounded — no JS to run against), Stage 8 of the native background-
+ * detection migration (see CLAUDE.md) records the tapped action to
+ * PendingWidgetActionStore and shows a Toast directly, instead of the
+ * older fallback of force-opening the app: js/app.js's
+ * #reconcilePendingWidgetActions() replays it through the same real
+ * performWidgetAction() the next time the app resumes.
  */
 class WidgetActionReceiver : BroadcastReceiver() {
     companion object {
@@ -33,12 +39,13 @@ class WidgetActionReceiver : BroadcastReceiver() {
 
         val webView = MainActivity.getActiveWebView()
         if (webView == null) {
-            Log.i(TAG, "no live WebView — falling back to opening the app for action=$action")
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
-                putExtra(QuickSaveWidgetProvider.EXTRA_ACTION, action)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            Log.i(TAG, "no live WebView — recording pending widget action=$action for replay on next resume")
+            try {
+                PendingWidgetActionStore.add(context, PendingWidgetAction(action, vehicleId, System.currentTimeMillis()))
+                Toast.makeText(context, "יבוצע כשהאפליקציה תיפתח מחדש", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Log.w(TAG, "failed to record pending widget action (non-fatal)", e)
             }
-            context.startActivity(launchIntent)
             return
         }
 

@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.26.0',
+  version: '1.27.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.27.0',
+      date: '2026-09-08',
+      items: Object.freeze([
+        'שלב שמיני (וסיום) בהעברת זיהוי Bluetooth/GPS לקוד נייטיבי — פעולות ווידג\'ט (שמור/החלף/סיים) שנלחצות כשהאפליקציה סגורה לגמרי כבר לא פותחות את האפליקציה: הן מבוצעות אוטומטית בפתיחה הבאה, עם הודעה מיידית שהפעולה תתבצע',
+      ]),
+    }),
     Object.freeze({
       version: '1.26.0',
       date: '2026-09-08',
