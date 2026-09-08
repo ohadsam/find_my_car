@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.28.0',
+  version: '1.29.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.29.0',
+      date: '2026-09-08',
+      items: Object.freeze([
+        'תוקן: לחיצה על פעולה בתפריט הווידג\'טים ("⋮") הייתה עלולה לפתוח את האפליקציה בטעות אחרי ביצוע הפעולה, גם כשהפעולה עצמה בוצעה ברקע כראוי',
+        'פעולות ווידג\'ט (שמור/החלף/סיים) מציגות עכשיו נוטיפיקציה שמאשרת מה בוצע ולאיזה רכב — גם כשהפעולה מתבצעת ברקע לגמרי',
+      ]),
+    }),
     Object.freeze({
       version: '1.28.0',
       date: '2026-09-08',

@@ -787,10 +787,19 @@ class FindMyCarApp {
         message = 'פעולה לא מוכרת';
       }
       DiagLog.log('WIDGET', `performWidgetAction(${action}) → ${message}`, { vehicleName: v?.name, vehicleIcon: v?.icon });
+      // Unconditional (not gated by document.visibilityState like
+      // #notifyIfBackground) — a widget action, by definition, never has an
+      // in-app UI open to see the result in; the Toast the widget popup
+      // shows is only "מבצע…" (in progress), not the actual outcome, so
+      // this notification is the only place the user finds out what
+      // happened and to which vehicle.
+      Notify.show('FindMyCar', message);
       return message;
     } catch (e) {
+      const errMsg = 'שגיאה בביצוע הפעולה';
       DiagLog.log('WIDGET', `performWidgetAction(${action}) threw — ${e?.message || e}`);
-      return 'שגיאה בביצוע הפעולה';
+      Notify.show('FindMyCar', errMsg);
+      return errMsg;
     }
   }
 

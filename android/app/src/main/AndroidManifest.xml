@@ -28,6 +28,7 @@
             android:name=".widgets.WidgetQuickActionsActivity"
             android:theme="@style/AppTheme.QuickActionsDialog"
             android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:exported="false" />
 
         <!-- Only ever targeted by this app's own PendingIntents/explicit

@@ -339,6 +339,26 @@ the app instead (still "works," just not headlessly), so nothing else catches it
   shipped the `WIDGET` diagnostic-log category — used by both live and replayed
   widget actions — without ever adding it to this dropdown; check it explicitly
   rather than assuming past coverage was complete, same lesson as `BT-PENDING`).
+- Confirm `AndroidManifest.xml`'s `.widgets.WidgetQuickActionsActivity` declares
+  `android:taskAffinity=""`. Without it, this activity shares `MainActivity`'s
+  default task affinity (neither activity declares one, so both fall back to the
+  app's package name) — combined with the `FLAG_ACTIVITY_NEW_TASK` its launching
+  `Intent` sets, Android would reuse/foreground any existing `MainActivity` task
+  instead of creating an isolated one, so finishing the dialog reveals
+  `MainActivity` underneath (looks exactly like the widget action "opened the
+  app," a real bug this project shipped once already — see CLAUDE.md). This only
+  reproduces once a `MainActivity` task already exists in recents (i.e. any time
+  after the user has opened the app once), so a quick manual check right after a
+  fresh install can miss it — read the manifest attribute directly rather than
+  only testing on a pristine install.
+- Confirm `performWidgetAction()` (js/app.js) calls `Notify.show('FindMyCar',
+  message)` unconditionally in both its success and catch branches — not gated by
+  `document.visibilityState` like `#notifyIfBackground()` — since a widget action
+  never has an in-app UI open to show the result in. Because
+  `#reconcilePendingWidgetActions()` replays through this same method, this one
+  call also covers the "action replayed after the app was force-killed" case; a
+  regression that adds a separate, non-reused notification call for the replay
+  path instead would silently drift from the live-tap wording over time.
 - Confirm `android/.../MainActivity.java` sets a static `activeInstance` (or
   equivalent) in `onCreate()`, clears it in `onDestroy()`, and registers
   `WidgetJsBridge` on the WebView as `"AndroidWidgetBridge"`.
