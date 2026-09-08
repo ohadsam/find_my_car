@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.23.0',
+  version: '1.24.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.24.0',
+      date: '2026-09-07',
+      items: Object.freeze([
+        'שלב חמישי בהעברת Bluetooth לקוד נייטיבי — כשהאפליקציה ברקע לגמרי (ה-WebView לא זמין) והמערכת מזהה חיבור/ניתוק Bluetooth אמיתי, הקוד הנייטיבי שומר את הפרטים ומציג התראה — עדיין לא מבצע את הפעולה בפועל (זה יגיע בשלב הבא), רק דואג שהמידע לא יאבד',
+      ]),
+    }),
     Object.freeze({
       version: '1.23.0',
       date: '2026-09-07',

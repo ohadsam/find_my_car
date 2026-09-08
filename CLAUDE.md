@@ -307,11 +307,15 @@ the base contract, no web equivalent needed) that let the UI detect when Android
 permanently stopped re-prompting for `BLUETOOTH_CONNECT` (after repeated denial) and
 send the user straight to the app's system settings screen instead of a silent,
 indistinguishable-from-a-bug dead end. `js/notify.js`'s `Notify.checkPermission()` is
-the equivalent non-requesting check for the notification permission.
+the equivalent non-requesting check for the notification permission. `getPendingActions()`/
+`clearPendingActions()` are also native-only (Stage 5 of the native migration — see
+"Native background detection" below): they read/clear what `BtDecisionEngine` recorded
+for real while the WebView was unreachable, with no PWA equivalent since the browser
+never loses its own execution context the same way.
 
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
-| `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`; emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
+| `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`/`getPendingActions`/`clearPendingActions` (the last two Stage 5 of the native migration — see below); emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
 | `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking`) and the global GPS auto-end setting so `WidgetQuickActionsActivity` can show a vehicle picker natively and the native decision engines have real settings to read. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app. Since Stage 4 of the native migration (shadow mode only), also runs a plain `LocationManager` watch (`updateLocationWatch()`/`onLocationShadow()`) precisely while the `"parking"` reason is active, feeding `GpsDecisionEngine` — wrapped in its own independent try/catch backstop |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
@@ -359,13 +363,16 @@ values and reloads the WebView at `?action=<value>`. This is now only reached vi
 
 **Diagnostic log (`js/diag-log.js`)**: since background BT/GPS/notification behavior is
 impossible to observe without a connected device and `adb logcat`, every meaningful
-step of that pipeline logs to `DiagLog` (categories `BT`, `BT-RAW`, `BT-SHADOW`, `GPS`,
-`GPS-SHADOW`, `NOTIFY`, `PERM`) — the raw native event handoff in
+step of that pipeline logs to `DiagLog` (categories `BT`, `BT-RAW`, `BT-SHADOW`,
+`BT-PENDING`, `GPS`, `GPS-SHADOW`, `NOTIFY`, `PERM`) — the raw native event handoff in
 `js/bluetooth-native.js`, the per-vehicle match/skip decisions in
 `#onBtConnected`/`#onBtDisconnected`, what the native `BtDecisionEngine`/
 `GpsDecisionEngine` would have decided for the same event in shadow mode
-(`BT-SHADOW`/`GPS-SHADOW` — see "Native background detection" below), GPS threshold
-crossings, `Notify.show()` outcomes, and every permission prompt result. Entries persist in
+(`BT-SHADOW`/`GPS-SHADOW` — see "Native background detection" below), what
+`BtDecisionEngine` recorded for *real* while the WebView was unreachable (`BT-PENDING`,
+Stage 5 — distinct from the shadow categories: this reflects an actual recorded
+decision, not a comparison), GPS threshold crossings, `Notify.show()` outcomes, and
+every permission prompt result. Entries persist in
 localStorage (3-day retention, capped at 800 entries, deliberately not `fmc_`-prefixed
 so backups stay free of debug noise) and are viewed/filtered by vehicle or category,
 copied, exported, or cleared from the "יומן אבחון" modal in Settings
@@ -510,12 +517,48 @@ small, independently-tested, non-breaking stages:
    `ParkingForegroundService` (there is no single shared source between JS and
    Kotlin) — keep them in sync with `js/config.js`'s `CFG.gpsSpeedThreshold`/
    `gpsSpeedDuration`/`gpsDistanceThreshold` if those ever change.
-5. **Not started**: flip Bluetooth to live — native actually mutates a
-   `ParkingStateStore` (new `SharedPreferences`-backed store, becoming the source of
-   truth for save/swap/end decisions) and shows a native notification; JS reconciles
-   from that store on next resume instead of owning the decision itself.
-6. **Not started**: flip GPS to live, same pattern.
-7. **Not started**: route widget quick actions through the native store directly
+5. **✅ Done**: `BluetoothClassicPlugin.maybeRecordPendingAction()` — the first half of
+   flipping Bluetooth to live, split out the same way Bluetooth's engine (step 1) and
+   GPS's engine (step 3) preceded their own wiring steps. On every real
+   `connected`/`disconnected` event, **after** the unchanged `emitAndTrack()`/
+   `runShadowDecision()` calls, checks `MainActivity.getActiveWebView()`: if the
+   WebView is reachable, this is a deliberate no-op — the live JS listener already
+   handles the event through the normal, unchanged path, so acting here too would
+   double the action. Only when the WebView is **unreachable** (the actual case this
+   whole migration exists to fix) does it evaluate `BtDecisionEngine` for real and
+   persist an `AutoEnd`/`AutoStart` decision to `PendingBtActionStore` (a
+   `SharedPreferences`-backed store — the `ParkingStateStore` this plan originally
+   described, deliberately minimal: vehicle id/name, direction, action, an optional
+   location fix, and a timestamp — **not** a full parking record; JS remains the only
+   thing that ever builds/saves a real `Parking` object) and shows a native
+   notification directly via `NotificationCompat` (a plain Android notification, not
+   `js/notify.js`'s `Notify.show()`, since that needs the WebView too). `SuggestEnd`
+   is deliberately never recorded — it needs a confirmation modal, which has no
+   meaning without a UI to show it in, so it stays JS/foreground-only exactly like
+   today. `AutoEnd` needs no location fix (`#btEndParking` just moves the *existing*
+   parking record to history); `AutoStart` best-effort reads
+   `LocationManager.getLastKnownLocation()` (no fresh fix request — there is no
+   parking session yet for Stage 4's location watch to be running against). New
+   `BluetoothClassic.getPendingActions()`/`.clearPendingActions()` plugin methods
+   (native-only extras, see "Native plugin interface contract" above) let JS inspect
+   what was recorded; `js/app.js`'s `#init()` currently only **logs** them under a new
+   `BT-PENDING` diagnostic-log category — **nothing consumes/replays them into a real
+   parking action yet**, so this stage still has zero effect on actual parking data;
+   only a notification and a diagnostic-log-visible record are new user-visible
+   effects. `PendingBtAction`/`PendingBtActionJson` (the JSON (de)serialization) live
+   in `core` and are unit-tested (mirrors `VehicleJsonParser`'s split); the store
+   itself and the WebView-reachability gating are only verified manually/via the
+   diagnostic log on a real device, same precedent as `BluetoothClassicPlugin.kt`'s
+   other wiring.
+6. **Not started**: JS reconciles `getPendingActions()` on resume — actually replays
+   each entry through the real, existing JS methods (`#btEndParking`/the auto-start
+   flow), using the location `PendingBtActionStore` captured where relevant, then
+   calls `clearPendingActions()`. This is the second half of flipping Bluetooth fully
+   live — the point where a BT event that happened while the WebView was dead finally
+   produces a real save/end, not just a notification and a diagnostic-log entry.
+7. **Not started**: flip GPS to live, same two-step pattern (record while unreachable,
+   then a separate stage to replay on resume).
+8. **Not started**: route widget quick actions through the native store directly
    too, as a further fallback layer alongside the existing `evaluateJavascript()`
    path.
 

@@ -121,6 +121,18 @@ class FindMyCarApp {
       DiagLog.log('BT', 'app init: Bluetooth watch NOT started — master switch is off');
     }
 
+    // Stage 5 of the native background-detection migration (see CLAUDE.md):
+    // surfaces what BtDecisionEngine recorded for real while the WebView
+    // was unreachable — not replayed/acted on yet (a later stage), just
+    // logged so it's visible before anything acts on it. No-op in the
+    // browser/PWA (getPendingActions() resolves to [] there).
+    this.#bluetooth.getPendingActions?.().then(actions => {
+      if (!actions.length) return;
+      for (const a of actions) {
+        DiagLog.log('BT-PENDING', `recorded while WebView unreachable: ${a.action} (${a.direction}, label=${a.label || '?'})`, { vehicleName: a.vehicleName });
+      }
+    }).catch(() => {});
+
     const gpsToggle = Utils.el('gpsAutoEndToggle');
     if (gpsToggle) gpsToggle.checked = this.#getGpsSettings().enabled;
 

@@ -140,4 +140,24 @@ export class NativeBluetoothController {
   async requestIgnoreBatteryOptimizations() {
     await this.#plugin?.requestIgnoreBatteryOptimizations?.().catch(() => {});
   }
+
+  // Stage 5 of the native background-detection migration (see CLAUDE.md):
+  // reads what BtDecisionEngine recorded for real while the WebView was
+  // unreachable (native's own event-listener path had nobody to notify).
+  // Not yet consumed/replayed anywhere — app.js just logs these on resume
+  // so they're visible in the diagnostic log before anything acts on them.
+  async getPendingActions() {
+    if (!this.#plugin) return [];
+    try {
+      const { actionsJson } = await this.#plugin.getPendingActions();
+      const parsed = JSON.parse(actionsJson || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async clearPendingActions() {
+    await this.#plugin?.clearPendingActions?.().catch(() => {});
+  }
 }
