@@ -169,8 +169,8 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | `#btSettingsCbs()` | Returns `{ onToggleEnabled, onToggleVehicle, onSetAll }` callbacks |
 | `#acquireWakeLock()` | Request Screen Wake Lock to keep app active while parking |
 | `#releaseWakeLock()` | Release Wake Lock when parking ends |
-| `#showParkingNotification(parking)` | Show/update persistent system notification with active parking address |
-| `#cancelParkingNotification()` | Close the active parking notification via SW |
+| `#showParkingNotification(parking)` | Show/update persistent system notification with active parking address — PWA-only since Stage 9 of the native migration (skips itself on native, where `WidgetDataPlugin.update()` posts the equivalent directly) |
+| `#cancelParkingNotification()` | Close the active parking notification via SW — PWA-only, same as above (native uses `WidgetDataPlugin.clear()`) |
 | `#updateBtBadge()` | Update BT settings button badge (count of linked vehicles) |
 | `#exportData()` | Serialize `Store.exportAll()` to a backup JSON file — browser download, or native Share sheet via `@capacitor/filesystem`+`@capacitor/share` |
 | `#importData(file)` | Confirm → `Store.importAll()` from a picked backup file → reload |
@@ -316,7 +316,7 @@ never loses its own execution context the same way.
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
 | `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`/`getPendingActions`/`clearPendingActions` (the last two Stage 5 of the native migration — see below); emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
-| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage) and triggers `AppWidgetManager` refresh. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking`) and the global GPS auto-end setting so `WidgetQuickActionsActivity` can show a vehicle picker natively and the native decision engines have real settings to read. `getPendingGpsSuggestion`/`clearPendingGpsSuggestion` (Stage 7) let JS read/clear the GPS end-suggestion recorded while unreachable. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
+| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage), triggers an `AppWidgetManager` refresh, and (Stage 9) posts/cancels the persistent "active parking" notification directly via `NotificationCompat`. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking`) and the global GPS auto-end setting so `WidgetQuickActionsActivity` can show a vehicle picker natively and the native decision engines have real settings to read. `getPendingGpsSuggestion`/`clearPendingGpsSuggestion` (Stage 7) and `getPendingWidgetActions`/`clearPendingWidgetActions` (Stage 8) let JS read/clear what was recorded while unreachable. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app. Since Stage 4 of the native migration (shadow mode only), also runs a plain `LocationManager` watch (`updateLocationWatch()`/`onLocationShadow()`) precisely while the `"parking"` reason is active, feeding `GpsDecisionEngine` — wrapped in its own independent try/catch backstop. Since Stage 7, `maybeRecordPendingGpsSuggestion()` runs alongside (not inside) that shadow logging — its own independent try/catch, same `MainActivity.getActiveWebView() != null` no-op gate as `BluetoothClassicPlugin`'s Stage 5 — to record a real `PendingGpsSuggestion` when the WebView is unreachable |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
@@ -325,7 +325,7 @@ never loses its own execution context the same way.
 | `android/.../WidgetJsBridge.kt` | *(no JS-facing methods — receives, not called from JS)* | Registered on the WebView as `window.AndroidWidgetBridge` (in `MainActivity.onCreate`). `performWidgetAction()`'s resolved result string comes back here (`@JavascriptInterface fun onResult`) since `evaluateJavascript()`'s own callback only sees the un-awaited return value, not a Promise's resolution — shown as a `Toast` (posted to the main thread, since `@JavascriptInterface` methods run on a WebView-internal thread) |
 | *(official `@capacitor/filesystem`)* | `Filesystem` | Used only by `#exportData()` to write the backup JSON to the app's private Cache dir (no permissions needed) |
 | *(official `@capacitor/share`)* | `Share` | Used only by `#exportData()` to open the native Share sheet for the backup file — no custom Kotlin for either plugin, both auto-registered by `cap sync` |
-| *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification (`#showParkingNotification`), which keeps using the browser-safe `ServiceWorkerRegistration.showNotification()` path unchanged |
+| *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification, which since Stage 9 of the native migration is posted/cancelled directly by `WidgetDataPlugin.update()`/`.clear()` (plain `NotificationCompat`, not this plugin) on native; `#showParkingNotification`/`#cancelParkingNotification` (js/app.js) now skip themselves on native and keep using the browser-safe `ServiceWorkerRegistration.showNotification()` path only on the PWA, which has no native equivalent to delegate to |
 
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
 state change already goes through) calls `WidgetBridge.sync(state)` after
@@ -648,7 +648,24 @@ small, independently-tested, non-breaking stages:
    (Quick Save's tap, and Save/Swap/End in the "⋮" popup) now stays fully headless
    regardless of whether the app process is alive, backgrounded, or fully killed —
    only "ניהול רכבים" still opens the app, since it always needs real UI. This
-   closes out the full 8-stage migration plan.
+   closed out the original 8-stage migration plan.
+9. **✅ Done**: the persistent "active parking" notification (address + vehicle,
+   distinct from `ParkingForegroundService`'s own generic "active in background"
+   foreground-service notification) moved to native too — the one remaining
+   notification that was still JS/Service-Worker-only, and could go stale exactly
+   when the WebView is reclaimed (the scenario this whole migration exists to fix).
+   `WidgetDataPlugin.update()`/`.clear()` — the same choke point every real
+   parking-state change already goes through, live or replayed on resume — now
+   posts/cancels it directly via plain `NotificationCompat` (its own dedicated
+   `findmycar_parking_active` channel, `IMPORTANCE_LOW` + `setSilent(true)` to match
+   the JS version's quiet, non-alerting style), using the same `POST_NOTIFICATIONS`
+   permission check already primed at first launch. `js/app.js`'s
+   `#showParkingNotification`/`#cancelParkingNotification` now skip themselves on
+   native (`Capacitor.isNativePlatform()`) so the two paths never both fire — the
+   PWA (no native equivalent to delegate to) keeps the original
+   `ServiceWorkerRegistration.showNotification()` path completely unchanged. No new
+   `core` logic needed (this is direct notification posting, not a decision), so no
+   new tests — same precedent as `BackgroundAlertNotifier`'s wiring.
 
 **Testing**: this sandbox has no local Android SDK/emulator, so native code can only
 be verified through CI, not locally — unlike the JS side's `npm test` (Vitest), which
@@ -726,6 +743,7 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: "מפה מוקטנת" widget shows a map snapshot centered on the parking pin, and an empty state when there's no active parking
 - [ ] Android APK: with the app backgrounded/screen off, BT auto-end/auto-start and the GPS end-suggestion each show a system notification (not just an in-app toast/modal you'd never see)
 - [ ] Android APK: the "FindMyCar פעיל ברקע" background notification is visible directly in the shade (not collapsed under "show silent notifications") and shows the branded car icon, not a generic system icon
+- [ ] Android APK: saving a parking shows a SEPARATE "FindMyCar — חניה פעילה 🅿️" notification with the real address (distinct from "FindMyCar פעיל ברקע"), not duplicated, and it disappears when the parking ends — including when ended via a replayed BT/GPS action after the app was fully killed (Stage 9)
 - [ ] Android APK: after picking a Bluetooth device in vehicle settings, the linked-device field visibly changes color/weight (not still gray/muted)
 - [ ] Android APK: if Bluetooth permission is denied twice ("don't ask again"), opening Bluetooth settings shows the permanently-denied warning banner, and its "open app settings" button (and the one after a failed device scan) opens the app's system settings screen
 - [ ] Android APK: "חניה פעילה" and "שמירה מהירה" widgets render noticeably smaller than before; "מפה מוקטנת" is unchanged

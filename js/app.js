@@ -1045,7 +1045,14 @@ class FindMyCarApp {
   }
 
   // ── PARKING NOTIFICATION ──────────────────────────────────────
+  // Stage 9 of the native background-detection migration (see CLAUDE.md):
+  // on native, WidgetDataPlugin.update()/.clear() (Kotlin) now post/cancel
+  // this same notification directly — reliably, even once the WebView is
+  // reclaimed, unlike this Service-Worker path. Skipped here on native so
+  // the two don't both fire; the PWA (no Capacitor) keeps this path
+  // unchanged, since it has no native equivalent to delegate to.
   async #showParkingNotification(parking) {
+    if (window.Capacitor?.isNativePlatform?.()) return;
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const reg = await navigator.serviceWorker.ready.catch(() => null);
     if (!reg) return;
@@ -1062,6 +1069,7 @@ class FindMyCarApp {
   }
 
   async #cancelParkingNotification() {
+    if (window.Capacitor?.isNativePlatform?.()) return;
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const reg = await navigator.serviceWorker.ready.catch(() => null);
     if (!reg) return;
