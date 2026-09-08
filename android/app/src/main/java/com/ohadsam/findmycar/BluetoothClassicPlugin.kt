@@ -28,6 +28,7 @@ import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import com.ohadsam.findmycar.core.BtConnectDecision
 import com.ohadsam.findmycar.core.BtDecisionEngine
+import com.ohadsam.findmycar.core.BtDisconnectDecision
 import com.ohadsam.findmycar.core.BtShadowFormatter
 import com.ohadsam.findmycar.core.NativeVehicle
 import com.ohadsam.findmycar.core.PendingBtAction
@@ -313,6 +314,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
                 }
             } else {
                 for (decision in BtDecisionEngine.onDisconnected(vehicles, label, hasParking)) {
+                    if (decision !is BtDisconnectDecision.AutoStart) continue
                     val (lat, lng) = lastKnownLocation()
                     recordPendingAction(direction, "autoStart", decision.vehicle, label, lat, lng)
                 }
