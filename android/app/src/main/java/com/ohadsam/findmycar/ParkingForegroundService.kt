@@ -25,6 +25,8 @@ import com.ohadsam.findmycar.core.GpsDecision
 import com.ohadsam.findmycar.core.GpsDecisionEngine
 import com.ohadsam.findmycar.core.GpsDecisionState
 import com.ohadsam.findmycar.core.GpsMath
+import com.ohadsam.findmycar.core.PendingGpsSuggestion
+import com.ohadsam.findmycar.core.VehicleJsonParser
 import java.lang.ref.WeakReference
 
 /**
@@ -280,6 +282,7 @@ class ParkingForegroundService : Service() {
             )
             gpsShadowState = afterSpeed
             emitGpsShadowDecision("speed", speedDecision)
+            maybeRecordPendingGpsSuggestion(speedDecision)
 
             val distance = GpsMath.distanceMeters(location.latitude, location.longitude, parkLat, parkLng)
             val (afterDistance, distanceDecision) = GpsDecisionEngine.checkDistance(
@@ -287,6 +290,7 @@ class ParkingForegroundService : Service() {
             )
             gpsShadowState = afterDistance
             emitGpsShadowDecision("distance", distanceDecision)
+            maybeRecordPendingGpsSuggestion(distanceDecision)
         } catch (e: Exception) {
             Log.w(TAG, "onLocationShadow failed (non-fatal)", e)
         }
@@ -296,6 +300,38 @@ class ParkingForegroundService : Service() {
         if (decision == null) return
         Log.i(TAG, "GPS shadow decision ($trigger): suggestEnd")
         GpsShadowEventBus.emit(trigger, decision)
+    }
+
+    // Stage 7 of the native background-detection migration (see CLAUDE.md
+    // "Native background detection"): GPS's counterpart to
+    // BluetoothClassicPlugin.maybeRecordPendingAction() (Stage 5). When the
+    // WebView is unreachable, GpsDecisionEngine's only decision
+    // (SuggestEnd) can never be shown as a live confirmation modal —
+    // nothing happens today. Records the suggestion (for whichever vehicle
+    // is active) and shows a notification, so JS can open the same
+    // gpsEndModal confirmation the next time it resumes — this NEVER
+    // auto-ends a parking, unlike Bluetooth's AutoEnd, since a GPS
+    // suggestion always requires user confirmation. Deliberately a no-op
+    // when the WebView IS reachable: the live #suggestGpsEnd() path already
+    // handles it. Wrapped in its own try/catch backstop, independent of
+    // emitGpsShadowDecision (which must stay strictly log-only).
+    private fun maybeRecordPendingGpsSuggestion(decision: GpsDecision?) {
+        if (decision == null) return
+        try {
+            if (MainActivity.getActiveWebView() != null) return // live path already handles it
+            val prefs = getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
+            val activeVehicleId = prefs.getString(WidgetDataPlugin.KEY_ACTIVE_VEHICLE_ID, "") ?: ""
+            if (activeVehicleId.isBlank()) return
+            val vehicles = VehicleJsonParser.parse(prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]")
+            val vehicleName = vehicles.find { it.id == activeVehicleId }?.name ?: ""
+            PendingGpsSuggestionStore.set(this, PendingGpsSuggestion(activeVehicleId, vehicleName, System.currentTimeMillis()))
+            Log.i(TAG, "recorded pending GPS suggestion (WebView unreachable) for vehicle=$vehicleName")
+            BackgroundAlertNotifier.show(
+                this, "🚗 מזוהה נסיעה", "ייתכן שהרכב זז ממקום החניה. פתח את האפליקציה לסיים את החניה."
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "maybeRecordPendingGpsSuggestion failed (non-fatal)", e)
+        }
     }
 
     private fun createChannel() {

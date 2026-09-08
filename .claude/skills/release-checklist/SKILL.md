@@ -224,6 +224,40 @@ step broken or skipped:
   a regression that silently drops nullability here would make every recorded
   `AutoEnd` look identical to a location-less `AutoStart`, or vice versa, without
   any other test noticing.
+- Confirm `ParkingForegroundService.maybeRecordPendingGpsSuggestion()` (Stage 7,
+  GPS's counterpart to Stage 5) uses the same
+  `MainActivity.getActiveWebView() != null` no-op gate, and never itself opens
+  `gpsEndModal` or calls `#resetParking`/any real-action method — only
+  `PendingGpsSuggestionStore.set(...)` and `BackgroundAlertNotifier.show(...)`. GPS
+  suggestions are never auto-performed even after this stage (unlike BT's
+  `AutoEnd`/`AutoStart`) — `GpsDecisionEngine` only ever produces `SuggestEnd`, so
+  there is no "real action" for this path to take beyond recording + notifying.
+- Confirm `js/app.js`'s `#reconcilePendingGpsSuggestion()` replays by calling the
+  real `#suggestGpsEnd()` (never `#resetParking()`/any auto-end call directly), and
+  enforces BOTH idempotency checks itself before calling it: the recorded
+  `vehicleId` must still equal the *current* `#state.activeVehicleId` (discard
+  otherwise — `#suggestGpsEnd()` always acts on whichever vehicle is active *now*,
+  so skipping this check could show a suggestion for the wrong vehicle), and
+  `#state.current` must still be truthy (discard otherwise). Unlike Bluetooth's
+  replay, `#suggestGpsEnd()` has no precondition checks of its own (its real
+  callers `#checkGpsSpeed`/`#checkGpsDistance` already checked before calling it) —
+  a regression that drops either check here is not caught by `#suggestGpsEnd()`
+  itself.
+- Confirm `core/PendingGpsSuggestion.kt` has zero `org.json`/Android framework
+  imports, and `PendingGpsSuggestionJson.kt` round-trips both a real suggestion and
+  `null` (it serializes to/from a single JSON value, not a list, since at most one
+  GPS suggestion is ever outstanding — unlike `PendingBtActionJson`'s array, which
+  can hold one per linked vehicle).
+- Confirm `index.html`'s `diagLogCategoryFilter` has both `BT-PENDING` and
+  `GPS-PENDING` options (a prior release shipped the `BT-PENDING` category without
+  adding it to this dropdown — caught and fixed when `GPS-PENDING` was added; check
+  it explicitly each release rather than assuming past coverage was complete).
+- Confirm `BluetoothClassicPlugin.kt` and `ParkingForegroundService.kt` both call
+  the shared `BackgroundAlertNotifier.show(...)` for their pending-action/
+  -suggestion notifications, not separate hand-rolled `NotificationCompat` code —
+  two independent implementations of the same channel-creation/permission-check
+  logic would be easy to let drift (e.g. only one gets updated if the channel ID
+  or POST_NOTIFICATIONS handling ever needs to change).
 
 ## 5. Diagnostic log (Bluetooth/GPS/notifications)
 
