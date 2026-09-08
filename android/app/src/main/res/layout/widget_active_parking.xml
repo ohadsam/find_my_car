@@ -3,72 +3,162 @@
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="horizontal"
-    android:gravity="center_vertical"
+    android:orientation="vertical"
     android:background="@drawable/widget_background"
     android:padding="10dp">
 
+    <!-- Row 1 — always shown: the selected/active vehicle when there's only
+         one parked vehicle or the widget is too small for two rows; the
+         first of two when the widget is large enough to show both. -->
     <LinearLayout
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="end">
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
 
-        <TextView
-            android:id="@+id/widget_title"
-            android:layout_width="match_parent"
+        <LinearLayout
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
-            android:textStyle="bold"
-            android:gravity="end"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:text="אין חניה פעילה" />
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="end">
 
-        <TextView
-            android:id="@+id/widget_subtitle"
-            android:layout_width="match_parent"
+            <TextView
+                android:id="@+id/widget_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:gravity="end"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="אין חניה פעילה" />
+
+            <TextView
+                android:id="@+id/widget_subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="#B8C4DB"
+                android:textSize="11sp"
+                android:gravity="end"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:text="" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:textColor="#B8C4DB"
-            android:textSize="11sp"
-            android:gravity="end"
-            android:maxLines="2"
-            android:ellipsize="end"
-            android:text="" />
+            android:layout_marginStart="8dp"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <FrameLayout
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:background="@drawable/widget_icon_badge_bg">
+
+                <TextView
+                    android:id="@+id/widget_icon_badge"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:textSize="16sp"
+                    android:text="🚗" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <!-- Only shown on a small (single-row) widget when 2+
+                     vehicles are simultaneously parked, to switch which
+                     one is displayed — see WidgetCycleVehicleReceiver. -->
+                <TextView
+                    android:id="@+id/widget_cycle_btn"
+                    android:layout_width="20dp"
+                    android:layout_height="18dp"
+                    android:gravity="center"
+                    android:textSize="12sp"
+                    android:textColor="#B8C4DB"
+                    android:text="🔁"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_quick_actions_btn"
+                    android:layout_width="24dp"
+                    android:layout_height="18dp"
+                    android:gravity="center"
+                    android:textSize="14sp"
+                    android:textColor="#B8C4DB"
+                    android:text="⋮" />
+            </LinearLayout>
+        </LinearLayout>
     </LinearLayout>
 
+    <!-- Row 2 — only shown when the widget was resized large enough AND a
+         second vehicle is simultaneously parked (ActiveParkingWidgetProvider
+         decides both conditions); otherwise stays gone and row 1 alone fills
+         the widget exactly as before this feature. -->
     <LinearLayout
-        android:layout_width="wrap_content"
+        android:id="@+id/widget_row2"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:orientation="vertical"
-        android:gravity="center">
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="end">
+
+            <TextView
+                android:id="@+id/widget_title2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:gravity="end"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="" />
+
+            <TextView
+                android:id="@+id/widget_subtitle2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="#B8C4DB"
+                android:textSize="11sp"
+                android:gravity="end"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:text="" />
+        </LinearLayout>
 
         <FrameLayout
-            android:layout_width="34dp"
-            android:layout_height="34dp"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="8dp"
             android:background="@drawable/widget_icon_badge_bg">
 
             <TextView
-                android:id="@+id/widget_icon_badge"
+                android:id="@+id/widget_icon_badge2"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:gravity="center"
-                android:textSize="16sp"
+                android:textSize="13sp"
                 android:text="🚗" />
         </FrameLayout>
-
-        <TextView
-            android:id="@+id/widget_quick_actions_btn"
-            android:layout_width="34dp"
-            android:layout_height="18dp"
-            android:layout_marginTop="2dp"
-            android:gravity="center"
-            android:textSize="14sp"
-            android:textColor="#B8C4DB"
-            android:text="⋮" />
     </LinearLayout>
 </LinearLayout>

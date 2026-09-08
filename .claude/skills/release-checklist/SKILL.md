@@ -381,7 +381,61 @@ the app instead (still "works," just not headlessly), so nothing else catches it
   layout change that drops this button is a regression even if the widget's primary
   function still works.
 
-## 7. Cross-channel behavior parity
+## 7. Multi-vehicle widget display
+
+Both `ActiveParkingWidgetProvider` and `MiniMapWidgetProvider` must show more than
+just the active vehicle when 2+ vehicles have simultaneously active parking — a
+regression here silently reverts to only ever showing one vehicle, with the other
+parked vehicle invisible until the user opens the app:
+
+- Confirm `android/.../widgets/ParkedVehicles.kt` exists and its `parse()` filters to
+  `hasParking=true` only, skipping entries with a blank `id` — this reads the same
+  `syncVehicles()` mirror as `WidgetQuickActionsActivity`'s vehicle picker, so a
+  broken filter would either hide parked vehicles or show ones with no active
+  parking.
+- Confirm `js/widget-bridge.js`'s `syncVehicles()` payload includes `address`/`lat`/
+  `lng`/`timestamp` per vehicle (not just the BT/id/name/icon/hasParking fields
+  `core`'s `BtDecisionEngine` needs) — `ParkedVehicles.parse()` depends on these; a
+  regression that drops them wouldn't fail any test (the JSON still parses) but
+  would silently render blank addresses/pins for every non-active parked vehicle.
+- Confirm both `ActiveParkingWidgetProvider` and `MiniMapWidgetProvider` override
+  `onAppWidgetOptionsChanged()` (not just `onUpdate()`) and call the same `updateOne()`
+  — without it, an already-placed widget only re-renders for size on the next
+  periodic/manual update, not live as the user drags it bigger/smaller.
+- Confirm the `LARGE_MIN_HEIGHT_DP` thresholds (110 in `ActiveParkingWidgetProvider`,
+  280 in `MiniMapWidgetProvider`) are read via
+  `mgr.getAppWidgetOptions(id)?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0)`
+  in both providers — not `OPTION_APPWIDGET_MIN_WIDTH` or a hardcoded size, since
+  these widgets grow vertically (extra row / stacked map), not horizontally.
+- Confirm the single-parked-vehicle case renders identically to before this feature
+  in both providers: `widget_row2`/`widget_cycle_btn` (active-parking widget) and
+  `widget_mini_map_slot2`/`widget_mini_map_cycle_btn` (mini-map widget) are all
+  `View.GONE` whenever `parked.size <= 1` — a regression that shows the cycle button
+  or second row/slot with only one vehicle parked would be a visible cosmetic bug on
+  the (still most common) single-vehicle case.
+- Confirm the cycle button (`widget_cycle_btn`/`widget_mini_map_cycle_btn`) is shown
+  only when `parked.size >= 2 && !isLarge`, and the second row/slot only when
+  `parked.size >= 2 && isLarge` — these two conditions must be mutually exclusive
+  (never both visible, never neither when 2+ are parked and the widget is below vs.
+  at/above the threshold) in both providers.
+- Confirm `android/.../widgets/WidgetCycleVehicleReceiver.kt` exists, is registered
+  in `AndroidManifest.xml` as `android:exported="false"`, and its `onReceive()`
+  advances the stored index with `(current + 1) % count` (guarding `count == 0`
+  first) rather than plain `%` on a value that could go negative — Kotlin's `%` can
+  return a negative remainder, which `List.get()` would throw on; `ActiveParkingWidgetProvider`/
+  `MiniMapWidgetProvider` themselves read the stored index back with `.mod(parked.size)`
+  (the non-negative variant) for the same reason.
+- Confirm the selection index is persisted per `appWidgetId` (key pattern
+  `"cycle_${widgetType}_$appWidgetId"`, via
+  `WidgetCycleVehicleReceiver.selectedIndexKey()`) — not a single shared key — so two
+  separate placed instances of the same widget type can independently show different
+  vehicles.
+- Confirm `PendingIntent` requestCodes for the new cycle buttons
+  (`id + 400000` in `ActiveParkingWidgetProvider`, `id + 500000` in
+  `MiniMapWidgetProvider`) don't collide with the existing root (`id`) or "⋮" button
+  (`id + 200000`/`id + 300000`) requestCodes used by the same providers.
+
+## 8. Cross-channel behavior parity
 
 - Confirm `js/widget-bridge.js` and every `Capacitor.isNativePlatform()` /
   `window.Capacitor` branch in `js/app.js` is genuinely a no-op in the browser (no
