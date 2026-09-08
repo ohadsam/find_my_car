@@ -180,6 +180,37 @@ step broken or skipped:
   `js/widget-bridge.js`'s `initShadowListener()` is called once from `js/app.js`'s
   `#init()` — losing this wiring has no other symptom (shadow mode has no real
   effect), so nothing else would catch it.
+- Confirm `BluetoothClassicPlugin.maybeRecordPendingAction()` (Stage 5) still gates
+  on `MainActivity.getActiveWebView() != null` and returns immediately when the
+  WebView IS reachable — this is what prevents a real BT event from producing BOTH
+  the normal live JS-handled action AND a recorded pending action, which would
+  otherwise double-apply the same auto-end/auto-start once a later stage starts
+  replaying pending actions. This is a correctness bug with no test coverage
+  (`BluetoothClassicPlugin.kt` needs a live `Bridge`/`Activity`, same precedent as
+  its other wiring) — verify by reading the code, not just grepping for the guard's
+  existence.
+- Confirm `maybeRecordPendingAction`/`recordPendingAction` never call
+  `WidgetDataPlugin.update`/`.clear`, open any modal, or otherwise touch real parking
+  state — only `PendingBtActionStore.add(...)` and a plain
+  `NotificationCompat`/`NotificationManagerCompat` notification. As of Stage 5,
+  recording a pending action must have **zero effect on actual parking data** — only
+  a notification and a diagnostic-log-visible record are real user-visible effects.
+  If `js/app.js` has been changed to actually replay pending actions (check
+  CLAUDE.md's migration stage list for the current stage number), re-verify this
+  constraint no longer applies and check the replay logic itself instead.
+- Confirm `js/app.js`'s `#init()` only **logs** `getPendingActions()` results under
+  the `BT-PENDING` category and does not call any real save/end/start method with
+  them, unless the migration plan says pending-action replay has been implemented
+  (check CLAUDE.md's stage list) — and if it has, confirm replayed entries are
+  cleared via `clearPendingActions()` afterward, or the same action would replay
+  again on every future app resume.
+- Confirm `core/PendingBtAction.kt` has zero `org.json`/Android framework imports
+  (same purity requirement as the other `core` data classes) and that
+  `PendingBtActionJson.kt`'s round-trip tests cover both a location fix present and
+  absent (`lat`/`lng` are nullable — `AutoEnd` never has one, `AutoStart` does) —
+  a regression that silently drops nullability here would make every recorded
+  `AutoEnd` look identical to a location-less `AutoStart`, or vice versa, without
+  any other test noticing.
 
 ## 5. Diagnostic log (Bluetooth/GPS/notifications)
 

@@ -1,15 +1,22 @@
 package com.ohadsam.findmycar
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -19,8 +26,12 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import com.ohadsam.findmycar.core.BtConnectDecision
 import com.ohadsam.findmycar.core.BtDecisionEngine
 import com.ohadsam.findmycar.core.BtShadowFormatter
+import com.ohadsam.findmycar.core.NativeVehicle
+import com.ohadsam.findmycar.core.PendingBtAction
+import com.ohadsam.findmycar.core.PendingBtActionJson
 import com.ohadsam.findmycar.core.VehicleJsonParser
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -190,6 +201,24 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         call.resolve()
     }
 
+    // Stage 5 of the native background-detection migration (see CLAUDE.md):
+    // lets JS read/clear what was recorded while the WebView was
+    // unreachable, so it can reconcile on next resume (not wired to any
+    // reconciliation yet — that's a later stage). Returns the raw JSON
+    // array (via the same tested PendingBtActionJson used to write it)
+    // rather than rebuilding a JSObject/JSArray by hand here.
+    @PluginMethod
+    fun getPendingActions(call: PluginCall) {
+        val json = PendingBtActionJson.toJson(PendingBtActionStore.getAll(context))
+        val ret = JSObject(); ret.put("actionsJson", json); call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun clearPendingActions(call: PluginCall) {
+        PendingBtActionStore.clear(context)
+        call.resolve()
+    }
+
     @PluginMethod
     fun getBondedDevices(call: PluginCall) {
         val adapter = BluetoothAdapter.getDefaultAdapter()
@@ -211,10 +240,12 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     override fun onConnected(label: String) {
         emitAndTrack(label, connected = true)
         runShadowDecision(label, connected = true)
+        maybeRecordPendingAction(label, connected = true)
     }
     override fun onDisconnected(label: String) {
         emitAndTrack(label, connected = false)
         runShadowDecision(label, connected = false)
+        maybeRecordPendingAction(label, connected = false)
     }
 
     // Stage 2 of the native background-detection migration (see CLAUDE.md
@@ -245,6 +276,99 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
             notifyListeners("btShadowDecision", data)
         } catch (e: Exception) {
             Log.w(TAG, "shadow decision failed (non-fatal, real BT event already handled)", e)
+        }
+    }
+
+    // Stage 5 of the native background-detection migration (see CLAUDE.md
+    // "Native background detection"): when the WebView is unreachable
+    // (MainActivity.getActiveWebView() == null — the case this whole
+    // migration exists to fix), the emitAndTrack() notifyListeners() call
+    // above has nobody listening, so nothing happens today. This records
+    // what BtDecisionEngine decided for real, so JS can reconcile ("catch
+    // up") the next time it resumes — see PendingBtActionStore. Deliberately
+    // a no-op when the WebView IS reachable: the live listener path already
+    // handles the event through the normal, unchanged flow, so acting here
+    // too would double the action. Only ever records AutoEnd/AutoStart —
+    // SuggestEnd needs a confirmation modal, which has no meaning without a
+    // UI to show it in, so it stays JS/foreground-only exactly like today.
+    // Wrapped in its own try/catch backstop, independent of runShadowDecision
+    // (which must stay strictly log-only) and of the real event already
+    // emitted above.
+    private fun maybeRecordPendingAction(label: String, connected: Boolean) {
+        try {
+            if (MainActivity.getActiveWebView() != null) return // live path already handles it
+            val json = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
+                .getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]"
+            val vehicles = VehicleJsonParser.parse(json)
+            val hasParking: (String) -> Boolean = { id -> vehicles.find { it.id == id }?.hasParking ?: false }
+            val direction = if (connected) "connected" else "disconnected"
+
+            if (connected) {
+                // #btEndParking (js/app.js) just moves the EXISTING parking
+                // record to history — it never needs a fresh location fix,
+                // unlike auto-start below.
+                for (decision in BtDecisionEngine.onConnected(vehicles, label, hasParking)) {
+                    if (decision !is BtConnectDecision.AutoEnd) continue
+                    recordPendingAction(direction, "autoEnd", decision.vehicle, label, lat = null, lng = null)
+                }
+            } else {
+                for (decision in BtDecisionEngine.onDisconnected(vehicles, label, hasParking)) {
+                    val (lat, lng) = lastKnownLocation()
+                    recordPendingAction(direction, "autoStart", decision.vehicle, label, lat, lng)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "maybeRecordPendingAction failed (non-fatal)", e)
+        }
+    }
+
+    private fun recordPendingAction(
+        direction: String, action: String, vehicle: NativeVehicle, label: String, lat: Double?, lng: Double?,
+    ) {
+        val entry = PendingBtAction(direction, action, vehicle.id, vehicle.name, label, lat, lng, System.currentTimeMillis())
+        PendingBtActionStore.add(context, entry)
+        Log.i(TAG, "recorded pending BT action (WebView unreachable): $entry")
+        val title = if (action == "autoEnd") "🚗 חניה הסתיימה אוטומטית" else "🅿️ חניה חדשה תישמר בפתיחה הבאה"
+        showBackgroundNotification(title, "${vehicle.name} — יטופל כשהאפליקציה תיפתח מחדש")
+    }
+
+    /** Best-effort — no fresh location request, just whatever the system already has cached. */
+    private fun lastKnownLocation(): Pair<Double?, Double?> {
+        return try {
+            val fineGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+            if (!fineGranted) return null to null
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null to null
+            val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            if (loc != null) loc.latitude to loc.longitude else null to null
+        } catch (e: Exception) {
+            null to null
+        }
+    }
+
+    private fun showBackgroundNotification(title: String, body: String) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (!granted) return
+            }
+            val channelId = "findmycar_bt_alerts"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(channelId, "התראות Bluetooth", NotificationManager.IMPORTANCE_DEFAULT)
+                context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+            }
+            val notification = NotificationCompat.Builder(context, channelId)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setSmallIcon(R.drawable.ic_stat_car)
+                .setColor(0xFF5B8BF5.toInt())
+                .setAutoCancel(true)
+                .build()
+            NotificationManagerCompat.from(context).notify(System.currentTimeMillis().toInt(), notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "showBackgroundNotification failed (non-fatal)", e)
         }
     }
 
