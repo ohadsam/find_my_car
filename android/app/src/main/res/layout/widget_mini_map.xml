@@ -5,36 +5,94 @@
     android:layout_height="match_parent"
     android:background="@drawable/widget_background">
 
-    <ImageView
-        android:id="@+id/widget_mini_map_image"
+    <!-- Stacked slots (not side-by-side) so a single-vehicle widget still
+         fills the whole space exactly as before: with slot2 gone, slot1's
+         weight=1 makes it expand to the full height on its own. -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="centerCrop"
-        android:visibility="gone"
-        android:contentDescription="@null" />
+        android:orientation="vertical">
 
-    <FrameLayout
-        android:id="@+id/widget_mini_map_caption_bg"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:background="@drawable/widget_map_caption_bg"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/widget_mini_map_caption"
+        <FrameLayout
+            android:id="@+id/widget_mini_map_slot1"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_margin="10dp"
-            android:layout_marginTop="24dp"
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:gravity="end"
-            android:maxLines="2"
-            android:ellipsize="end"
-            android:text="" />
-    </FrameLayout>
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <ImageView
+                android:id="@+id/widget_mini_map_image"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:visibility="gone"
+                android:contentDescription="@null" />
+
+            <FrameLayout
+                android:id="@+id/widget_mini_map_caption_bg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="@drawable/widget_map_caption_bg"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/widget_mini_map_caption"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="10dp"
+                    android:layout_marginTop="24dp"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:gravity="end"
+                    android:maxLines="2"
+                    android:ellipsize="end"
+                    android:text="" />
+            </FrameLayout>
+        </FrameLayout>
+
+        <!-- Second vehicle's map — only shown when the widget was resized
+             large enough AND a second vehicle is simultaneously parked
+             (MiniMapWidgetProvider decides both conditions). -->
+        <FrameLayout
+            android:id="@+id/widget_mini_map_slot2"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/widget_mini_map_image2"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:visibility="gone"
+                android:contentDescription="@null" />
+
+            <FrameLayout
+                android:id="@+id/widget_mini_map_caption_bg2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="@drawable/widget_map_caption_bg"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/widget_mini_map_caption2"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="10dp"
+                    android:layout_marginTop="24dp"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:gravity="end"
+                    android:maxLines="2"
+                    android:ellipsize="end"
+                    android:text="" />
+            </FrameLayout>
+        </FrameLayout>
+    </LinearLayout>
 
     <TextView
         android:id="@+id/widget_mini_map_empty"
@@ -45,6 +103,22 @@
         android:textColor="#B8C4DB"
         android:textSize="13sp"
         android:visibility="visible" />
+
+    <!-- Only shown on a small (single-slot) widget when 2+ vehicles are
+         simultaneously parked, to switch which one is displayed — see
+         WidgetCycleVehicleReceiver. -->
+    <TextView
+        android:id="@+id/widget_mini_map_cycle_btn"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_gravity="top|start"
+        android:layout_margin="4dp"
+        android:background="@drawable/widget_icon_badge_bg"
+        android:gravity="center"
+        android:textSize="13sp"
+        android:textColor="#FFFFFF"
+        android:text="🔁"
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/widget_quick_actions_btn"

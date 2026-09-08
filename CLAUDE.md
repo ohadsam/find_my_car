@@ -330,9 +330,33 @@ never loses its own execution context the same way.
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
 state change already goes through) calls `WidgetBridge.sync(state)` after
 `this.#ui.updateAll(state)`. `WidgetBridge` calls `WidgetData.update()`/`.clear()`
-(parking snapshot) and `WidgetData.syncVehicles()` (vehicle list + active id), which
-write `SharedPreferences` and broadcast `AppWidgetManager.ACTION_APPWIDGET_UPDATE` to
-the two data-driven widgets (`ActiveParkingWidgetProvider`, `MiniMapWidgetProvider`).
+(the *active* vehicle's parking snapshot — also what drives the persistent
+notification, Stage 9) and `WidgetData.syncVehicles()` (the full vehicle list +
+active id, now including each vehicle's own `address`/`lat`/`lng`/`timestamp` read
+directly from its own `fmc_cur_{id}` key, not just the active vehicle's in-memory
+`current`), which write `SharedPreferences` and broadcast
+`AppWidgetManager.ACTION_APPWIDGET_UPDATE` to the two data-driven widgets
+(`ActiveParkingWidgetProvider`, `MiniMapWidgetProvider`).
+
+**Multi-vehicle display on "חניה פעילה"/"מפה מוקטנת"**: both widgets read the full
+per-vehicle parking list (`ParkedVehicles.parse()`, filtering `syncVehicles()`'s
+mirrored JSON to `hasParking=true`) instead of only ever the active vehicle — when
+2+ vehicles are simultaneously parked, which one(s) a given widget *instance* shows
+depends on its current size, read via
+`AppWidgetManager.getAppWidgetOptions(id).getInt(OPTION_APPWIDGET_MIN_HEIGHT)` in
+both `onUpdate()` and `onAppWidgetOptionsChanged()` (the latter fires on resize,
+so an already-placed widget updates live as it's dragged bigger/smaller): below a
+per-widget height threshold (`LARGE_MIN_HEIGHT_DP` — 110dp for the address widget's
+second text row, 280dp for the map widget's second stacked map slot) it shows a
+single vehicle, selectable via a small 🔁 cycle button
+(`WidgetCycleVehicleReceiver`, only shown when 2+ vehicles are actually parked) that
+advances a per-`appWidgetId` selection index persisted in `WidgetDataPlugin.PREFS`;
+at or above the threshold it shows the first two simultaneously-parked vehicles at
+once (a second title/subtitle/icon row for the address widget, a second stacked map
+slot for the map widget) and hides the cycle button, since there's nothing left to
+toggle between. `widget_active_parking.xml`/`widget_mini_map.xml`'s second-vehicle
+elements stay `GONE` in every other case, so a single-parked-vehicle widget renders
+identically to before this feature.
 
 **Headless widget actions (`FindMyCarApp.performWidgetAction`)**: every direct widget
 action — Quick Save's single tap, and Save/Swap/End inside the "⋮" quick-actions popup
@@ -758,6 +782,7 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: after a widget action completes (live tap or replayed after a force-kill), a system notification confirms what happened and for which vehicle — not just the "מבצע…" Toast shown at tap time
 - [ ] Android APK: tapping "שמירה מהירה" widget's main body saves a parking spot without opening the app (Toast confirms); its "⋮" corner button still opens the quick-actions popup
 - [ ] Android APK: "ניהול רכבים" in the quick-actions popup is the only button that opens the app (adding/editing a vehicle needs real UI)
+- [ ] Android APK: with 2 vehicles simultaneously parked, a small (default-size) "חניה פעילה" widget shows a 🔁 cycle button that switches which vehicle's address is shown, and a small "מפה מוקטנת" widget shows an equivalent 🔁 button that switches which vehicle's map pin is shown; resizing either widget larger (drag-resize) shows both vehicles at once (a second address row / a second stacked map) and hides the cycle button; with only 1 vehicle parked, neither widget shows a cycle button or second row/map regardless of size
 - [ ] Android APK: force-kill the app from Recents, then tap a widget action (save/swap/end) — shows a Toast immediately ("יבוצע כשהאפליקציה תיפתח מחדש") without opening the app, then reopen the app and confirm the action was actually applied (diagnostic log's `WIDGET` category shows the replay)
 - [ ] Android APK: force-kill the app from Recents, then tap "ניהול רכבים" in the widget "⋮" popup — this one still opens the app (managing vehicles always needs real UI)
 - [ ] Android APK: the diagnostic log's `BT` category shows a "background service running check: YES" entry a couple seconds after opening the app (confirms `ParkingForegroundService` actually started) — if it shows NO or never appears, that's the root cause of BT/GPS not working in the background, not a separate bug

@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.29.0',
+  version: '1.30.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.30.0',
+      date: '2026-09-08',
+      items: Object.freeze([
+        'הווידג\'טים "חניה פעילה" ו"מפה מוקטנת" תומכים עכשיו במספר רכבים חונים בו-זמנית: בגודל רגיל אפשר לעבור בין הרכבים בכפתור 🔁, ובגודל מוגדל (גרירה להגדלה) שני הרכבים מוצגים יחד',
+      ]),
+    }),
     Object.freeze({
       version: '1.29.0',
       date: '2026-09-08',

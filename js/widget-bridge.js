@@ -73,20 +73,30 @@ export class WidgetBridge {
     // popup can show a vehicle picker, and so the native BtDecisionEngine/
     // GpsDecisionEngine (android/.../core/) can make headless decisions,
     // without either needing the WebView's own localStorage. Bluetooth
-    // fields and hasParking (read directly from each vehicle's own
-    // fmc_cur_{id} key — not just the active vehicle's in-memory `current`)
-    // are included too.
+    // fields and each vehicle's own parking snapshot (read directly from
+    // its own fmc_cur_{id} key — not just the active vehicle's in-memory
+    // `current`) are included too, so the "חניה פעילה"/"מפה מוקטנת" widgets
+    // can show more than one simultaneously-parked vehicle when they're
+    // resized large enough (see ActiveParkingWidgetProvider/
+    // MiniMapWidgetProvider) instead of only ever the active vehicle.
     this.#plugin.syncVehicles?.({
-      vehicles: (state.vehicles ?? []).map(v => ({
-        id:                  v.id,
-        name:                v.name,
-        icon:                v.icon,
-        bluetoothDevice:     v.bluetoothDevice ?? '',
-        bluetoothAutoEnd:    !!v.bluetoothAutoEnd,
-        bluetoothAutoStart:  !!v.bluetoothAutoStart,
-        bluetoothStartPopup: v.bluetoothStartPopup !== false,
-        hasParking:          !!Store.get(CFG.keys.curPrefix + v.id),
-      })),
+      vehicles: (state.vehicles ?? []).map(v => {
+        const parking = Store.get(CFG.keys.curPrefix + v.id);
+        return {
+          id:                  v.id,
+          name:                v.name,
+          icon:                v.icon,
+          bluetoothDevice:     v.bluetoothDevice ?? '',
+          bluetoothAutoEnd:    !!v.bluetoothAutoEnd,
+          bluetoothAutoStart:  !!v.bluetoothAutoStart,
+          bluetoothStartPopup: v.bluetoothStartPopup !== false,
+          hasParking:          !!parking,
+          address:             parking ? (normalizeAddress(parking.address) || '') : '',
+          lat:                 parking?.location?.lat ?? null,
+          lng:                 parking?.location?.lng ?? null,
+          timestamp:           parking?.timestamp ?? null,
+        };
+      }),
       activeVehicleId: state.activeVehicleId ?? '',
       gpsAutoEndEnabled: !!Store.get(CFG.keys.gpsAutoEnd, { enabled: false })?.enabled,
     }).catch(() => {});
