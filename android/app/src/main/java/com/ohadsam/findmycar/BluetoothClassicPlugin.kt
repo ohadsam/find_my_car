@@ -1,8 +1,6 @@
 package com.ohadsam.findmycar
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothProfile
 import android.content.Context
@@ -14,8 +12,6 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -204,9 +200,9 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
 
     // Stage 5 of the native background-detection migration (see CLAUDE.md):
     // lets JS read/clear what was recorded while the WebView was
-    // unreachable, so it can reconcile on next resume (not wired to any
-    // reconciliation yet — that's a later stage). Returns the raw JSON
-    // array (via the same tested PendingBtActionJson used to write it)
+    // unreachable, so it can reconcile on next resume
+    // (js/app.js's #reconcilePendingBtActions(), Stage 6). Returns the raw
+    // JSON array (via the same tested PendingBtActionJson used to write it)
     // rather than rebuilding a JSObject/JSArray by hand here.
     @PluginMethod
     fun getPendingActions(call: PluginCall) {
@@ -331,7 +327,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         PendingBtActionStore.add(context, entry)
         Log.i(TAG, "recorded pending BT action (WebView unreachable): $entry")
         val title = if (action == "autoEnd") "🚗 חניה הסתיימה אוטומטית" else "🅿️ חניה חדשה תישמר בפתיחה הבאה"
-        showBackgroundNotification(title, "${vehicle.name} — יטופל כשהאפליקציה תיפתח מחדש")
+        BackgroundAlertNotifier.show(context, title, "${vehicle.name} — יטופל כשהאפליקציה תיפתח מחדש")
     }
 
     /** Best-effort — no fresh location request, just whatever the system already has cached. */
@@ -346,31 +342,6 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
             if (loc != null) loc.latitude to loc.longitude else null to null
         } catch (e: Exception) {
             null to null
-        }
-    }
-
-    private fun showBackgroundNotification(title: String, body: String) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-                    PackageManager.PERMISSION_GRANTED
-                if (!granted) return
-            }
-            val channelId = "findmycar_bt_alerts"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(channelId, "התראות Bluetooth", NotificationManager.IMPORTANCE_DEFAULT)
-                context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
-            }
-            val notification = NotificationCompat.Builder(context, channelId)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setSmallIcon(R.drawable.ic_stat_car)
-                .setColor(0xFF5B8BF5.toInt())
-                .setAutoCancel(true)
-                .build()
-            NotificationManagerCompat.from(context).notify(System.currentTimeMillis().toInt(), notification)
-        } catch (e: Exception) {
-            Log.w(TAG, "showBackgroundNotification failed (non-fatal)", e)
         }
     }
 

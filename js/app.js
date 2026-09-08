@@ -128,6 +128,13 @@ class FindMyCarApp {
     // to [] there).
     this.#reconcilePendingBtActions().catch(() => {});
 
+    // Stage 7 of the native background-detection migration (see CLAUDE.md):
+    // replays a GPS end-suggestion recorded while the WebView was
+    // unreachable as the same confirmation modal — never an automatic end.
+    // Not awaited, so it doesn't block the rest of init. No-op in the
+    // browser/PWA.
+    this.#reconcilePendingGpsSuggestion().catch(() => {});
+
     const gpsToggle = Utils.el('gpsAutoEndToggle');
     if (gpsToggle) gpsToggle.checked = this.#getGpsSettings().enabled;
 
@@ -1070,6 +1077,39 @@ class FindMyCarApp {
     DiagLog.log('GPS', 'showing end-parking suggestion (speed or distance threshold crossed)');
     this.#ui.openModal('gpsEndModal');
     this.#notifyIfBackground('🚗 מזוהה נסיעה', 'ייתכן שהרכב זז ממקום החניה. פתח את האפליקציה לסיים את החניה.');
+  }
+
+  // Stage 7 of the native background-detection migration (see CLAUDE.md
+  // "Native background detection"): replays a GPS end-suggestion
+  // ParkingForegroundService recorded while the WebView was unreachable —
+  // through the SAME real #suggestGpsEnd() a live threshold-crossing would
+  // have used, not a separate reimplementation. GPS suggestions (unlike
+  // BT's AutoEnd) never auto-perform an action — they only ever open a
+  // confirmation modal, so replay does exactly that, nothing more.
+  // Discarded (not replayed) if the vehicle that was active when the
+  // suggestion fired is no longer the active vehicle — #suggestGpsEnd()
+  // always operates on whichever vehicle is active *now*, so replaying it
+  // for the wrong vehicle would show a misleading suggestion. No-op in the
+  // browser/PWA (getPendingGpsSuggestion() resolves to null there).
+  async #reconcilePendingGpsSuggestion() {
+    const pending = await WidgetBridge.getPendingGpsSuggestion();
+    if (!pending) return;
+    await WidgetBridge.clearPendingGpsSuggestion();
+    if (pending.vehicleId !== this.#state.activeVehicleId) {
+      DiagLog.log('GPS-PENDING', `pending GPS suggestion discarded — active vehicle changed since (was ${pending.vehicleName})`);
+      return;
+    }
+    // #suggestGpsEnd() has no precondition of its own — its real callers
+    // (#checkGpsSpeed/#checkGpsDistance) only ever reach it once they've
+    // already confirmed #state.current exists. Replay must enforce that
+    // same precondition itself, or it could open gpsEndModal with no
+    // active parking to show (e.g. the user already ended it manually).
+    if (!this.#state.current) {
+      DiagLog.log('GPS-PENDING', `pending GPS suggestion discarded — no active parking for ${pending.vehicleName}`);
+      return;
+    }
+    DiagLog.log('GPS-PENDING', `replaying pending GPS suggestion for ${pending.vehicleName}`);
+    this.#suggestGpsEnd();
   }
 
   // Background-only system notification alongside an in-app toast/modal —

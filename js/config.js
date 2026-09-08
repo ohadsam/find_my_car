@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.25.0',
+  version: '1.26.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.26.0',
+      date: '2026-09-08',
+      items: Object.freeze([
+        'שלב שביעי (וסיום) בהפיכת GPS לחי לגמרי — הצעת סיום חניה לפי GPS שקרתה כשהאפליקציה הייתה סגורה לגמרי ברקע מוצגת עכשיו כאותו חלון אישור בפתיחה הבאה של האפליקציה (ולא רק כהתראה) — עדיין דורשת אישור ידני, אף פעם לא מסיימת חניה אוטומטית',
+      ]),
+    }),
     Object.freeze({
       version: '1.25.0',
       date: '2026-09-08',

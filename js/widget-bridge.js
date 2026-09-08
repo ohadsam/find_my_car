@@ -25,6 +25,26 @@ export class WidgetBridge {
     });
   }
 
+  // Stage 7 of the native background-detection migration (see CLAUDE.md):
+  // reads/clears the GPS end-suggestion ParkingForegroundService recorded
+  // while the WebView was unreachable — js/app.js replays it as the same
+  // gpsEndModal confirmation on resume, never an automatic end. No-op in
+  // the browser/PWA.
+  static async getPendingGpsSuggestion() {
+    if (!this.#plugin) return null;
+    try {
+      const { pendingJson } = await this.#plugin.getPendingGpsSuggestion();
+      const parsed = JSON.parse(pendingJson ?? 'null');
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  static async clearPendingGpsSuggestion() {
+    await this.#plugin?.clearPendingGpsSuggestion?.().catch(() => {});
+  }
+
   static sync(state) {
     if (!this.#plugin) return;
 

@@ -10,6 +10,7 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.ohadsam.findmycar.core.GpsDecision
+import com.ohadsam.findmycar.core.PendingGpsSuggestionJson
 import com.ohadsam.findmycar.widgets.ActiveParkingWidgetProvider
 import com.ohadsam.findmycar.widgets.MiniMapWidgetProvider
 
@@ -104,6 +105,25 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         prefs.edit().putBoolean(KEY_HAS_PARKING, false).apply()
         ParkingForegroundService.setReasonActive(context, "parking", false)
         refreshWidgets()
+        call.resolve()
+    }
+
+    // Stage 7 of the native background-detection migration (see CLAUDE.md):
+    // lets JS read/clear the GPS end-suggestion ParkingForegroundService
+    // recorded while the WebView was unreachable, so it can replay it as
+    // the same gpsEndModal confirmation on next resume — never auto-ends a
+    // parking itself. Returns the raw JSON (via the same tested
+    // PendingGpsSuggestionJson used to write it) rather than rebuilding a
+    // JSObject by hand here.
+    @PluginMethod
+    fun getPendingGpsSuggestion(call: PluginCall) {
+        val json = PendingGpsSuggestionJson.toJson(PendingGpsSuggestionStore.get(context))
+        val ret = JSObject(); ret.put("pendingJson", json); call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun clearPendingGpsSuggestion(call: PluginCall) {
+        PendingGpsSuggestionStore.clear(context)
         call.resolve()
     }
 
