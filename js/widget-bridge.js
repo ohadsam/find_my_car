@@ -45,6 +45,26 @@ export class WidgetBridge {
     await this.#plugin?.clearPendingGpsSuggestion?.().catch(() => {});
   }
 
+  // Stage 8 of the native background-detection migration (see CLAUDE.md):
+  // reads/clears widget quick-actions (save/swap/end) WidgetActionReceiver
+  // recorded while the WebView was unreachable — js/app.js replays them
+  // through the real performWidgetAction() on resume. No-op in the
+  // browser/PWA.
+  static async getPendingWidgetActions() {
+    if (!this.#plugin) return [];
+    try {
+      const { actionsJson } = await this.#plugin.getPendingWidgetActions();
+      const parsed = JSON.parse(actionsJson || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static async clearPendingWidgetActions() {
+    await this.#plugin?.clearPendingWidgetActions?.().catch(() => {});
+  }
+
   static sync(state) {
     if (!this.#plugin) return;
 

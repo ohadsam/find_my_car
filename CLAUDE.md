@@ -345,21 +345,29 @@ background), performs the action, and returns a result string that
 `WidgetJsBridge`/`AndroidWidgetBridge` turns into a `Toast` — the same code paths that
 already run while the app is backgrounded for Bluetooth/GPS auto-detection, just now
 reachable from a widget tap too, so a regression here is easy to miss because the PWA
-(no widgets) and a foregrounded APK (deep-link fallback) would both keep working fine.
+(no widgets) and a foregrounded APK (WebView reachable) would both keep working fine.
 `QuickSaveWidgetProvider` broadcasts straight to `WidgetActionReceiver` (`PendingIntent
-.getBroadcast`, not `.getActivity`); the fallback deep-link mechanism below only fires
-when `MainActivity`'s WebView isn't alive at all.
+.getBroadcast`, not `.getActivity`). Since Stage 8 of the native background-detection
+migration (see below), a tap while the WebView is fully unreachable no longer falls
+back to opening the app either — `WidgetActionReceiver` records the action to
+`PendingWidgetActionStore` and shows a `Toast` directly instead, and
+`#reconcilePendingWidgetActions()` replays it through this same real method the next
+time the app resumes.
 
-**Widget deep-link actions (fallback only)**: `js/app.js` `#init()` reads `?action=` off
-`location.search` and dispatches to `save` (`#handleSaveNew()`), `swap`
-(`#swapParking()`), `end` (`#resetParking()`), or `vehicles`
-(`#showView('settingsView')`) — all four self-guard against having no active parking, so
-calling them from a cold app start is always safe. `MainActivity.java`'s
-`applyLaunchIntent()` reads a `widget_action` intent extra
-(`QuickSaveWidgetProvider.EXTRA_ACTION`) against an explicit allowlist of these four
-values and reloads the WebView at `?action=<value>`. This is now only reached via
-`WidgetActionReceiver`'s fallback (app fully killed) or the "ניהול רכבים" button
-(`vehicles`, which always needs real UI) — never the normal, app-alive case.
+**Widget deep-link actions (fallback only — "ניהול רכבים" today)**: `js/app.js`
+`#init()` reads `?action=` off `location.search` and dispatches to `save`
+(`#handleSaveNew()`), `swap` (`#swapParking()`), `end` (`#resetParking()`), or
+`vehicles` (`#showView('settingsView')`) — all four self-guard against having no
+active parking, so calling them from a cold app start is always safe. Since Stage 8,
+save/swap/end no longer reach this path at all (they go through
+`PendingWidgetActionStore` instead when the WebView is unreachable) — only "ניהול
+רכבים" in the quick-actions popup still uses it, since managing vehicles always needs
+real UI. `MainActivity.java`'s `applyLaunchIntent()` reads a `widget_action` intent
+extra (`QuickSaveWidgetProvider.EXTRA_ACTION`) against an explicit allowlist of these four
+values and reloads the WebView at `?action=<value>`. Since Stage 8, this is only
+reached via the "ניהול רכבים" button (`vehicles`, which always needs real UI) — never
+the normal, app-alive case, and no longer `WidgetActionReceiver`'s WebView-unreachable
+fallback either (that now goes through `PendingWidgetActionStore` instead).
 
 **Diagnostic log (`js/diag-log.js`)**: since background BT/GPS/notification behavior is
 impossible to observe without a connected device and `adb logcat`, every meaningful
@@ -612,9 +620,35 @@ small, independently-tested, non-breaking stages:
    actual recorded/replayed decision, the other a comparison with no real effect;
    `BT-PENDING` was likewise missing from `index.html`'s `diagLogCategoryFilter` until
    this stage caught and fixed the oversight).
-8. **Not started**: route widget quick actions through the native store directly
-   too, as a further fallback layer alongside the existing `evaluateJavascript()`
-   path.
+8. **✅ Done**: widget quick actions route through a native store as a further
+   fallback layer alongside the existing `evaluateJavascript()` path — the last stage
+   from the original plan. `WidgetActionReceiver.kt`'s WebView-unreachable branch no
+   longer force-opens the app (the old fallback): it records a `PendingWidgetAction`
+   (`action`/nullable `vehicleId`/timestamp — `vehicleId` is nullable because
+   `QuickSaveWidgetProvider`'s main-tap "save" doesn't specify one, matching
+   `performWidgetAction`'s own nullable param) to a new `PendingWidgetActionStore`
+   (a list, like `PendingBtActionStore` — multiple taps can queue across more than
+   one background period) and shows a `Toast` directly via plain Android APIs
+   (`Toast.makeText` — `onReceive()` already runs on the main thread for a manifest-
+   registered receiver with no custom `Handler`, so no `Handler.post` wrapping is
+   needed, unlike `WidgetJsBridge.onResult()` which runs on a WebView-internal
+   thread). `WidgetDataPlugin` gains `getPendingWidgetActions`/
+   `clearPendingWidgetActions` (mirrors `BluetoothClassic`'s Stage 5 pair);
+   `js/app.js`'s `#reconcilePendingWidgetActions()` (fire-and-forget from `#init()`,
+   mirrors `#reconcilePendingBtActions()`) replays each entry through the **same real
+   `performWidgetAction()`** a live tap would have used — no separate
+   reimplementation. Unlike Bluetooth/GPS's replay, no extra idempotency check is
+   needed in the reconciler itself: `performWidgetAction()` already has its own
+   per-action guard (e.g. `"save"` returns a no-op message if a parking already
+   exists), so replaying an already-consistent state is safe by construction. New
+   `PendingWidgetAction`/`PendingWidgetActionJson` (JUnit + Robolectric tested)
+   mirror `PendingBtAction`/`PendingBtActionJson`; `WidgetActionReceiver.kt`'s
+   wiring itself has no unit tests, same precedent as the rest of this migration's
+   Service/Plugin/Receiver wiring. With this stage, **every** widget quick action
+   (Quick Save's tap, and Save/Swap/End in the "⋮" popup) now stays fully headless
+   regardless of whether the app process is alive, backgrounded, or fully killed —
+   only "ניהול רכבים" still opens the app, since it always needs real UI. This
+   closes out the full 8-stage migration plan.
 
 **Testing**: this sandbox has no local Android SDK/emulator, so native code can only
 be verified through CI, not locally — unlike the JS side's `npm test` (Vitest), which
@@ -698,7 +732,8 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: tapping "⋮" on any of the 3 widgets opens a small popup with a vehicle picker (defaulting to the active vehicle) and שמור חניה/החלף חניה/זזתי buttons — each performs the action on the SELECTED vehicle immediately, without opening the app, and shows a Toast confirming what happened
 - [ ] Android APK: tapping "שמירה מהירה" widget's main body saves a parking spot without opening the app (Toast confirms); its "⋮" corner button still opens the quick-actions popup
 - [ ] Android APK: "ניהול רכבים" in the quick-actions popup is the only button that opens the app (adding/editing a vehicle needs real UI)
-- [ ] Android APK: force-kill the app from Recents, then tap a widget action — falls back to opening the app with the matching screen (no live WebView to run headlessly against)
+- [ ] Android APK: force-kill the app from Recents, then tap a widget action (save/swap/end) — shows a Toast immediately ("יבוצע כשהאפליקציה תיפתח מחדש") without opening the app, then reopen the app and confirm the action was actually applied (diagnostic log's `WIDGET` category shows the replay)
+- [ ] Android APK: force-kill the app from Recents, then tap "ניהול רכבים" in the widget "⋮" popup — this one still opens the app (managing vehicles always needs real UI)
 - [ ] Android APK: the diagnostic log's `BT` category shows a "background service running check: YES" entry a couple seconds after opening the app (confirms `ParkingForegroundService` actually started) — if it shows NO or never appears, that's the root cause of BT/GPS not working in the background, not a separate bug
 - [ ] Android APK: first launch prompts to exempt the app from battery optimization (if not already exempted); the diagnostic log's `PERM` category logs "battery optimization: already exempted" or "requested exemption"
 - [ ] Android APK: if battery optimization is still restricting the app, Bluetooth settings shows a warning with a "בטל הגבלת חיסכון בסוללה" button that opens the system's battery-exemption dialog directly (not just generic app settings)

@@ -11,6 +11,7 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.ohadsam.findmycar.core.GpsDecision
 import com.ohadsam.findmycar.core.PendingGpsSuggestionJson
+import com.ohadsam.findmycar.core.PendingWidgetActionJson
 import com.ohadsam.findmycar.widgets.ActiveParkingWidgetProvider
 import com.ohadsam.findmycar.widgets.MiniMapWidgetProvider
 
@@ -124,6 +125,23 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
     @PluginMethod
     fun clearPendingGpsSuggestion(call: PluginCall) {
         PendingGpsSuggestionStore.clear(context)
+        call.resolve()
+    }
+
+    // Stage 8 of the native background-detection migration (see CLAUDE.md):
+    // lets JS read/clear widget quick-actions WidgetActionReceiver recorded
+    // while the WebView was unreachable, so it can replay them through the
+    // real performWidgetAction() the next time it resumes. Mirrors
+    // getPendingActions/clearPendingActions (BluetoothClassic, Stage 5).
+    @PluginMethod
+    fun getPendingWidgetActions(call: PluginCall) {
+        val json = PendingWidgetActionJson.toJson(PendingWidgetActionStore.getAll(context))
+        val ret = JSObject(); ret.put("actionsJson", json); call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun clearPendingWidgetActions(call: PluginCall) {
+        PendingWidgetActionStore.clear(context)
         call.resolve()
     }
 

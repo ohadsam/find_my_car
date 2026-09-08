@@ -135,6 +135,12 @@ class FindMyCarApp {
     // browser/PWA.
     this.#reconcilePendingGpsSuggestion().catch(() => {});
 
+    // Stage 8 of the native background-detection migration (see CLAUDE.md):
+    // replays widget quick-actions tapped while the WebView was
+    // unreachable, then clears them. Not awaited, so it doesn't block the
+    // rest of init. No-op in the browser/PWA.
+    this.#reconcilePendingWidgetActions().catch(() => {});
+
     const gpsToggle = Utils.el('gpsAutoEndToggle');
     if (gpsToggle) gpsToggle.checked = this.#getGpsSettings().enabled;
 
@@ -786,6 +792,30 @@ class FindMyCarApp {
       DiagLog.log('WIDGET', `performWidgetAction(${action}) threw — ${e?.message || e}`);
       return 'שגיאה בביצוע הפעולה';
     }
+  }
+
+  // Stage 8 of the native background-detection migration (see CLAUDE.md
+  // "Native background detection"): replays widget quick-actions
+  // WidgetActionReceiver recorded while the WebView was unreachable —
+  // through the SAME real performWidgetAction() a live tap would have
+  // used, not a separate reimplementation. performWidgetAction() already
+  // has its own idempotency checks per action (e.g. "save" is a no-op
+  // message if a parking already exists), so replaying an already-
+  // consistent state is safe. Processed sequentially to match how widget
+  // taps only ever happen one at a time. No-op in the browser/PWA
+  // (getPendingWidgetActions() resolves to []).
+  async #reconcilePendingWidgetActions() {
+    const actions = await WidgetBridge.getPendingWidgetActions();
+    if (!actions.length) return;
+    for (const a of actions) {
+      DiagLog.log('WIDGET', `replaying pending widget action=${a.action} vehicleId=${a.vehicleId || '(active)'}`);
+      try {
+        await this.performWidgetAction(a.action, a.vehicleId ?? null);
+      } catch (e) {
+        DiagLog.log('WIDGET', `pending widget action replay threw — ${e?.message || e}`);
+      }
+    }
+    await WidgetBridge.clearPendingWidgetActions();
   }
 
   #openVehicleModal(vehicle) {
