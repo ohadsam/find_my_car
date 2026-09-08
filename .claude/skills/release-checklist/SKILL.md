@@ -258,6 +258,17 @@ step broken or skipped:
   two independent implementations of the same channel-creation/permission-check
   logic would be easy to let drift (e.g. only one gets updated if the channel ID
   or POST_NOTIFICATIONS handling ever needs to change).
+- Confirm `WidgetDataPlugin.update()`/`.clear()` (Stage 9) call
+  `showParkingNotification(address)`/`cancelParkingNotification()`, and that
+  `js/app.js`'s `#showParkingNotification`/`#cancelParkingNotification` both start
+  with a `Capacitor.isNativePlatform()` guard that returns immediately — without
+  it, saving a parking on native would show TWO "active parking" notifications
+  (the JS Service-Worker one and the native one) instead of native cleanly
+  replacing the PWA-only path. Also confirm the native version uses its own
+  dedicated `findmycar_parking_active` channel (not reusing
+  `BackgroundAlertNotifier`'s `findmycar_bt_alerts` channel, whose `DEFAULT`
+  importance would make an alerting sound/heads-up for what should be a silent,
+  persistent-style notification matching the JS version's `silent: true`).
 
 ## 5. Diagnostic log (Bluetooth/GPS/notifications)
 

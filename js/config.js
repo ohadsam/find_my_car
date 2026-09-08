@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.27.0',
+  version: '1.28.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.28.0',
+      date: '2026-09-08',
+      items: Object.freeze([
+        'שלב תשיעי בהעברת זיהוי Bluetooth/GPS לקוד נייטיבי — נוטיפיקציית "חניה פעילה" (עם הכתובת) עוברת עכשיו ישירות דרך הצד הנייטיבי, כדי שתישאר מדויקת גם אם האפליקציה נסגרת לגמרי ברקע ולא רק תלויה בדפדפן',
+      ]),
+    }),
     Object.freeze({
       version: '1.27.0',
       date: '2026-09-08',

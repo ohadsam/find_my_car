@@ -1,9 +1,18 @@
 package com.ohadsam.findmycar
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -44,6 +53,9 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         const val KEY_VEHICLES_JSON     = "vehicles_json"
         const val KEY_ACTIVE_VEHICLE_ID = "active_vehicle_id"
         const val KEY_GPS_AUTO_END_ENABLED = "gps_auto_end_enabled"
+        private const val TAG = "FMC-WidgetData"
+        private const val PARKING_NOTIF_CHANNEL_ID = "findmycar_parking_active"
+        private const val PARKING_NOTIF_ID = 4202
     }
 
     override fun load() {
@@ -85,10 +97,11 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
 
     @PluginMethod
     fun update(call: PluginCall) {
+        val address = call.getString("address", "") ?: ""
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putBoolean(KEY_HAS_PARKING, true)
-            .putString(KEY_ADDRESS, call.getString("address", ""))
+            .putString(KEY_ADDRESS, address)
             .putFloat(KEY_LAT, (call.getDouble("lat") ?: 0.0).toFloat())
             .putFloat(KEY_LNG, (call.getDouble("lng") ?: 0.0).toFloat())
             .putString(KEY_TIMESTAMP, call.getString("timestamp", ""))
@@ -96,6 +109,7 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
             .putString(KEY_VEHICLE_NAME, call.getString("vehicleName", ""))
             .apply()
         ParkingForegroundService.setReasonActive(context, "parking", true)
+        showParkingNotification(address)
         refreshWidgets()
         call.resolve()
     }
@@ -105,8 +119,56 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit().putBoolean(KEY_HAS_PARKING, false).apply()
         ParkingForegroundService.setReasonActive(context, "parking", false)
+        cancelParkingNotification()
         refreshWidgets()
         call.resolve()
+    }
+
+    // Stage 9 of the native background-detection migration (see CLAUDE.md):
+    // the persistent "active parking" notification (address + icon) used to
+    // be JS/Service-Worker-only (#showParkingNotification in js/app.js) —
+    // reliable only while the WebView is alive, so it could go stale (still
+    // showing an old address, or not disappearing) exactly when the WebView
+    // is reclaimed, the scenario this whole migration exists to fix. Posted
+    // here instead, from the SAME choke point (WidgetDataPlugin.update/clear)
+    // every real parking-state change already goes through, whether
+    // triggered live or replayed on resume (Stages 6/7). js/app.js's own
+    // #showParkingNotification/#cancelParkingNotification now skip
+    // themselves on native to avoid posting a duplicate — this is native's
+    // equivalent, not an addition alongside it. Distinct from
+    // ParkingForegroundService's own foreground-service notification (a
+    // required, generic "active in background" notice serving a different
+    // technical purpose — keeping the process alive — not parking-specific).
+    private fun showParkingNotification(address: String) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (!granted) return
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(PARKING_NOTIF_CHANNEL_ID, "חניה פעילה", NotificationManager.IMPORTANCE_LOW)
+                context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+            }
+            val notification = NotificationCompat.Builder(context, PARKING_NOTIF_CHANNEL_ID)
+                .setContentTitle("FindMyCar — חניה פעילה 🅿️")
+                .setContentText(address)
+                .setSmallIcon(R.drawable.ic_stat_car)
+                .setColor(0xFF5B8BF5.toInt())
+                .setSilent(true)
+                .build()
+            NotificationManagerCompat.from(context).notify(PARKING_NOTIF_ID, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "showParkingNotification failed (non-fatal)", e)
+        }
+    }
+
+    private fun cancelParkingNotification() {
+        try {
+            NotificationManagerCompat.from(context).cancel(PARKING_NOTIF_ID)
+        } catch (e: Exception) {
+            Log.w(TAG, "cancelParkingNotification failed (non-fatal)", e)
+        }
     }
 
     // Stage 7 of the native background-detection migration (see CLAUDE.md):
