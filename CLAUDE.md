@@ -550,12 +550,30 @@ small, independently-tested, non-breaking stages:
    itself and the WebView-reachability gating are only verified manually/via the
    diagnostic log on a real device, same precedent as `BluetoothClassicPlugin.kt`'s
    other wiring.
-6. **Not started**: JS reconciles `getPendingActions()` on resume — actually replays
-   each entry through the real, existing JS methods (`#btEndParking`/the auto-start
-   flow), using the location `PendingBtActionStore` captured where relevant, then
-   calls `clearPendingActions()`. This is the second half of flipping Bluetooth fully
-   live — the point where a BT event that happened while the WebView was dead finally
-   produces a real save/end, not just a notification and a diagnostic-log entry.
+6. **✅ Done**: `js/app.js`'s `#reconcilePendingBtActions()`, called (fire-and-forget,
+   non-blocking) from `#init()` — the second half of flipping Bluetooth fully live: a
+   BT event that happened while the WebView was dead now finally produces a real
+   save/end, not just a notification and a diagnostic-log entry. Deliberately
+   replays each pending entry through the **same real `#onBtConnected`/
+   `#onBtDisconnected` handlers a live event would have used** — not a separate
+   reimplementation of the decision — by calling them again with the recorded
+   `label`. The recorded `action`/`lat`/`lng` fields stay purely informational
+   (logged under `BT-PENDING`); `#onBtConnected`/`#onBtDisconnected` re-derive what
+   to do fresh from *current* vehicle settings and parking state, so a setting the
+   user changed after backgrounding is respected, not overridden by a stale native
+   decision. This also means `#saveNewParking()`'s own live GPS fetch is used for
+   auto-start, not `PendingBtActionStore`'s best-effort captured location — that
+   field exists for diagnostics, not to seed real behavior. Each entry's own
+   idempotency guards (already handled by `#onBtConnected`'s "no active parking"
+   check / `#onBtDisconnected`'s "already has parking" check) make replaying an
+   already-consistent state (e.g. the user manually ended the parking before
+   reopening the app) a safe no-op — this is what makes reusing the live handlers
+   for replay safe rather than needing its own duplicate guard logic. Entries are
+   processed sequentially (`await`ed one at a time, matching how real BT events
+   only ever arrive one at a time — never concurrently) and always cleared via
+   `clearPendingActions()` at the end, even if one entry's replay throws (caught
+   per-entry so one bad entry can't block the rest or leave everything stuck
+   retrying forever).
 7. **Not started**: flip GPS to live, same two-step pattern (record while unreachable,
    then a separate stage to replay on resume).
 8. **Not started**: route widget quick actions through the native store directly

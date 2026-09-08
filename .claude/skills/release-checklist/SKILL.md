@@ -189,21 +189,34 @@ step broken or skipped:
   (`BluetoothClassicPlugin.kt` needs a live `Bridge`/`Activity`, same precedent as
   its other wiring) — verify by reading the code, not just grepping for the guard's
   existence.
-- Confirm `maybeRecordPendingAction`/`recordPendingAction` never call
+- Confirm `maybeRecordPendingAction`/`recordPendingAction` (native side) never call
   `WidgetDataPlugin.update`/`.clear`, open any modal, or otherwise touch real parking
-  state — only `PendingBtActionStore.add(...)` and a plain
-  `NotificationCompat`/`NotificationManagerCompat` notification. As of Stage 5,
-  recording a pending action must have **zero effect on actual parking data** — only
-  a notification and a diagnostic-log-visible record are real user-visible effects.
-  If `js/app.js` has been changed to actually replay pending actions (check
-  CLAUDE.md's migration stage list for the current stage number), re-verify this
-  constraint no longer applies and check the replay logic itself instead.
-- Confirm `js/app.js`'s `#init()` only **logs** `getPendingActions()` results under
-  the `BT-PENDING` category and does not call any real save/end/start method with
-  them, unless the migration plan says pending-action replay has been implemented
-  (check CLAUDE.md's stage list) — and if it has, confirm replayed entries are
-  cleared via `clearPendingActions()` afterward, or the same action would replay
-  again on every future app resume.
+  state directly — only `PendingBtActionStore.add(...)` and a plain
+  `NotificationCompat`/`NotificationManagerCompat` notification. The *native*
+  recording step must stay side-effect-free on parking data; the JS-side replay
+  (`#reconcilePendingBtActions()`, Stage 6) is the only place a pending entry is
+  allowed to turn into a real save/end.
+- Confirm `js/app.js`'s `#reconcilePendingBtActions()` replays each entry by calling
+  the real `#onBtConnected(label)` / `await #onBtDisconnected(label)` — the SAME
+  handlers a live event uses — rather than a separate reimplementation that reads
+  the pending entry's `action`/`vehicleId` fields to decide what to do directly. A
+  regression toward "trust the recorded action" instead of "replay the event and
+  let the live handler re-decide" would apply a decision based on settings that may
+  be stale by the time the app resumes (e.g. the user turned `bluetoothAutoEnd` off
+  after backgrounding) — the live handlers' own current-state checks are what make
+  that safe.
+- Confirm `#reconcilePendingBtActions()` processes entries in a sequential loop with
+  `await` (not `Promise.all`/fire-and-forget-per-entry) — concurrent replays could
+  race on `#state.activeVehicleId`/`#switchVehicle`, something real BT events never
+  have to handle since they only ever arrive one at a time.
+- Confirm `#reconcilePendingBtActions()` calls `clearPendingActions()` unconditionally
+  after the loop (wrapped so a per-entry throw, caught individually, can't skip it)
+  — a regression that only clears on full success would replay the same already-
+  applied action again on every future app resume once any single entry ever throws.
+- Confirm `#init()` calls `#reconcilePendingBtActions()` without `await`ing it (fire-
+  and-forget with a `.catch()`) — it can involve a live GPS fetch
+  (`#onBtDisconnected` → `#saveNewParking()`), and blocking the rest of app init on
+  that would hang the loading screen.
 - Confirm `core/PendingBtAction.kt` has zero `org.json`/Android framework imports
   (same purity requirement as the other `core` data classes) and that
   `PendingBtActionJson.kt`'s round-trip tests cover both a location fix present and

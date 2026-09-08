@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.24.0',
+  version: '1.25.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.25.0',
+      date: '2026-09-08',
+      items: Object.freeze([
+        'שלב שישי (וסיום) בהפיכת Bluetooth לחי לגמרי — אירוע Bluetooth שקרה כשהאפליקציה הייתה סגורה לחלוטין ברקע כעת גם מבצע בפועל את הפעולה (סיום/התחלת חניה) בפתיחה הבאה של האפליקציה, ולא רק מציג התראה',
+      ]),
+    }),
     Object.freeze({
       version: '1.24.0',
       date: '2026-09-07',

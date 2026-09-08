@@ -121,17 +121,12 @@ class FindMyCarApp {
       DiagLog.log('BT', 'app init: Bluetooth watch NOT started — master switch is off');
     }
 
-    // Stage 5 of the native background-detection migration (see CLAUDE.md):
-    // surfaces what BtDecisionEngine recorded for real while the WebView
-    // was unreachable — not replayed/acted on yet (a later stage), just
-    // logged so it's visible before anything acts on it. No-op in the
-    // browser/PWA (getPendingActions() resolves to [] there).
-    this.#bluetooth.getPendingActions?.().then(actions => {
-      if (!actions.length) return;
-      for (const a of actions) {
-        DiagLog.log('BT-PENDING', `recorded while WebView unreachable: ${a.action} (${a.direction}, label=${a.label || '?'})`, { vehicleName: a.vehicleName });
-      }
-    }).catch(() => {});
+    // Stage 6 of the native background-detection migration (see CLAUDE.md):
+    // replays what BtDecisionEngine recorded for real while the WebView was
+    // unreachable, then clears it — not awaited, so it doesn't block the
+    // rest of init. No-op in the browser/PWA (getPendingActions() resolves
+    // to [] there).
+    this.#reconcilePendingBtActions().catch(() => {});
 
     const gpsToggle = Utils.el('gpsAutoEndToggle');
     if (gpsToggle) gpsToggle.checked = this.#getGpsSettings().enabled;
@@ -1194,6 +1189,37 @@ class FindMyCarApp {
     } else {
       this.#clearVehicleParking(vehicleId);
     }
+  }
+
+  // Stage 6 of the native background-detection migration (see CLAUDE.md
+  // "Native background detection"): replays what BluetoothClassicPlugin
+  // recorded for real while the WebView was unreachable — through the SAME
+  // real #onBtConnected/#onBtDisconnected handlers a live event would have
+  // used, not a separate reimplementation, so this is exactly the behavior
+  // that would have happened had the app been alive when the event fired.
+  // Each entry's own idempotency guards (no active parking / already has
+  // parking) make replaying an already-consistent state a safe no-op — the
+  // recorded `action`/`lat`/`lng` fields are informational only (logged),
+  // never used to decide what to do; #onBt(Dis)connected re-derives that
+  // fresh from current settings/state. Processed sequentially (not
+  // concurrently) to match how real BT events only ever arrive one at a
+  // time. No-op in the browser/PWA (getPendingActions() resolves to []).
+  async #reconcilePendingBtActions() {
+    const actions = (await this.#bluetooth.getPendingActions?.()) ?? [];
+    if (!actions.length) return;
+    for (const a of actions) {
+      DiagLog.log('BT-PENDING', `replaying ${a.action} (${a.direction}, label=${a.label || '?'})`, { vehicleName: a.vehicleName });
+      try {
+        if (a.direction === 'connected') {
+          this.#onBtConnected(a.label);
+        } else if (a.direction === 'disconnected') {
+          await this.#onBtDisconnected(a.label);
+        }
+      } catch (e) {
+        DiagLog.log('BT-PENDING', `replay threw — ${e?.message || e}`, { vehicleName: a.vehicleName });
+      }
+    }
+    await this.#bluetooth.clearPendingActions?.().catch(() => {});
   }
 
   async #btScanDevices(retried = false) {
