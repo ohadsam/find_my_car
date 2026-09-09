@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.30.0',
+  version: '1.31.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.31.0',
+      date: '2026-09-09',
+      items: Object.freeze([
+        'תוקן: הצעת סיום חניה לפי GPS (וההתראה שאמורה להופיע יחד איתה) לא הופיעה כלל כשהמסך היה כבוי או האפליקציה ברקע — רק בפתיחה הבאה של האפליקציה, לפעמים הרבה זמן אחרי שהרכב כבר זז',
+      ]),
+    }),
     Object.freeze({
       version: '1.30.0',
       date: '2026-09-08',

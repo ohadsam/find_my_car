@@ -225,8 +225,25 @@ step broken or skipped:
   `AutoEnd` look identical to a location-less `AutoStart`, or vice versa, without
   any other test noticing.
 - Confirm `ParkingForegroundService.maybeRecordPendingGpsSuggestion()` (Stage 7,
-  GPS's counterpart to Stage 5) uses the same
-  `MainActivity.getActiveWebView() != null` no-op gate, and never itself opens
+  GPS's counterpart to Stage 5) gates on `MainActivity.isForeground()`, NOT
+  `MainActivity.getActiveWebView() != null` — a real, previously-shipped bug (see
+  CLAUDE.md's "GPS suggestions require `MainActivity.isForeground()`, not
+  `getActiveWebView()`"): `getActiveWebView()` stays non-null for the Activity's
+  entire lifetime, including the whole backgrounded/paused window (screen off, app
+  switched away, not destroyed) since `KeepRunning` keeps it alive without
+  destroying it — but `navigator.geolocation.watchPosition()`, the live JS path
+  this gate is meant to defer to, is a WebView-level API subject to Android's own
+  background-location throttling tied to Activity *visibility*, not just process
+  liveness. Gating on `getActiveWebView()` silently no-ops for the entire
+  paused-but-alive window (the common "driving away with the screen off" case),
+  producing no notification and no diagnostic-log entry at all until the user
+  physically reopens the app — confirm `MainActivity.java` sets its `foreground`
+  flag `true` in `onResume()` and `false` in `onPause()`, and that
+  `getActiveWebView()`/`activeInstance` (still correct for `WidgetActionReceiver`'s
+  headless widget actions, which only need the WebView to exist, not be visible)
+  were NOT also changed to key off `isForeground()` — that would break headless
+  widget actions while the app is legitimately backgrounded. Also confirm this
+  method never itself opens
   `gpsEndModal` or calls `#resetParking`/any real-action method — only
   `PendingGpsSuggestionStore.set(...)` and `BackgroundAlertNotifier.show(...)`. GPS
   suggestions are never auto-performed even after this stage (unlike BT's

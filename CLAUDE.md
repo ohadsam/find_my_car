@@ -620,10 +620,12 @@ small, independently-tested, non-breaking stages:
    `SuggestEnd` — always requires a confirmation modal and is therefore *never*
    auto-performed, so there is no "auto-action" analogue to BT's `AutoEnd`/
    `AutoStart` to replay. `ParkingForegroundService.maybeRecordPendingGpsSuggestion()`
-   mirrors `maybeRecordPendingAction()` exactly (same `MainActivity.getActiveWebView()
-   != null` no-op gate, same try/catch backstop, independent of the strictly-log-only
-   `emitGpsShadowDecision`): when the WebView is unreachable, it records a
-   `PendingGpsSuggestion` (vehicle id/name + timestamp only — no location, since the
+   mirrors `maybeRecordPendingAction()`'s shape (same try/catch backstop, independent
+   of the strictly-log-only `emitGpsShadowDecision`) but **not** its no-op gate — see
+   "GPS suggestions require `MainActivity.isForeground()`, not `getActiveWebView()`"
+   below for why the two had to diverge. When the Activity isn't genuinely
+   foregrounded, it records a `PendingGpsSuggestion` (vehicle id/name + timestamp
+   only — no location, since the
    confirmation modal doesn't need one) to a new `PendingGpsSuggestionStore` (a single
    nullable entry, not a list like `PendingBtActionStore` — GPS end-suggestion only
    ever concerns the currently-active vehicle, so at most one is ever outstanding) and
@@ -697,6 +699,49 @@ small, independently-tested, non-breaking stages:
    `ServiceWorkerRegistration.showNotification()` path completely unchanged. No new
    `core` logic needed (this is direct notification posting, not a decision), so no
    new tests — same precedent as `BackgroundAlertNotifier`'s wiring.
+
+**GPS suggestions require `MainActivity.isForeground()`, not `getActiveWebView()`**
+(real, previously-shipped bug — reported as "no notification at all during a whole
+drive, only the in-app suggestion after physically reopening the app much later,"
+confirmed from the diagnostic log: `GPS-SHADOW` entries appeared during the drive
+— proving native's own watch correctly detected the crossing — but no live `GPS`
+suggestion, no `GPS-PENDING` entry, and no notification did, until the very next
+app open produced a live suggestion within seconds of `watchPosition started`).
+Stage 7's `maybeRecordPendingGpsSuggestion()` originally gated on
+`MainActivity.getActiveWebView() != null`, on the assumption that "WebView
+reachable" means "the live JS path (`#checkGpsSpeed`/`#checkGpsDistance`, fed by
+`navigator.geolocation.watchPosition()`) will handle it." That assumption is wrong:
+`getActiveWebView()`'s backing field (`activeInstance`) is set in `onCreate()` and
+cleared only in `onDestroy()` — non-null for the Activity's *entire* lifetime,
+including the whole backgrounded/paused window (screen off, app switched away),
+since `KeepRunning` (see below) keeps the Activity+WebView alive without
+destroying them. `KeepRunning` keeps the **JS engine** executing during that
+window, but `navigator.geolocation.watchPosition()` is a WebView-level browser API
+subject to Android's own background-location throttling tied to Activity
+**visibility**, not process/JS-engine liveness — it silently stops delivering
+position updates once the Activity is merely paused, well before it would ever be
+destroyed. So the old gate treated the entire paused-but-alive window (the common
+case for "driving away with the screen off") as already handled live, and nothing
+ever recorded a suggestion or fired a notification during it —
+`ParkingForegroundService`'s own GPS shadow watch (a plain `LocationManager`
+request made directly from the foreground Service, not the WebView, so it is
+**not** subject to the same throttling) kept deciding `SuggestEnd` correctly the
+whole time, but that was only ever visible in the `GPS-SHADOW` diagnostic-log
+category, never surfaced to the user.
+**Fix**: `MainActivity` now tracks real foreground state independently of
+`activeInstance` — a `foreground` flag set `true` in `onResume()` and `false` in
+`onPause()`, exposed as `MainActivity.isForeground()`.
+`maybeRecordPendingGpsSuggestion()` gates on that instead of
+`getActiveWebView() != null`; `getActiveWebView()` itself is unchanged and still
+correct for its own purpose (`WidgetActionReceiver`'s headless widget actions
+genuinely only need the WebView to exist, not to be visible, since
+`evaluateJavascript()` on a paused-but-alive WebView works fine — Bluetooth's
+Stage 5 `maybeRecordPendingAction()` gate is correspondingly **not** affected by
+this bug: real BT connect/disconnect events are pushed to JS via a Capacitor
+plugin event (`notifyListeners()`), not a continuously-polled browser API, and
+that push mechanism is not subject to the same visibility-tied throttling —
+confirmed by the same log evidence that showed `GPS-SHADOW`'s own
+Service→Plugin→JS relay succeeding while backgrounded).
 
 **Testing**: this sandbox has no local Android SDK/emulator, so native code can only
 be verified through CI, not locally — unlike the JS side's `npm test` (Vitest), which
@@ -788,3 +833,4 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: the diagnostic log's `BT` category shows a "background service running check: YES" entry a couple seconds after opening the app (confirms `ParkingForegroundService` actually started) — if it shows NO or never appears, that's the root cause of BT/GPS not working in the background, not a separate bug
 - [ ] Android APK: first launch prompts to exempt the app from battery optimization (if not already exempted); the diagnostic log's `PERM` category logs "battery optimization: already exempted" or "requested exemption"
 - [ ] Android APK: if battery optimization is still restricting the app, Bluetooth settings shows a warning with a "בטל הגבלת חיסכון בסוללה" button that opens the system's battery-exemption dialog directly (not just generic app settings)
+- [ ] Android APK: with an active parking, lock the screen (or switch to another app — do NOT force-kill) and drive/walk far enough to cross the GPS distance or speed threshold — a system notification ("🚗 מזוהה נסיעה") should appear at roughly the time the threshold is actually crossed, not only after you manually reopen the app; on reopening, the diagnostic log's `GPS-PENDING` category should show the recorded+replayed suggestion, and `gpsEndModal` should already be open (or open immediately) rather than the suggestion having been silently missed
