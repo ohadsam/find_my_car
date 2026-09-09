@@ -16,10 +16,21 @@ export class DiagLog {
   // used only to merge NativeLogStore's native-only lifecycle events (which
   // happened at some point while the app was closed) so they show the time
   // they actually occurred, not the time they were read on the next resume.
-  static log(category, message, meta = null, t = null) {
+  // `loggedAt` is always the real moment this call itself runs — for a live
+  // entry that's essentially the same instant as `t`, but for a merged
+  // native entry it's the (much later) moment the app actually resumed and
+  // wrote it here, distinct from `t` (when the native event itself
+  // happened) — both are kept so a delay between "it happened" and "it
+  // made it into the log" is itself visible, not just the event time.
+  // `source` identifies WHICH process actually logged this — 'WEB' (the
+  // default, for genuine live JS-side entries) or a native process tag
+  // (e.g. "FMC-FgService"/"FMC-BtPlugin"/"FMC-WidgetData", passed through
+  // by #reconcileNativeLog() from NativeLogEntry.tag) — so one unified log
+  // stays attributable to its actual origin at a glance.
+  static log(category, message, meta = null, t = null, source = 'WEB') {
     try {
       const entries = this.#load();
-      entries.push({ t: t ?? Date.now(), category, message, ...(meta || {}) });
+      entries.push({ t: t ?? Date.now(), loggedAt: Date.now(), source, category, message, ...(meta || {}) });
       const pruned = this.#prune(entries).slice(-MAX_ENTRIES);
       Store.set(KEY, pruned);
     } catch {
@@ -41,7 +52,17 @@ export class DiagLog {
     return entries.map(e => {
       const time = new Date(e.t).toLocaleString('he-IL');
       const vehicle = e.vehicleName ? ` [${e.vehicleIcon || ''} ${e.vehicleName}]`.replace(/\s+/g, ' ') : '';
-      return `${time} · ${e.category}${vehicle} — ${e.message}`;
+      const source = e.source || 'WEB';
+      // Only shown when the entry was actually written to the log well
+      // after the event it describes happened (e.g. a native event merged
+      // in on the next app resume, possibly hours later) — for a live
+      // entry `t`/`loggedAt` are the same instant, so showing both would
+      // just be noise; a >2s gap is exactly the "was this delayed reaching
+      // the log" signal worth surfacing.
+      const loggedNote = (e.loggedAt && Math.abs(e.loggedAt - e.t) > 2000)
+        ? ` (נרשם בפועל ב-${new Date(e.loggedAt).toLocaleString('he-IL')})`
+        : '';
+      return `${time} · [${source}] ${e.category}${vehicle} — ${e.message}${loggedNote}`;
     }).join('\n');
   }
 

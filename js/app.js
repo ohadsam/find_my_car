@@ -168,6 +168,7 @@ class FindMyCarApp {
 
     this.#startLocationWatch();
     this.#setupPWA();
+    this.#startDiagHeartbeat();
 
     if (this.#state.current) {
       this.#acquireWakeLock();
@@ -860,9 +861,30 @@ class FindMyCarApp {
     const entries = await WidgetBridge.getNativeLog();
     if (!entries.length) return;
     for (const e of entries) {
-      DiagLog.log(e.category || 'SERVICE', `[native/${e.tag || '?'}] ${e.message || ''}`, null, e.timestamp || null);
+      // e.tag (e.g. "FMC-FgService") becomes DiagLog.log's `source` — the
+      // formatted line already gets a "[FMC-FgService]" prefix from that,
+      // so the message text itself no longer needs to repeat it.
+      DiagLog.log(e.category || 'SERVICE', e.message || '', null, e.timestamp || null, e.tag || 'native');
     }
     await WidgetBridge.clearNativeLog();
+  }
+
+  // Logs a "heartbeat" entry to DiagLog's SERVICE category (source 'WEB')
+  // every CFG.diagHeartbeatIntervalMs, for as long as this page's JS keeps
+  // executing — the WEB-side counterpart to ParkingForegroundService.kt's
+  // own native heartbeat. Neither heartbeat exists to be useful moment-to-
+  // moment; they exist so a gap in the diagnostic log is provably a gap
+  // (that side genuinely stopped running) rather than just "nothing
+  // happened to log" — which was previously indistinguishable from "it's
+  // broken" when reviewing a report. Logs once immediately (not just after
+  // the first interval) so a heartbeat is visible even in a session that
+  // closes again well within the first interval. Runs unconditionally
+  // (also in the browser/PWA, where there's no separate native process,
+  // but "is the tab's JS still executing" is exactly as meaningful there).
+  #startDiagHeartbeat() {
+    const beat = () => DiagLog.log('SERVICE', 'heartbeat — app JS alive');
+    beat();
+    setInterval(beat, CFG.diagHeartbeatIntervalMs);
   }
 
   #openVehicleModal(vehicle) {

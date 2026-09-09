@@ -534,6 +534,65 @@ completed the round trip) — a `BRIDGE` entry with no corresponding follow-up i
 exactly the "message sent/received but the round trip didn't complete" signal this
 feature exists to make provable.
 
+**Unified log: `source` prefix and dual timestamps (`js/diag-log.js`)**: `DiagLog`'s
+entries were always displayed in one merged, chronologically-ordered list (native
+`SERVICE`/`BRIDGE` entries merged in alongside live `BT`/`GPS`/etc. entries), but
+nothing on an individual entry said *which process actually wrote it* — a `SERVICE`
+line reads identically whether it came from `ParkingForegroundService` itself or was
+merged in later from `NativeLogStore`, and there was no way to tell "recorded live, a
+moment ago" apart from "recorded natively hours ago while the app was closed, and only
+just now merged into this log by `#reconcileNativeLog()`." `DiagLog.log()` gained two
+new parameters: `t` (unchanged — the event's own real timestamp, `Date.now()` for a
+live call, the native event's historical time for a merged one) is now joined by
+`loggedAt` (always `Date.now()` at the instant `.log()` itself runs) and `source`
+(defaults to `'WEB'`, correct automatically for every one of the ~100 pre-existing
+call sites across the codebase with zero changes needed at any of them; only
+`#reconcileNativeLog()`'s one call site passes something else — the merged entry's own
+`e.tag`, e.g. `"FMC-FgService"` or `"FMC-BtPlugin"`, becoming that entry's `source`).
+`formatText()` renders every line with a `[source]` prefix (e.g. `[WEB] BT ...` vs
+`[FMC-FgService] SERVICE ...`), so at a glance which process logged a given line is
+unambiguous without reading the message text. It also appends a "נרשם בפועל
+ב-..." (actually logged at ...) suffix using `loggedAt`, but only when `loggedAt` and
+`t` differ by more than 2 seconds — for the overwhelming majority of entries (live,
+same-instant) showing both timestamps would be redundant noise; the >2s gap is
+precisely the "this was recorded well after it happened" signal worth surfacing (a
+native event that sat in `NativeLogStore` until the next app resume, sometimes hours
+later). Both fields are backward-compatible with any already-stored entry from before
+this change — `source` falls back to `'WEB'` and the logged-later note simply never
+renders for an entry that has no `loggedAt` at all.
+
+**Heartbeats**: none of the categories above answer "is this process running *right
+now*, or did it die three hours ago and I just haven't noticed because nothing
+happened to log" — a long stretch with zero entries has always been genuinely
+ambiguous between "nothing happened" (e.g. the car sat parked and stationary the whole
+time) and "this side silently stopped running." Both the WEB side and the native
+`SERVICE` side now log a `heartbeat` entry to `DiagLog`'s `SERVICE` category every
+`CFG.diagHeartbeatIntervalMs` (5 minutes) — not a new category, since a heartbeat is
+just another fact about the same "is the background machinery alive" question
+`SERVICE` already answers. `js/app.js`'s `#startDiagHeartbeat()` (called once,
+fire-and-forget, from `#init()`) logs immediately (so a heartbeat is visible even in a
+session that closes again well within the first 5-minute interval) and then on a
+plain `setInterval`; it runs unconditionally, including in the browser/PWA, where "is
+the tab's JS still executing" is exactly as meaningful a liveness signal as it is on
+native. `ParkingForegroundService.kt`'s `startHeartbeat()`/`stopHeartbeat()` mirror
+this natively via a self-rescheduling `Runnable` on `Handler(Looper.getMainLooper())`
+— consistent with the service's other callbacks (`BroadcastReceiver`,
+`LocationListener`), which already run on the main thread, so no extra
+synchronization is needed. Wired into `onCreate()`'s success path (right after the
+existing "onCreate succeeded" log) and `onDestroy()` (right after the existing
+"onDestroy" log); `startHeartbeat()` is idempotent (`stopHeartbeat()` first) so
+calling it twice never double-schedules. **Deliberately only these two sources get a
+heartbeat** — `BluetoothClassicPlugin`/`WidgetDataPlugin` do not, because they are
+Capacitor plugin classes with no independent persistent background loop of their own
+(they only ever run synchronously, invoked either by `ParkingForegroundService` or by
+a live JS call) — they are not separate "processes" with their own aliveness to prove;
+their own liveness is entirely a function of whichever of the two heartbeat-bearing
+processes is calling into them. `CFG.diagHeartbeatIntervalMs` (`js/config.js`) and
+`ParkingForegroundService.HEARTBEAT_INTERVAL_MS` (Kotlin) both hardcode 5 minutes —
+there is no single shared constant source between JS and Kotlin anywhere in this
+codebase (see GPS thresholds above for the same precedent), so keep them in sync by
+hand if this interval ever changes.
+
 **Why the WebView's JS keeps running in the background at all**: Capacitor's Android
 Activity lifecycle delegates to Cordova's `handlePause(keepRunning)`, which calls
 `pauseTimersForReal()` (stopping all JS execution, including `watchPosition` callbacks
@@ -946,3 +1005,5 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: with an active parking, background the app (screen off or switch apps — do NOT force-kill) for at least a few minutes, then reopen it and check the diagnostic log's `SERVICE` category — it should show entries like "onCreate succeeded", "GPS watch started (provider=...)", and (if Bluetooth is linked) "ACL broadcast: ..." with real timestamps from DURING the background period (not all stamped with the reopen time), interleaved in correct chronological order with entries from before you backgrounded the app — this is the proof that the background service was genuinely alive and doing its job the whole time, independent of whether anything else happened to log
 - [ ] Android APK: force-stop the app from Android's own app-info screen (not just Recents), reopen it, and confirm the `SERVICE` category shows an "onCreate succeeded" entry for the fresh service start with no gap-filling entries claiming activity during the time the app was actually fully dead — the log should honestly reflect that nothing could have been recorded while the process didn't exist
 - [ ] Android APK: after any normal session (open the app, toggle Bluetooth settings, save/end a parking, background and reopen), check the diagnostic log's `BRIDGE` category — it should show a mix of "← JS: <method>() called" entries (e.g. `syncVehicles`, `update`, `startWatch`) and "→ JS: notifyListeners(...)" entries (e.g. `connected`/`disconnected`, `btShadowDecision`, `gpsShadowDecision`), and each "→ JS" entry should be followed within moments by a matching live entry in its real category (e.g. a `BRIDGE` "→ JS: notifyListeners(connected...)" followed by a `BT` "connected event received") if the message actually completed its round trip to JS — a `BRIDGE` send entry with no matching follow-up is the message-lost signal this feature exists to make visible
+- [ ] Every line in the diagnostic log (Settings → "יומן אבחון") shows a `[source]` prefix — `[WEB]` for live in-app entries, `[FMC-FgService]`/`[FMC-BtPlugin]`/`[FMC-WidgetData]` for entries merged from native — so it's obvious at a glance which process wrote each line without reading the message text; a native-merged entry whose real event time is more than ~2 seconds before it was actually written to the log additionally shows a "(נרשם בפועל ב-...)" suffix with the real write time, while a live entry shows no such suffix
+- [ ] Android APK: with the app open and idle (or backgrounded, not force-killed) for 15+ minutes, the diagnostic log's `SERVICE` category shows a `[WEB]` "heartbeat — app JS alive" entry and a `[FMC-FgService]` "heartbeat — foreground service alive (reasons=...)" entry roughly every 5 minutes from each source, proving both sides were genuinely running continuously during that window rather than the silence being ambiguous between "nothing happened" and "this side died"

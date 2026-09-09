@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.34.0',
+  version: '1.35.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -17,6 +17,13 @@ export const CFG = Object.freeze({
   gpsSpeedThreshold:    7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
   gpsSpeedDuration:     8000, // ms speed must be sustained before suggesting end
   gpsDistanceThreshold: 300,  // meters from the saved parking spot before suggesting end (catches slow/no-speed-signal movement e.g. being driven away)
+  // How often the WEB (js/app.js) and SERVICE (ParkingForegroundService.kt)
+  // heartbeats log to DiagLog's SERVICE category, proving each is
+  // continuously alive — not just at start/stop transitions. No single
+  // shared source between JS and Kotlin, so ParkingForegroundService.kt's
+  // matching constant must be kept in sync with this by hand if it ever
+  // changes (see CLAUDE.md "Heartbeats").
+  diagHeartbeatIntervalMs: 5 * 60 * 1000,
   maxHistory:        30,
   maxImgWidth:       900,
   imgQuality:        0.72,
@@ -32,6 +39,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.35.0',
+      date: '2026-09-09',
+      items: Object.freeze([
+        'יומן האבחון מציג עכשיו לכל שורה מאיזה תהליך היא הגיעה (האפליקציה או אחד מהשירותים הנייטיביים) ואת השעה המדויקת שבה נרשמה בפועל, בנוסף לזמן שבו האירוע עצמו קרה',
+        'נוספו רישומי "פעימת לב" ליומן האבחון מהאפליקציה ומשירות הרקע הנייטיבי כל כמה דקות, כדי שאפשר יהיה לדעת בוודאות שהם רצים ברקע כרגיל ולא נעצרו',
+      ]),
+    }),
     Object.freeze({
       version: '1.34.0',
       date: '2026-09-09',
