@@ -537,7 +537,58 @@ parked vehicle invisible until the user opens the app:
   reintroduce the same class of bug (no test failure, no crash — the widget just
   quietly stops updating for that one code path).
 
-## 8. Cross-channel behavior parity
+## 9. Unified log: source prefixes, dual timestamps, heartbeats
+
+Every `DiagLog` entry must be attributable to the process that wrote it, show when it
+actually happened vs. when it was recorded, and both the native service and the web
+app must prove continuous liveness — a regression in any of these degrades the
+diagnostic log back to "silence is ambiguous" without any other test catching it:
+
+- Confirm `js/diag-log.js`'s `DiagLog.log(category, message, meta, t, source)` accepts
+  a 5th `source` parameter defaulting to `'WEB'`, and pushes both `loggedAt:
+  Date.now()` and `source` onto every stored entry — grep the signature and the
+  `entries.push(...)` call.
+- Confirm `formatText()` renders a `[source]` prefix (falling back to `'WEB'` for any
+  older stored entry with no `source` field) ahead of the category on every line, and
+  appends the "נרשם בפועל ב-..." suffix only when `Math.abs(e.loggedAt - e.t) > 2000`
+  — not unconditionally (that would make every live entry noisy) and not never (that
+  would silently drop the one signal this dual-timestamp exists to surface).
+- Confirm `js/app.js`'s `#reconcileNativeLog()` passes `e.tag` (not a hardcoded
+  string) as `DiagLog.log`'s 5th `source` argument — a regression to a hardcoded
+  `'native'` would still show a prefix, but it would no longer distinguish
+  `FMC-FgService` from `FMC-BtPlugin`/`FMC-WidgetData` entries from each other.
+- Confirm no other `DiagLog.log(...)` call site in the codebase passes an explicit
+  `source` argument — every live call should rely on the `'WEB'` default; an
+  unnecessary explicit `'WEB'` isn't wrong but is a sign someone copy-pasted from
+  `#reconcileNativeLog()` without understanding the default already covers it.
+- Confirm `js/config.js` declares `CFG.diagHeartbeatIntervalMs` (5 minutes =
+  `5 * 60 * 1000`) and `js/app.js`'s `#startDiagHeartbeat()` (a) logs once
+  immediately, not only after the first interval elapses, (b) uses `setInterval`
+  (not a one-shot `setTimeout`), and (c) is called exactly once from `#init()`.
+  Logging immediately matters because a session that opens and closes again well
+  within the first 5 minutes would otherwise show zero heartbeat evidence at all.
+- Confirm `ParkingForegroundService.kt` declares a `HEARTBEAT_INTERVAL_MS` companion
+  constant equal to `CFG.diagHeartbeatIntervalMs` (both 5 minutes) — there is no
+  shared constant source between JS and Kotlin (same precedent as the GPS threshold
+  constants), so this can only be checked by reading both values and diffing them by
+  hand every release.
+- Confirm `startHeartbeat()`/`stopHeartbeat()` are wired into `onCreate()`'s success
+  path (after the existing "onCreate succeeded" log) and `onDestroy()` (after the
+  existing "onDestroy" log) respectively, and that `startHeartbeat()` calls
+  `stopHeartbeat()` first (idempotent — never double-schedules if called twice, e.g.
+  by a future code path that re-enters `onCreate()`-adjacent logic).
+- Confirm the native heartbeat logs via `NativeLogStore.add(context, TAG, "SERVICE",
+  ...)` — reusing the existing `SERVICE` category, not a new one — since a heartbeat
+  is just another fact about the same "is the background machinery alive" question
+  `SERVICE` already answers; no new `diagLogCategoryFilter` option should exist for
+  this feature.
+- Confirm `BluetoothClassicPlugin.kt` and `WidgetDataPlugin.kt` do NOT gain their own
+  heartbeat — per CLAUDE.md's "Heartbeats" section, they have no independent
+  persistent background loop of their own (only `ParkingForegroundService` and the
+  web app's JS engine do), so a heartbeat added to either plugin class would be
+  meaningless noise, not a real liveness signal.
+
+## 10. Cross-channel behavior parity
 
 - Confirm `js/widget-bridge.js` and every `Capacitor.isNativePlatform()` /
   `window.Capacitor` branch in `js/app.js` is genuinely a no-op in the browser (no

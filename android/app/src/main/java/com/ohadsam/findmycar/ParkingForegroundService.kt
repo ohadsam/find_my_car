@@ -17,7 +17,9 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -60,6 +62,11 @@ class ParkingForegroundService : Service() {
         private const val GPS_DISTANCE_THRESHOLD_M = 300.0
         private const val LOCATION_MIN_TIME_MS = 3000L
         private const val LOCATION_MIN_DISTANCE_M = 5f
+
+        // Mirrors js/config.js's CFG.diagHeartbeatIntervalMs — no single
+        // shared source between JS and Kotlin, keep in sync if it ever
+        // changes (see CLAUDE.md "Heartbeats").
+        private const val HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000L
 
         // Set true only after startForeground() actually succeeds, false the
         // instant it fails or the service is torn down — lets the JS side
@@ -122,6 +129,9 @@ class ParkingForegroundService : Service() {
     private var locationListener: LocationListener? = null
     private var gpsShadowState = GpsDecisionState()
 
+    private val heartbeatHandler = Handler(Looper.getMainLooper())
+    private var heartbeatRunnable: Runnable? = null
+
     override fun onCreate() {
         super.onCreate()
         try {
@@ -142,6 +152,7 @@ class ParkingForegroundService : Service() {
             isRunning = true
             Log.i(TAG, "onCreate succeeded — foreground service running (type=$type)")
             NativeLogStore.add(this, TAG, "SERVICE", "onCreate succeeded — foreground service running (type=$type)")
+            startHeartbeat()
         } catch (e: Exception) {
             // Starting this service must never crash the whole app — worst
             // case BT/GPS background detection is inactive until the next
@@ -176,11 +187,40 @@ class ParkingForegroundService : Service() {
         isRunning = false
         Log.i(TAG, "onDestroy — foreground service stopped")
         NativeLogStore.add(this, TAG, "SERVICE", "onDestroy — foreground service stopped")
+        stopHeartbeat()
         receiver?.let { try { unregisterReceiver(it) } catch (e: IllegalArgumentException) { /* already gone */ } }
         receiver = null
         updateLocationWatch(false)
         if (instanceRef?.get() === this) instanceRef = null
         super.onDestroy()
+    }
+
+    // Logs a "heartbeat" entry to NativeLogStore's SERVICE category every
+    // HEARTBEAT_INTERVAL_MS for as long as this service instance is alive —
+    // the native counterpart to js/app.js's #startDiagHeartbeat(). Neither
+    // heartbeat is useful moment-to-moment; both exist so a gap in the
+    // diagnostic log is provably a real gap (that side genuinely stopped
+    // running) rather than just "nothing happened to log", which was
+    // previously indistinguishable from "it's broken" when reviewing a
+    // report. A self-rescheduling Runnable on the main Looper rather than a
+    // raw Thread/Timer — this service already runs its other callbacks
+    // (BroadcastReceiver, LocationListener) on the main thread, so this
+    // stays consistent and needs no extra synchronization.
+    private fun startHeartbeat() {
+        stopHeartbeat() // idempotent — never double-schedule if called twice
+        val runnable = object : Runnable {
+            override fun run() {
+                NativeLogStore.add(this@ParkingForegroundService, TAG, "SERVICE", "heartbeat — foreground service alive (reasons=$activeReasons)")
+                heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+            }
+        }
+        heartbeatRunnable = runnable
+        heartbeatHandler.postDelayed(runnable, HEARTBEAT_INTERVAL_MS)
+    }
+
+    private fun stopHeartbeat() {
+        heartbeatRunnable?.let { heartbeatHandler.removeCallbacks(it) }
+        heartbeatRunnable = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
