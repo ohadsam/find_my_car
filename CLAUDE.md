@@ -473,34 +473,66 @@ Logcat (`FMC-FgService`), i.e. only to someone with adb and a connected device �
 provable from inside the app, which made it easy to misread genuine silence (nothing
 happened to log because nothing happened, e.g. the car was parked and stationary the
 whole time) as "the background service must be broken." `NativeLogStore.add(context,
-tag, message)` — called alongside (never instead of) the existing `Log.i`/`Log.w`/
-`Log.e` calls in `ParkingForegroundService.kt` at every lifecycle transition
-(`onCreate` success/failure, `onDestroy`, BT receiver registration, every raw ACL
-broadcast received — regardless of whether a vehicle is linked to that device label
-or the WebView is reachable, unlike the `BT`/`BT-PENDING` categories which only log
-once something is actually decided — and GPS watch start/stop/failure-to-start with
-the specific reason) — persists a small, bounded (last 200 entries)
-`SharedPreferences`-backed log (`core/NativeLogEntry.kt` + `NativeLogEntryJson.kt`,
-JUnit+Robolectric tested; `NativeLogStore` itself has no unit tests, same precedent
-as the rest of this migration's Service/Plugin wiring). `WidgetDataPlugin.getNativeLog()`/
+tag, category, message)` — called alongside (never instead of) the existing
+`Log.i`/`Log.w`/`Log.e` calls in `ParkingForegroundService.kt` at every lifecycle
+transition, with `category = "SERVICE"` (`onCreate` success/failure, `onDestroy`, BT
+receiver registration, every raw ACL broadcast received — regardless of whether a
+vehicle is linked to that device label or the WebView is reachable, unlike the
+`BT`/`BT-PENDING` categories which only log once something is actually decided — and
+GPS watch start/stop/failure-to-start with the specific reason) — persists a small,
+bounded (last 200 entries, both categories share the cap) `SharedPreferences`-backed
+log (`core/NativeLogEntry.kt` + `NativeLogEntryJson.kt`, JUnit+Robolectric tested;
+`NativeLogStore` itself has no unit tests, same precedent as the rest of this
+migration's Service/Plugin wiring). `WidgetDataPlugin.getNativeLog()`/
 `.clearNativeLog()` let JS read/clear it; `js/app.js`'s `#reconcileNativeLog()` merges
-each entry into `DiagLog` under the new `SERVICE` category — **awaited**, and
-deliberately called as the very first thing in `#init()`, before any other `DiagLog`
-entry this session, specifically so these historical entries (which happened at some
-point while the app was closed) land in correct chronological order relative to
-everything else: `DiagLog` stores entries in insertion order and only reverses for
-display, it does not sort by timestamp, so ordering is a property of *when* each
-category merges, not just what timestamp it carries. Each merged entry does carry its
-own real historical timestamp (`DiagLog.log`'s optional 4th argument, `t`) rather than
-`Date.now()`, specifically so the displayed time in the log matches when the native
-event actually happened, not when it was read on the next app open — this was the
-whole point of the feature (being able to see, with certainty, what happened and
-when), and would be defeated if every merged entry showed the reopen time instead.
-Deliberately NOT every location update (`onLocationShadow()` fires every ~3s/5m
-during a drive — logging each one would blow through the 200-entry cap in minutes and
-push out the far more valuable start/stop/error events); the `GPS-SHADOW` category
-already covers the meaningful per-threshold-crossing decision level. No-op in the
-browser/PWA (`getNativeLog()` resolves to `[]` there).
+each entry into `DiagLog` under the entry's **own** `category` field (not a single
+hardcoded category — see "Native<->JS message bus log" below for the other category
+this same mechanism carries) — **awaited**, and deliberately called as the very first
+thing in `#init()`, before any other `DiagLog` entry this session, specifically so
+these historical entries (which happened at some point while the app was closed) land
+in correct chronological order relative to everything else: `DiagLog` stores entries
+in insertion order and only reverses for display, it does not sort by timestamp, so
+ordering is a property of *when* each category merges, not just what timestamp it
+carries. Each merged entry does carry its own real historical timestamp (`DiagLog.log`'s
+optional 4th argument, `t`) rather than `Date.now()`, specifically so the displayed
+time in the log matches when the native event actually happened, not when it was read
+on the next app open — this was the whole point of the feature (being able to see,
+with certainty, what happened and when), and would be defeated if every merged entry
+showed the reopen time instead. Deliberately NOT every location update
+(`onLocationShadow()` fires every ~3s/5m during a drive — logging each one would blow
+through the 200-entry cap in minutes and push out the far more valuable start/
+stop/error events); the `GPS-SHADOW` category already covers the meaningful
+per-threshold-crossing decision level. No-op in the browser/PWA (`getNativeLog()`
+resolves to `[]` there).
+
+**Native<->JS message bus log (`NativeLogStore`, `BRIDGE` category)**: the `SERVICE`
+log above answers "was the background machinery alive" — this answers the
+complementary question, "was a specific message between native and JS actually
+sent/received, and when," for the Capacitor plugin bridge itself (the mechanism every
+other category ultimately rides on). Without it, a message native successfully sent
+via `notifyListeners()` but that never reached JS (e.g. the WebView was torn down in
+the gap between native calling it and the event actually being delivered) was
+indistinguishable from native never having sent it at all — same for a JS→native
+`@PluginMethod` call that silently failed to reach native. Every `@PluginMethod` in
+`BluetoothClassicPlugin.kt` (all 12) and `WidgetDataPlugin.kt` (7 of its 9 — see
+below) calls `NativeLogStore.add(context, TAG, "BRIDGE", "← JS: <name>() called")` as
+its first line, proving JS's call actually reached native; every `notifyListeners(...)`
+call site in both plugins (2 in `BluetoothClassicPlugin.kt` — `connected`/
+`disconnected` and `btShadowDecision`; 1 in `WidgetDataPlugin.kt` — `gpsShadowDecision`)
+is preceded by `NativeLogStore.add(context, TAG, "BRIDGE", "→ JS: notifyListeners(...)")`,
+proving native attempted the send regardless of whether JS was there to receive it.
+Deliberately excludes `WidgetDataPlugin.getNativeLog()`/`.clearNativeLog()` themselves
+— logging a call that reads/clears this very store would be self-referential noise
+with no diagnostic value (every app open would add exactly two meaningless entries
+about having read/cleared the log that already contains them). Merged into `DiagLog`
+by the same `#reconcileNativeLog()` described above, via each entry's own `category`
+field — a `BRIDGE` entry proving native received/sent a message, correlated by
+timestamp against the matching category-specific entry it should have produced
+(e.g. a `BRIDGE` "← JS: startWatch() called" should be followed almost immediately by
+a live `BT` "app init: starting Bluetooth watch" on the JS side, if the message truly
+completed the round trip) — a `BRIDGE` entry with no corresponding follow-up is
+exactly the "message sent/received but the round trip didn't complete" signal this
+feature exists to make provable.
 
 **Why the WebView's JS keeps running in the background at all**: Capacitor's Android
 Activity lifecycle delegates to Cordova's `handlePause(keepRunning)`, which calls
@@ -913,3 +945,4 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: link Bluetooth auto-end to vehicle B while vehicle A is the currently-active one (both have active parking) — connect to vehicle B's device — the "חניה פעילה"/"מפה מוקטנת" widgets (in their multi-vehicle cycle/dual view) should stop showing vehicle B as parked immediately after the auto-end, without needing to switch the active vehicle or reopen the app
 - [ ] Android APK: with an active parking, background the app (screen off or switch apps — do NOT force-kill) for at least a few minutes, then reopen it and check the diagnostic log's `SERVICE` category — it should show entries like "onCreate succeeded", "GPS watch started (provider=...)", and (if Bluetooth is linked) "ACL broadcast: ..." with real timestamps from DURING the background period (not all stamped with the reopen time), interleaved in correct chronological order with entries from before you backgrounded the app — this is the proof that the background service was genuinely alive and doing its job the whole time, independent of whether anything else happened to log
 - [ ] Android APK: force-stop the app from Android's own app-info screen (not just Recents), reopen it, and confirm the `SERVICE` category shows an "onCreate succeeded" entry for the fresh service start with no gap-filling entries claiming activity during the time the app was actually fully dead — the log should honestly reflect that nothing could have been recorded while the process didn't exist
+- [ ] Android APK: after any normal session (open the app, toggle Bluetooth settings, save/end a parking, background and reopen), check the diagnostic log's `BRIDGE` category — it should show a mix of "← JS: <method>() called" entries (e.g. `syncVehicles`, `update`, `startWatch`) and "→ JS: notifyListeners(...)" entries (e.g. `connected`/`disconnected`, `btShadowDecision`, `gpsShadowDecision`), and each "→ JS" entry should be followed within moments by a matching live entry in its real category (e.g. a `BRIDGE` "→ JS: notifyListeners(connected...)" followed by a `BT` "connected event received") if the message actually completed its round trip to JS — a `BRIDGE` send entry with no matching follow-up is the message-lost signal this feature exists to make visible

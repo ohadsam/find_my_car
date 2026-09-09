@@ -6,22 +6,35 @@ import com.ohadsam.findmycar.core.NativeLogEntry
 import com.ohadsam.findmycar.core.NativeLogEntryJson
 
 /**
- * SharedPreferences-backed log of native-only lifecycle events — foreground
- * service start/stop, GPS shadow watch start/stop, raw Bluetooth ACL
- * broadcast receipt — that never generate a Capacitor plugin event of their
- * own, unlike BT/GPS-SHADOW and BT/GPS-PENDING, which already reach JS
- * because they represent an actual decision. The existing Logcat tags
- * (FMC-FgService/FMC-BtPlugin) stay exactly as they are for adb-based
- * debugging — `add()` here is purely additive, called alongside (never
- * instead of) the existing Log.i/Log.w/Log.e call. JS reads/clears this via
- * WidgetDataPlugin.getNativeLog()/.clearNativeLog() and merges it into the
- * in-app diagnostic log under the `SERVICE` category on the next resume, so
- * "was the background service actually alive, and when" is provable from
+ * SharedPreferences-backed log of native-only events that never generate a
+ * Capacitor plugin event of their own to ride along on for JS to see —
+ * unlike BT/GPS-SHADOW and BT/GPS-PENDING, which already reach JS because
+ * they represent an actual decision. Two kinds, distinguished by
+ * `category`:
+ *  - "SERVICE": background-machinery lifecycle transitions — foreground
+ *    service start/stop, GPS shadow watch start/stop, raw Bluetooth ACL
+ *    broadcast receipt.
+ *  - "BRIDGE": the native<->JS Capacitor plugin message bus itself — every
+ *    `@PluginMethod` call received from JS, and every `notifyListeners()`
+ *    call sent to JS, in both BluetoothClassicPlugin and WidgetDataPlugin.
+ *    This is what proves a message was actually sent/received on the
+ *    native side even when the JS side never got to log its own half (e.g.
+ *    the WebView was torn down between native sending and JS receiving).
+ * The existing Logcat tags (FMC-FgService/FMC-BtPlugin) stay exactly as
+ * they are for adb-based debugging — `add()` here is purely additive,
+ * called alongside (never instead of) the existing Log.i/Log.w/Log.e call.
+ * JS reads/clears this via WidgetDataPlugin.getNativeLog()/.clearNativeLog()
+ * and merges it into the in-app diagnostic log under each entry's own
+ * `category` on the next resume, so "was the background service alive, and
+ * were messages actually sent/received, and when" is all provable from
  * inside the app instead of only via a connected device. Bounded to the
- * most recent MAX_ENTRIES so a chatty period (e.g. a long drive with lots
- * of GPS watch churn) can't grow this unboundedly — these are lifecycle
- * transitions, not per-location-update noise, so this cap is generous
- * relative to how often they actually fire.
+ * most recent MAX_ENTRIES so a chatty period (e.g. a long drive, or heavy
+ * plugin-call traffic) can't grow this unboundedly — these are discrete
+ * lifecycle/message events, not per-location-update noise, so this cap is
+ * generous relative to how often they actually fire. Deliberately NOT
+ * called from WidgetDataPlugin's own getNativeLog()/clearNativeLog()
+ * methods — logging a call that reads/clears this very store would be
+ * self-referential noise with no diagnostic value.
  */
 object NativeLogStore {
     private const val PREFS = WidgetDataPlugin.PREFS
@@ -29,11 +42,11 @@ object NativeLogStore {
     private const val MAX_ENTRIES = 200
 
     @Synchronized
-    fun add(context: Context, tag: String, message: String) {
+    fun add(context: Context, tag: String, category: String, message: String) {
         try {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val current = NativeLogEntryJson.parse(prefs.getString(KEY_JSON, "[]") ?: "[]")
-            val updated = (current + NativeLogEntry(System.currentTimeMillis(), tag, message))
+            val updated = (current + NativeLogEntry(System.currentTimeMillis(), tag, category, message))
                 .takeLast(MAX_ENTRIES)
             prefs.edit().putString(KEY_JSON, NativeLogEntryJson.toJson(updated)).apply()
         } catch (e: Exception) {

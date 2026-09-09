@@ -16,6 +16,7 @@ object NativeLogEntryJson {
             val o = JSONObject()
             o.put("timestamp", e.timestamp)
             o.put("tag", e.tag)
+            o.put("category", e.category)
             o.put("message", e.message)
             arr.put(o)
         }
@@ -32,6 +33,11 @@ object NativeLogEntryJson {
                 NativeLogEntry(
                     timestamp = o.optLong("timestamp", 0L),
                     tag = o.optString("tag", ""),
+                    // Defaults to SERVICE for any entry written before this
+                    // field existed — harmless, since NativeLogStore's
+                    // SharedPreferences-backed log is ephemeral and cleared
+                    // on every merge, but costs nothing to handle gracefully.
+                    category = o.optString("category", "SERVICE"),
                     message = message,
                 )
             }

@@ -73,6 +73,7 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         val data = JSObject()
         data.put("trigger", trigger)
         data.put("decision", "suggestEnd") // the only GpsDecision variant today
+        NativeLogStore.add(context, TAG, "BRIDGE", "→ JS: notifyListeners(gpsShadowDecision, trigger=$trigger)")
         notifyListeners("gpsShadowDecision", data)
     }
 
@@ -84,6 +85,7 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
     // can't access directly.
     @PluginMethod
     fun syncVehicles(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: syncVehicles() called")
         val vehiclesArray = call.getArray("vehicles")
         val activeId = call.getString("activeVehicleId", "") ?: ""
         val gpsAutoEndEnabled = call.getBoolean("gpsAutoEndEnabled", false) ?: false
@@ -98,6 +100,7 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
 
     @PluginMethod
     fun update(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: update() called")
         val address = call.getString("address", "") ?: ""
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
@@ -117,6 +120,7 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
 
     @PluginMethod
     fun clear(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: clear() called")
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit().putBoolean(KEY_HAS_PARKING, false).apply()
         ParkingForegroundService.setReasonActive(context, "parking", false)
@@ -181,12 +185,14 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
     // JSObject by hand here.
     @PluginMethod
     fun getPendingGpsSuggestion(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getPendingGpsSuggestion() called")
         val json = PendingGpsSuggestionJson.toJson(PendingGpsSuggestionStore.get(context))
         val ret = JSObject(); ret.put("pendingJson", json); call.resolve(ret)
     }
 
     @PluginMethod
     fun clearPendingGpsSuggestion(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: clearPendingGpsSuggestion() called")
         PendingGpsSuggestionStore.clear(context)
         call.resolve()
     }
@@ -198,12 +204,14 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
     // getPendingActions/clearPendingActions (BluetoothClassic, Stage 5).
     @PluginMethod
     fun getPendingWidgetActions(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getPendingWidgetActions() called")
         val json = PendingWidgetActionJson.toJson(PendingWidgetActionStore.getAll(context))
         val ret = JSObject(); ret.put("actionsJson", json); call.resolve(ret)
     }
 
     @PluginMethod
     fun clearPendingWidgetActions(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: clearPendingWidgetActions() called")
         PendingWidgetActionStore.clear(context)
         call.resolve()
     }

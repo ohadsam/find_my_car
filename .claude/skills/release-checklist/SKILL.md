@@ -322,19 +322,44 @@ pipeline (Bluetooth, GPS auto-end, or `Notify`):
   would catch it.
 - Confirm `index.html`'s `diagLogCategoryFilter` has a `SERVICE` option (native
   background service lifecycle — see CLAUDE.md "Native background service log").
-- Confirm `NativeLogStore.add(context, tag, message)` is called alongside (not
-  instead of) the existing `Log.i`/`Log.w`/`Log.e` calls in
-  `ParkingForegroundService.kt` at: `onCreate()` success and failure, `onDestroy()`,
-  BT receiver registration, every raw ACL broadcast received (including the
-  no-readable-device-name-dropped case — this must log regardless of whether a
-  vehicle is linked to that label or the WebView is reachable, unlike `BT`/
-  `BT-PENDING`, which only fire once something is actually decided), and GPS watch
-  start/stop/every distinct failure-to-start reason (no permission / no
-  `LocationManager` / no enabled provider) in `updateLocationWatch()`. Confirm it is
-  NOT called from `onLocationShadow()` per individual location update — that would
-  blow through the 200-entry cap in minutes on a single drive and push out the more
-  valuable lifecycle transitions; `GPS-SHADOW` already covers the meaningful
+- Confirm `NativeLogStore.add(context, tag, category, message)` is called alongside
+  (not instead of) the existing `Log.i`/`Log.w`/`Log.e` calls in
+  `ParkingForegroundService.kt`, with `category = "SERVICE"`, at: `onCreate()` success
+  and failure, `onDestroy()`, BT receiver registration, every raw ACL broadcast
+  received (including the no-readable-device-name-dropped case — this must log
+  regardless of whether a vehicle is linked to that label or the WebView is
+  reachable, unlike `BT`/`BT-PENDING`, which only fire once something is actually
+  decided), and GPS watch start/stop/every distinct failure-to-start reason (no
+  permission / no `LocationManager` / no enabled provider) in `updateLocationWatch()`.
+  Confirm it is NOT called from `onLocationShadow()` per individual location update —
+  that would blow through the 200-entry cap in minutes on a single drive and push out
+  the more valuable lifecycle transitions; `GPS-SHADOW` already covers the meaningful
   per-threshold-crossing level.
+- Confirm `NativeLogStore.add(...)` with `category = "BRIDGE"` is called as the first
+  line of every `@PluginMethod` in `BluetoothClassicPlugin.kt` (all 12:
+  `requestBtPermission`, `permissionStatus`, `isForegroundServiceRunning`,
+  `openAppSettings`, `batteryOptimizationStatus`, `requestIgnoreBatteryOptimizations`,
+  `startWatch`, `stopWatch`, `checkNow`, `getPendingActions`, `clearPendingActions`,
+  `getBondedDevices`) and `WidgetDataPlugin.kt` (7 of its 9: `syncVehicles`, `update`,
+  `clear`, `getPendingGpsSuggestion`, `clearPendingGpsSuggestion`,
+  `getPendingWidgetActions`, `clearPendingWidgetActions`) — proving every JS→native
+  call actually reached native, regardless of whether it then succeeds. Confirm
+  `getNativeLog`/`clearNativeLog` themselves are deliberately NOT instrumented — doing
+  so would be self-referential noise (every app open would log two meaningless
+  entries about having read/cleared the log that already contains them).
+- Confirm `NativeLogStore.add(...)` with `category = "BRIDGE"` precedes all 3
+  `notifyListeners(...)` call sites (`BluetoothClassicPlugin.kt`'s `emitAndTrack()` —
+  `connected`/`disconnected` — and `runShadowDecision()` — `btShadowDecision`;
+  `WidgetDataPlugin.kt`'s `onGpsShadowDecision()` — `gpsShadowDecision`) — proving
+  native attempted every send to JS regardless of whether the WebView was actually
+  there to receive it.
+- Confirm `index.html`'s `diagLogCategoryFilter` has a `BRIDGE` option (native<->JS
+  Capacitor plugin message-bus traffic — see CLAUDE.md "Native<->JS message bus
+  log"), distinct from `SERVICE`.
+- Confirm `core/NativeLogEntry.kt`'s `category` field round-trips correctly through
+  `NativeLogEntryJson.kt` (both `"SERVICE"` and `"BRIDGE"` values, and a
+  missing-`category` JSON payload defaulting to `"SERVICE"` for forward
+  compatibility) — `NativeLogEntryJsonTest.kt` should cover all three cases.
 - Confirm `WidgetDataPlugin.getNativeLog()`/`.clearNativeLog()` exist and return/
   clear `NativeLogStore`'s entries via the tested `NativeLogEntryJson` (de)serializer
   — not a hand-rolled `JSObject` built directly from `NativeLogEntry` fields.
@@ -345,13 +370,14 @@ pipeline (Bluetooth, GPS auto-end, or `Notify`):
   by timestamp, so calling this late (or fire-and-forget, racing with other init
   logging) would silently scramble the chronological order these merged historical
   entries are supposed to establish, defeating the whole point of the feature.
-- Confirm `#reconcileNativeLog()` passes each entry's own `timestamp` as `DiagLog.log`'s
-  4th argument (`t`), not `Date.now()` — the displayed time must be when the native
-  event actually happened (while the app was closed), not when it was read on this
-  resume; a regression back to the default `Date.now()` wouldn't fail any test (the
-  entries would still appear, just all stamped with the reopen time) but would
-  silently defeat the "know with certainty what happened and when" purpose this
-  feature exists for.
+- Confirm `#reconcileNativeLog()` files each entry under its OWN `e.category` (not a
+  single hardcoded `'SERVICE'`) and passes its own `timestamp` as `DiagLog.log`'s 4th
+  argument (`t`), not `Date.now()` — the displayed time must be when the native event
+  actually happened (while the app was closed), not when it was read on this resume;
+  a regression back to the default `Date.now()` or a hardcoded category wouldn't fail
+  any test (the entries would still appear, just all stamped with the reopen time or
+  filed under the wrong category) but would silently defeat the "know with certainty
+  what happened and when" purpose this feature exists for.
 - Confirm `js/diag-log.js`'s `DiagLog.log(category, message, meta, t)` still accepts
   that optional 4th `t` argument and falls back to `Date.now()` only when it's
   omitted/`null` — losing this parameter breaks `#reconcileNativeLog()` silently (no

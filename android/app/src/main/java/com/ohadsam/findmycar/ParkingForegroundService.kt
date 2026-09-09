@@ -91,10 +91,10 @@ class ParkingForegroundService : Service() {
             val intent = Intent(context, ParkingForegroundService::class.java)
             try {
                 if (wasEmpty && !nowEmpty) {
-                    NativeLogStore.add(context, TAG, "starting foreground service (reason=$reason)")
+                    NativeLogStore.add(context, TAG, "SERVICE", "starting foreground service (reason=$reason)")
                     ContextCompat.startForegroundService(context, intent)
                 } else if (!wasEmpty && nowEmpty) {
-                    NativeLogStore.add(context, TAG, "stopping foreground service (last reason=$reason cleared)")
+                    NativeLogStore.add(context, TAG, "SERVICE", "stopping foreground service (last reason=$reason cleared)")
                     context.stopService(intent)
                 }
             } catch (e: Exception) {
@@ -141,13 +141,13 @@ class ParkingForegroundService : Service() {
             if (isParkingReasonActive()) updateLocationWatch(true)
             isRunning = true
             Log.i(TAG, "onCreate succeeded — foreground service running (type=$type)")
-            NativeLogStore.add(this, TAG, "onCreate succeeded — foreground service running (type=$type)")
+            NativeLogStore.add(this, TAG, "SERVICE", "onCreate succeeded — foreground service running (type=$type)")
         } catch (e: Exception) {
             // Starting this service must never crash the whole app — worst
             // case BT/GPS background detection is inactive until the next
             // successful start (e.g. once the user grants BLUETOOTH_CONNECT).
             Log.e(TAG, "onCreate failed — BT/GPS background detection inactive", e)
-            NativeLogStore.add(this, TAG, "onCreate FAILED — BT/GPS background detection inactive (${e.message})")
+            NativeLogStore.add(this, TAG, "SERVICE", "onCreate FAILED — BT/GPS background detection inactive (${e.message})")
             isRunning = false
             stopSelf()
         }
@@ -175,7 +175,7 @@ class ParkingForegroundService : Service() {
     override fun onDestroy() {
         isRunning = false
         Log.i(TAG, "onDestroy — foreground service stopped")
-        NativeLogStore.add(this, TAG, "onDestroy — foreground service stopped")
+        NativeLogStore.add(this, TAG, "SERVICE", "onDestroy — foreground service stopped")
         receiver?.let { try { unregisterReceiver(it) } catch (e: IllegalArgumentException) { /* already gone */ } }
         receiver = null
         updateLocationWatch(false)
@@ -200,7 +200,7 @@ class ParkingForegroundService : Service() {
                 }
                 if (label.isNullOrBlank()) {
                     Log.w(TAG, "ACL broadcast (${intent.action}) received with no readable device name — dropped")
-                    NativeLogStore.add(context, TAG, "ACL broadcast (${intent.action}) received with no readable device name — dropped")
+                    NativeLogStore.add(context, TAG, "SERVICE", "ACL broadcast (${intent.action}) received with no readable device name — dropped")
                     return
                 }
                 Log.i(TAG, "ACL broadcast: ${intent.action} label=$label")
@@ -210,7 +210,7 @@ class ParkingForegroundService : Service() {
                 // broadcasts, independent of WebView reachability or of
                 // whether the event turns into a decision worth its own
                 // BT/BT-SHADOW/BT-PENDING entry.
-                NativeLogStore.add(context, TAG, "ACL broadcast: ${intent.action} label=$label")
+                NativeLogStore.add(context, TAG, "SERVICE", "ACL broadcast: ${intent.action} label=$label")
                 when (intent.action) {
                     BluetoothDevice.ACTION_ACL_CONNECTED    -> BtEventBus.emitConnected(label)
                     BluetoothDevice.ACTION_ACL_DISCONNECTED -> BtEventBus.emitDisconnected(label)
@@ -223,7 +223,7 @@ class ParkingForegroundService : Service() {
         ContextCompat.registerReceiver(this, r, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         receiver = r
         Log.i(TAG, "BT ACL receiver registered")
-        NativeLogStore.add(this, TAG, "BT ACL receiver registered")
+        NativeLogStore.add(this, TAG, "SERVICE", "BT ACL receiver registered")
     }
 
     // Stage 4 of the native background-detection migration (see CLAUDE.md
@@ -245,13 +245,13 @@ class ParkingForegroundService : Service() {
                     PackageManager.PERMISSION_GRANTED
                 if (!fineGranted && !coarseGranted) {
                     Log.w(TAG, "GPS shadow watch not started — no location permission")
-                    NativeLogStore.add(this, TAG, "GPS watch NOT started — no location permission")
+                    NativeLogStore.add(this, TAG, "SERVICE", "GPS watch NOT started — no location permission")
                     return
                 }
                 val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
                 if (lm == null) {
                     Log.w(TAG, "GPS shadow watch not started — no LocationManager")
-                    NativeLogStore.add(this, TAG, "GPS watch NOT started — no LocationManager")
+                    NativeLogStore.add(this, TAG, "SERVICE", "GPS watch NOT started — no LocationManager")
                     return
                 }
                 val provider = when {
@@ -261,7 +261,7 @@ class ParkingForegroundService : Service() {
                 }
                 if (provider == null) {
                     Log.w(TAG, "GPS shadow watch not started — no enabled location provider")
-                    NativeLogStore.add(this, TAG, "GPS watch NOT started — no enabled location provider (GPS/network both off?)")
+                    NativeLogStore.add(this, TAG, "SERVICE", "GPS watch NOT started — no enabled location provider (GPS/network both off?)")
                     return
                 }
                 // New parking session — reset the sustained-speed/already-
@@ -273,17 +273,17 @@ class ParkingForegroundService : Service() {
                 locationManager = lm
                 locationListener = listener
                 Log.i(TAG, "GPS shadow watch started (provider=$provider)")
-                NativeLogStore.add(this, TAG, "GPS watch started (provider=$provider)")
+                NativeLogStore.add(this, TAG, "SERVICE", "GPS watch started (provider=$provider)")
             } else {
                 locationListener?.let { locationManager?.removeUpdates(it) }
                 locationListener = null
                 locationManager = null
                 Log.i(TAG, "GPS shadow watch stopped")
-                NativeLogStore.add(this, TAG, "GPS watch stopped")
+                NativeLogStore.add(this, TAG, "SERVICE", "GPS watch stopped")
             }
         } catch (e: Exception) {
             Log.w(TAG, "updateLocationWatch($active) failed (non-fatal)", e)
-            NativeLogStore.add(this, TAG, "GPS watch update($active) FAILED (${e.message})")
+            NativeLogStore.add(this, TAG, "SERVICE", "GPS watch update($active) FAILED (${e.message})")
         }
     }
 
