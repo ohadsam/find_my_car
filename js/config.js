@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.31.0',
+  version: '1.32.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.32.0',
+      date: '2026-09-09',
+      items: Object.freeze([
+        'תוקן: הווידג\'טים ("חניה פעילה" ו"מפה מוקטנת") לפעמים נשארו תקועים על "מיקום נשמר" במקום להציג את הכתובת האמיתית, גם אחרי שהכתובת כבר הופיעה בתוך האפליקציה עצמה',
+        'תוקן: כשחניה של רכב שאינו הרכב הפעיל מסתיימת אוטומטית דרך Bluetooth, הווידג\'טים לא תמיד ידעו לעדכן שהחניה של אותו רכב הסתיימה',
+      ]),
+    }),
     Object.freeze({
       version: '1.31.0',
       date: '2026-09-09',
