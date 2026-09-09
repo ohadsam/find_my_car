@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.32.0',
+  version: '1.33.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.33.0',
+      date: '2026-09-09',
+      items: Object.freeze([
+        'נוסף יומן חדש ליומן האבחון — "שירות רקע (נייטיב)" — שמראה בזמן אמת אם ומתי שירות הרקע, מעקב ה-GPS וקליטת אירועי Bluetooth היו פעילים בפועל, גם כשהאפליקציה הייתה סגורה, כדי לדעת בוודאות מה קרה ומתי',
+      ]),
+    }),
     Object.freeze({
       version: '1.32.0',
       date: '2026-09-09',

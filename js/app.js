@@ -97,6 +97,17 @@ class FindMyCarApp {
     this.#bindEvents();
     this.#returnModal.bindEvents();
 
+    // Merges native-only lifecycle events (foreground service/GPS watch
+    // start-stop, raw BT broadcast receipt) recorded while the app was
+    // closed into the diagnostic log — awaited (unlike the other
+    // #reconcilePending*() calls below) specifically so these historical
+    // entries land BEFORE anything else this session logs, preserving
+    // correct chronological order without needing to sort by timestamp at
+    // render time. Resolves near-instantly (a local SharedPreferences read)
+    // and is itself a no-op in the browser/PWA, so this adds no meaningful
+    // delay to the rest of init.
+    await this.#reconcileNativeLog().catch(() => {});
+
     // Ask for everything the native app can possibly need right after
     // install, instead of only surprising the user with scattered
     // permission dialogs the first time they touch BT settings/camera/voice.
@@ -826,6 +837,28 @@ class FindMyCarApp {
       }
     }
     await WidgetBridge.clearPendingWidgetActions();
+  }
+
+  // Merges NativeLogStore's native-only lifecycle events (foreground service
+  // start/stop, GPS watch start/stop, raw BT ACL broadcast receipt — see
+  // CLAUDE.md "Native background service log") into the in-app diagnostic
+  // log under the SERVICE category, each with its own real historical
+  // timestamp (not "now") via DiagLog.log's optional 4th argument — this is
+  // purely informational merging, not a replay of an action, so unlike the
+  // other #reconcilePending*() methods there's no decision to re-derive.
+  // Called first thing in #init(), before any other DiagLog entry this
+  // session, so these historical entries land in correct chronological
+  // order relative to both the previous session's own trailing entries and
+  // this session's — DiagLog stores entries in insertion order and only
+  // reverses for display, it doesn't sort by timestamp. No-op in the
+  // browser/PWA (getNativeLog() resolves to [] there).
+  async #reconcileNativeLog() {
+    const entries = await WidgetBridge.getNativeLog();
+    if (!entries.length) return;
+    for (const e of entries) {
+      DiagLog.log('SERVICE', `[native] ${e.tag || '?'}: ${e.message || ''}`, null, e.timestamp || null);
+    }
+    await WidgetBridge.clearNativeLog();
   }
 
   #openVehicleModal(vehicle) {

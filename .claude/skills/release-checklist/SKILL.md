@@ -320,6 +320,42 @@ pipeline (Bluetooth, GPS auto-end, or `Notify`):
   Stage-2 shadow decisions against the real JS ones without adb; losing this listener
   wouldn't break anything else (shadow mode has no real effect) so no other check
   would catch it.
+- Confirm `index.html`'s `diagLogCategoryFilter` has a `SERVICE` option (native
+  background service lifecycle — see CLAUDE.md "Native background service log").
+- Confirm `NativeLogStore.add(context, tag, message)` is called alongside (not
+  instead of) the existing `Log.i`/`Log.w`/`Log.e` calls in
+  `ParkingForegroundService.kt` at: `onCreate()` success and failure, `onDestroy()`,
+  BT receiver registration, every raw ACL broadcast received (including the
+  no-readable-device-name-dropped case — this must log regardless of whether a
+  vehicle is linked to that label or the WebView is reachable, unlike `BT`/
+  `BT-PENDING`, which only fire once something is actually decided), and GPS watch
+  start/stop/every distinct failure-to-start reason (no permission / no
+  `LocationManager` / no enabled provider) in `updateLocationWatch()`. Confirm it is
+  NOT called from `onLocationShadow()` per individual location update — that would
+  blow through the 200-entry cap in minutes on a single drive and push out the more
+  valuable lifecycle transitions; `GPS-SHADOW` already covers the meaningful
+  per-threshold-crossing level.
+- Confirm `WidgetDataPlugin.getNativeLog()`/`.clearNativeLog()` exist and return/
+  clear `NativeLogStore`'s entries via the tested `NativeLogEntryJson` (de)serializer
+  — not a hand-rolled `JSObject` built directly from `NativeLogEntry` fields.
+- Confirm `js/app.js`'s `#reconcileNativeLog()` is **awaited** (not fire-and-forget
+  like the other `#reconcilePending*()` calls) and runs as the very first thing in
+  `#init()`, before any other `DiagLog` entry this session — `DiagLog` stores entries
+  in insertion order and only reverses for display at render time, it does not sort
+  by timestamp, so calling this late (or fire-and-forget, racing with other init
+  logging) would silently scramble the chronological order these merged historical
+  entries are supposed to establish, defeating the whole point of the feature.
+- Confirm `#reconcileNativeLog()` passes each entry's own `timestamp` as `DiagLog.log`'s
+  4th argument (`t`), not `Date.now()` — the displayed time must be when the native
+  event actually happened (while the app was closed), not when it was read on this
+  resume; a regression back to the default `Date.now()` wouldn't fail any test (the
+  entries would still appear, just all stamped with the reopen time) but would
+  silently defeat the "know with certainty what happened and when" purpose this
+  feature exists for.
+- Confirm `js/diag-log.js`'s `DiagLog.log(category, message, meta, t)` still accepts
+  that optional 4th `t` argument and falls back to `Date.now()` only when it's
+  omitted/`null` — losing this parameter breaks `#reconcileNativeLog()` silently (no
+  error, entries just all show the wrong time).
 
 ## 6. Headless widget actions
 

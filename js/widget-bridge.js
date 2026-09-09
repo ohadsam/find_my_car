@@ -65,6 +65,27 @@ export class WidgetBridge {
     await this.#plugin?.clearPendingWidgetActions?.().catch(() => {});
   }
 
+  // Reads/clears NativeLogStore's native-only lifecycle log (foreground
+  // service start/stop, GPS watch start/stop, raw BT ACL broadcast receipt)
+  // — js/app.js merges each entry into DiagLog under the SERVICE category
+  // on resume, with its real historical timestamp, so "was the background
+  // service actually alive, and when" is provable from inside the app
+  // without adb. No-op in the browser/PWA.
+  static async getNativeLog() {
+    if (!this.#plugin) return [];
+    try {
+      const { entriesJson } = await this.#plugin.getNativeLog();
+      const parsed = JSON.parse(entriesJson || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static async clearNativeLog() {
+    await this.#plugin?.clearNativeLog?.().catch(() => {});
+  }
+
   static sync(state) {
     if (!this.#plugin) return;
 

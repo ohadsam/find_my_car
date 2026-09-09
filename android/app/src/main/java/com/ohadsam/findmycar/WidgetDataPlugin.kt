@@ -19,6 +19,7 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.ohadsam.findmycar.core.GpsDecision
+import com.ohadsam.findmycar.core.NativeLogEntryJson
 import com.ohadsam.findmycar.core.PendingGpsSuggestionJson
 import com.ohadsam.findmycar.core.PendingWidgetActionJson
 import com.ohadsam.findmycar.widgets.ActiveParkingWidgetProvider
@@ -204,6 +205,26 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
     @PluginMethod
     fun clearPendingWidgetActions(call: PluginCall) {
         PendingWidgetActionStore.clear(context)
+        call.resolve()
+    }
+
+    // Lets JS read/clear the native-only lifecycle log NativeLogStore
+    // accumulates (foreground service start/stop, GPS watch start/stop, raw
+    // BT ACL broadcast receipt) — merged into the in-app diagnostic log
+    // under the SERVICE category on next resume, so "was the background
+    // service actually alive, and when" is provable without adb. Unlike the
+    // other getPending*/clearPending* pairs, these aren't actionable
+    // decisions to replay — purely informational, read-only from JS's
+    // perspective beyond clearing them once merged.
+    @PluginMethod
+    fun getNativeLog(call: PluginCall) {
+        val json = NativeLogEntryJson.toJson(NativeLogStore.getAll(context))
+        val ret = JSObject(); ret.put("entriesJson", json); call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun clearNativeLog(call: PluginCall) {
+        NativeLogStore.clear(context)
         call.resolve()
     }
 
