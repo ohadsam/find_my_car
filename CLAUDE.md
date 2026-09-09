@@ -328,7 +328,7 @@ never loses its own execution context the same way.
 | *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification, which since Stage 9 of the native migration is posted/cancelled directly by `WidgetDataPlugin.update()`/`.clear()` (plain `NotificationCompat`, not this plugin) on native; `#showParkingNotification`/`#cancelParkingNotification` (js/app.js) now skip themselves on native and keep using the browser-safe `ServiceWorkerRegistration.showNotification()` path only on the PWA, which has no native equivalent to delegate to |
 
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
-state change already goes through) calls `WidgetBridge.sync(state)` after
+state change must go through) calls `WidgetBridge.sync(state)` after
 `this.#ui.updateAll(state)`. `WidgetBridge` calls `WidgetData.update()`/`.clear()`
 (the *active* vehicle's parking snapshot — also what drives the persistent
 notification, Stage 9) and `WidgetData.syncVehicles()` (the full vehicle list +
@@ -337,6 +337,39 @@ directly from its own `fmc_cur_{id}` key, not just the active vehicle's in-memor
 `current`), which write `SharedPreferences` and broadcast
 `AppWidgetManager.ACTION_APPWIDGET_UPDATE` to the two data-driven widgets
 (`ActiveParkingWidgetProvider`, `MiniMapWidgetProvider`).
+
+**Every real parking-state mutation must call `#syncUI()` — two real, previously-
+shipped gaps found and fixed** (reported as "the widget shows 'חניה נשמרה' but never
+the actual location"): (1) `#saveNewParking()`/`#swapParking()`/
+`#geocodeCurrentParking()`/`#updateCurrentLocation()` all sync once immediately with
+`address: null` (reverse geocoding is async and hasn't resolved yet), which is
+correct and unavoidable — but their `reverseGeocode(...).then(addr => ...)`
+completion callbacks only patched the in-app UI (`this.#ui.updateAddress(...)`) and,
+for the two save paths, the PWA-only `#showParkingNotification()` — never
+`WidgetBridge.sync()`. Since the widgets (and, on native, the Stage 9 persistent
+notification) mirror whatever `#syncUI()` last pushed, they got stuck showing the
+`address: null` fallback ("מיקום נשמר") forever, even after the real address
+resolved seconds later — the mini-map widget's actual pin was never affected (it
+renders directly from `lat`/`lng`, not the resolved address text), but the
+active-parking widget's subtitle and the native notification's body text were. Fixed
+by replacing each `this.#ui.updateAddress(this.#state.current)` in a geocode
+completion callback with `this.#syncUI()` (which already calls it internally, so
+this is a pure addition of the missing `WidgetBridge.sync()`, not a behavior change
+to the in-app UI). (2) `#clearVehicleParking(vehicleId)` — used when Bluetooth
+auto-ends a parking for a vehicle that ISN'T the currently-active one — only called
+`#syncUI()` inside its `if (isActive)` branch, so ending a background vehicle's
+parking updated `SharedPreferences`/history correctly but never told the widgets or
+native notification about it; that vehicle would keep showing as parked
+indefinitely. Fixed by moving the `#syncUI()` call outside the conditional, since
+`syncVehicles()` already mirrors every vehicle's own state independently (see
+"Multi-vehicle display" below) — a non-active vehicle's parking ending is exactly
+the kind of change it needs to pick up. Both gaps are why `#syncUI()`'s own doc
+comment above was changed from "already goes through" to "must go through": the
+guarantee is a discipline every new call site has to uphold, not something the
+existing code structure enforces automatically — there is no compile-time or
+lint-time check that every `VehicleController.setCurrent/removeCurrent` call is
+followed by a sync, so a future addition can reintroduce the same class of bug
+silently (no test failure, no crash — just a widget that quietly stops updating).
 
 **Multi-vehicle display on "חניה פעילה"/"מפה מוקטנת"**: both widgets read the full
 per-vehicle parking list (`ParkedVehicles.parse()`, filtering `syncVehicles()`'s
@@ -834,3 +867,5 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: first launch prompts to exempt the app from battery optimization (if not already exempted); the diagnostic log's `PERM` category logs "battery optimization: already exempted" or "requested exemption"
 - [ ] Android APK: if battery optimization is still restricting the app, Bluetooth settings shows a warning with a "בטל הגבלת חיסכון בסוללה" button that opens the system's battery-exemption dialog directly (not just generic app settings)
 - [ ] Android APK: with an active parking, lock the screen (or switch to another app — do NOT force-kill) and drive/walk far enough to cross the GPS distance or speed threshold — a system notification ("🚗 מזוהה נסיעה") should appear at roughly the time the threshold is actually crossed, not only after you manually reopen the app; on reopening, the diagnostic log's `GPS-PENDING` category should show the recorded+replayed suggestion, and `gpsEndModal` should already be open (or open immediately) rather than the suggestion having been silently missed
+- [ ] Android APK: save a new parking and immediately check the "חניה פעילה" widget and "מפה מוקטנת" widget — both should initially show a generic placeholder ("מיקום נשמר"), then within a few seconds (once reverse geocoding completes) update to show the real street address, without needing to reopen the app or tap the widget — if the widget stays stuck on the placeholder indefinitely, that's the geocode-completion sync regression, not a geocoding failure (check the in-app address display: if THAT shows the real address correctly while the widget doesn't, it's confirmed a sync gap, not a geocoding problem)
+- [ ] Android APK: link Bluetooth auto-end to vehicle B while vehicle A is the currently-active one (both have active parking) — connect to vehicle B's device — the "חניה פעילה"/"מפה מוקטנת" widgets (in their multi-vehicle cycle/dual view) should stop showing vehicle B as parked immediately after the auto-end, without needing to switch the active vehicle or reopen the app

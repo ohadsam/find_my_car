@@ -502,7 +502,7 @@ class FindMyCarApp {
       if (addr) {
         this.#state.current.address = addr;
         VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
-        this.#ui.updateAddress(this.#state.current);
+        this.#syncUI();
         this.#map.updateParkingMarkerPopup(addr);
       } else {
         const addrEl = Utils.el('parkingAddressDisplay');
@@ -578,7 +578,7 @@ class FindMyCarApp {
       if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
       this.#state.current.address = addr;
       VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
-      this.#ui.updateAddress(this.#state.current);
+      this.#syncUI();
       this.#map.updateParkingMarkerPopup(addr);
       this.#showParkingNotification(this.#state.current);
     });
@@ -651,7 +651,7 @@ class FindMyCarApp {
       if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
       this.#state.current.address = addr;
       VehicleController.setCurrent(vehicleId, this.#state.current);
-      this.#ui.updateAddress(this.#state.current);
+      this.#syncUI();
       this.#map.updateParkingMarkerPopup(addr);
       this.#showParkingNotification(this.#state.current);
     });
@@ -665,6 +665,7 @@ class FindMyCarApp {
       this.#state.current.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy || 0 };
       this.#state.current.address  = null;
       VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+      this.#syncUI();
 
       this.#map.addParkingMarker(loc.lat, loc.lng, null);
       this.#map.flyTo(loc.lat, loc.lng, 17);
@@ -680,7 +681,7 @@ class FindMyCarApp {
         if (!addr || !this.#state.current) return;
         this.#state.current.address = addr;
         VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
-        this.#ui.updateAddress(this.#state.current);
+        this.#syncUI();
         this.#map.updateParkingMarkerPopup(addr);
       });
     } catch {
@@ -921,8 +922,12 @@ class FindMyCarApp {
       this.#stopTimer();
       this.#releaseWakeLock();
       this.#cancelParkingNotification();
-      this.#syncUI();
     }
+    // Always sync (not just when isActive) — this changes a vehicle's
+    // hasParking/history even when it isn't the currently-selected one, and
+    // the widgets mirror every vehicle's own parking state independently
+    // (see ParkedVehicles.kt), not just the active vehicle's.
+    this.#syncUI();
 
     this.#ui.renderSettingsView(this.#state, this.#settingsCbs());
     const v = VehicleController.getById(vehicleId);

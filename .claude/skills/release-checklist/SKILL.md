@@ -451,6 +451,29 @@ parked vehicle invisible until the user opens the app:
   (`id + 400000` in `ActiveParkingWidgetProvider`, `id + 500000` in
   `MiniMapWidgetProvider`) don't collide with the existing root (`id`) or "⋮" button
   (`id + 200000`/`id + 300000`) requestCodes used by the same providers.
+- Confirm every `reverseGeocode(...).then(addr => ...)` completion callback in
+  `js/app.js` (`#geocodeCurrentParking`, `#saveNewParking`, `#swapParking`,
+  `#updateCurrentLocation`) calls `this.#syncUI()`, not just
+  `this.#ui.updateAddress(...)` — a real, previously-shipped bug (see CLAUDE.md
+  "Every real parking-state mutation must call `#syncUI()`"): geocoding is async and
+  resolves seconds after the initial save/sync (which correctly goes out with
+  `address: null`), so without a second sync on completion the widgets and the
+  native Stage 9 notification get stuck showing the "מיקום נשמר" placeholder
+  forever, even though the in-app UI itself updates fine (that's why this class of
+  bug is easy to miss in manual testing — it looks correct from inside the app).
+- Confirm `#clearVehicleParking(vehicleId)` (js/app.js) calls `this.#syncUI()`
+  unconditionally, not only inside its `if (isActive)` branch — another real,
+  previously-shipped bug: this is the path a Bluetooth auto-end takes for a vehicle
+  that ISN'T the currently-active one, and without an unconditional sync, ending
+  that vehicle's parking updates storage/history correctly but never tells the
+  widgets or native notification, so a non-active vehicle keeps showing as parked
+  indefinitely after Bluetooth actually ended it.
+- More generally: grep every `VehicleController.setCurrent(`/`.removeCurrent(` call
+  in `js/app.js` and confirm each one is followed, in the same function (not a
+  different, unrelated code path), by a `this.#syncUI()` call — there is no
+  compile-time or lint-time enforcement of this, so a new feature can silently
+  reintroduce the same class of bug (no test failure, no crash — the widget just
+  quietly stops updating for that one code path).
 
 ## 8. Cross-channel behavior parity
 
