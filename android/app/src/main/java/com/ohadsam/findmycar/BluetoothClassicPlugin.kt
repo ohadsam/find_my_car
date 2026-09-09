@@ -65,6 +65,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     // silently hide an inherited member without `override`.
     @PluginMethod
     fun requestBtPermission(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: requestBtPermission() called")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             val ret = JSObject(); ret.put("granted", true); call.resolve(ret); return
         }
@@ -84,6 +85,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     // detect that specific state and offer a way out.
     @PluginMethod
     fun permissionStatus(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: permissionStatus() called")
         val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             getPermissionState("bluetooth") == PermissionState.GRANTED
         val canPrompt = granted || Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
@@ -102,11 +104,13 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     // come. See js/diag-log.js and app.js's post-startWatch() check.
     @PluginMethod
     fun isForegroundServiceRunning(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: isForegroundServiceRunning() called")
         val ret = JSObject(); ret.put("running", ParkingForegroundService.isRunning); call.resolve(ret)
     }
 
     @PluginMethod
     fun openAppSettings(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: openAppSettings() called")
         openAppSettingsInternal()
         call.resolve()
     }
@@ -129,6 +133,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     // asking the user to hunt for it manually.
     @PluginMethod
     fun batteryOptimizationStatus(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: batteryOptimizationStatus() called")
         // isIgnoringBatteryOptimizations() and the Doze/battery-optimization
         // concept itself don't exist before API 23 (minSdk here is 22) —
         // calling it unguarded would throw NoSuchMethodError on those devices.
@@ -143,6 +148,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
 
     @PluginMethod
     fun requestIgnoreBatteryOptimizations(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: requestIgnoreBatteryOptimizations() called")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) { call.resolve(); return }
         try {
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
@@ -162,6 +168,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     @PluginMethod
     fun startWatch(call: PluginCall) {
         Log.i(TAG, "startWatch() called, already watching=$watching")
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: startWatch() called (already watching=$watching)")
         if (!watching) {
             watching = true
             BtEventBus.addListener(this)
@@ -180,6 +187,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
 
     @PluginMethod
     fun stopWatch(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: stopWatch() called")
         if (watching) {
             watching = false
             BtEventBus.removeListener(this)
@@ -190,6 +198,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
 
     @PluginMethod
     fun checkNow(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: checkNow() called")
         if (!watching) { call.resolve(); return }
         val current = connectedDeviceLabels()
         val prev = synchronized(labelsLock) { prevLabels.toSet() }
@@ -206,18 +215,21 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     // rather than rebuilding a JSObject/JSArray by hand here.
     @PluginMethod
     fun getPendingActions(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getPendingActions() called")
         val json = PendingBtActionJson.toJson(PendingBtActionStore.getAll(context))
         val ret = JSObject(); ret.put("actionsJson", json); call.resolve(ret)
     }
 
     @PluginMethod
     fun clearPendingActions(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: clearPendingActions() called")
         PendingBtActionStore.clear(context)
         call.resolve()
     }
 
     @PluginMethod
     fun getBondedDevices(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getBondedDevices() called")
         val adapter = BluetoothAdapter.getDefaultAdapter()
         val arr = JSArray()
         try {
@@ -270,6 +282,7 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
             data.put("direction", direction)
             data.put("label", label)
             data.put("decisions", summary)
+            NativeLogStore.add(context, TAG, "BRIDGE", "→ JS: notifyListeners(btShadowDecision, direction=$direction, label=$label)")
             notifyListeners("btShadowDecision", data)
         } catch (e: Exception) {
             Log.w(TAG, "shadow decision failed (non-fatal, real BT event already handled)", e)
@@ -350,8 +363,10 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
             prevLabels = prevLabels.toMutableSet().apply { if (connected) add(label) else remove(label) }
         }
         Log.i(TAG, "emitting ${if (connected) "connected" else "disconnected"} label=$label to JS")
+        val eventName = if (connected) "connected" else "disconnected"
+        NativeLogStore.add(context, TAG, "BRIDGE", "→ JS: notifyListeners($eventName, label=$label)")
         val data = JSObject(); data.put("label", label)
-        notifyListeners(if (connected) "connected" else "disconnected", data)
+        notifyListeners(eventName, data)
     }
 
     /** Currently-connected classic audio devices (A2DP/HFP), the car-BT use case. */

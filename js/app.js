@@ -839,10 +839,14 @@ class FindMyCarApp {
     await WidgetBridge.clearPendingWidgetActions();
   }
 
-  // Merges NativeLogStore's native-only lifecycle events (foreground service
-  // start/stop, GPS watch start/stop, raw BT ACL broadcast receipt — see
-  // CLAUDE.md "Native background service log") into the in-app diagnostic
-  // log under the SERVICE category, each with its own real historical
+  // Merges NativeLogStore's native-only events — background-machinery
+  // lifecycle transitions (foreground service/GPS watch start-stop, raw BT
+  // ACL broadcast receipt; category SERVICE) and native<->JS Capacitor
+  // plugin message-bus traffic (every @PluginMethod call received from JS,
+  // every notifyListeners() call sent to JS; category BRIDGE) — see
+  // CLAUDE.md "Native background service log" / "Native<->JS message bus
+  // log" — into the in-app diagnostic log under each entry's OWN category
+  // (not a single hardcoded one), each with its own real historical
   // timestamp (not "now") via DiagLog.log's optional 4th argument — this is
   // purely informational merging, not a replay of an action, so unlike the
   // other #reconcilePending*() methods there's no decision to re-derive.
@@ -856,7 +860,7 @@ class FindMyCarApp {
     const entries = await WidgetBridge.getNativeLog();
     if (!entries.length) return;
     for (const e of entries) {
-      DiagLog.log('SERVICE', `[native] ${e.tag || '?'}: ${e.message || ''}`, null, e.timestamp || null);
+      DiagLog.log(e.category || 'SERVICE', `[native/${e.tag || '?'}] ${e.message || ''}`, null, e.timestamp || null);
     }
     await WidgetBridge.clearNativeLog();
   }

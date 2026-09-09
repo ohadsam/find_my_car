@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.33.0',
+  version: '1.34.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -32,6 +32,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.34.0',
+      date: '2026-09-09',
+      items: Object.freeze([
+        'יומן האבחון כולל עכשיו גם קטגוריה "תקשורת נייטיב↔אפליקציה" — מציגה כל הודעה שנשלחה בין הצד הנייטיבי לאפליקציה (ולהפך), כדי לוודא בוודאות שהתקשורת ביניהם עובדת כמצופה ושאין הודעות שאבדו בדרך',
+      ]),
+    }),
     Object.freeze({
       version: '1.33.0',
       date: '2026-09-09',
