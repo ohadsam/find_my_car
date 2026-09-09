@@ -27,6 +27,30 @@ public class MainActivity extends BridgeActivity {
     // Activity alive past its normal lifecycle.
     private static WeakReference<MainActivity> activeInstance;
 
+    // Separate from activeInstance/getActiveWebView() on purpose: that one
+    // reflects whether the Activity object exists at all (onCreate..onDestroy
+    // — true through the entire backgrounded/paused period, since KeepRunning
+    // keeps the Activity+WebView alive without destroying them), while this
+    // reflects whether it's actually visible right now (onResume..onPause).
+    // GpsDecisionEngine's live counterpart, navigator.geolocation.watchPosition()
+    // in js/app.js, is subject to Android's own background-location throttling
+    // tied to Activity visibility — KeepRunning keeps the JS engine executing,
+    // but does not keep the WebView's Geolocation API delivering updates once
+    // the Activity is merely paused (not destroyed). ParkingForegroundService's
+    // maybeRecordPendingGpsSuggestion() must key off THIS, not getActiveWebView(),
+    // or it silently no-ops for the entire paused-but-alive window under the
+    // wrong assumption that "the live JS path already handles it" — the bug
+    // that shipped before this field existed (GpsDecisionEngine's own shadow
+    // watch, running off a plain LocationManager request from inside the
+    // foreground Service rather than the WebView, is NOT subject to this
+    // throttling, which is why GPS-SHADOW log entries could appear during a
+    // window where no live GPS suggestion or notification ever did).
+    private static volatile boolean foreground = false;
+
+    public static boolean isForeground() {
+        return foreground;
+    }
+
     public static WebView getActiveWebView() {
         MainActivity a = activeInstance != null ? activeInstance.get() : null;
         return (a != null && a.getBridge() != null) ? a.getBridge().getWebView() : null;
@@ -56,6 +80,18 @@ public class MainActivity extends BridgeActivity {
     public void onDestroy() {
         if (activeInstance != null && activeInstance.get() == this) activeInstance = null;
         super.onDestroy();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        foreground = true;
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        foreground = false;
     }
 
     @Override

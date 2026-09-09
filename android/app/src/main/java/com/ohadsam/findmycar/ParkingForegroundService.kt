@@ -305,20 +305,45 @@ class ParkingForegroundService : Service() {
     // Stage 7 of the native background-detection migration (see CLAUDE.md
     // "Native background detection"): GPS's counterpart to
     // BluetoothClassicPlugin.maybeRecordPendingAction() (Stage 5). When the
-    // WebView is unreachable, GpsDecisionEngine's only decision
+    // live JS path isn't actually running, GpsDecisionEngine's only decision
     // (SuggestEnd) can never be shown as a live confirmation modal —
     // nothing happens today. Records the suggestion (for whichever vehicle
     // is active) and shows a notification, so JS can open the same
     // gpsEndModal confirmation the next time it resumes — this NEVER
     // auto-ends a parking, unlike Bluetooth's AutoEnd, since a GPS
-    // suggestion always requires user confirmation. Deliberately a no-op
-    // when the WebView IS reachable: the live #suggestGpsEnd() path already
-    // handles it. Wrapped in its own try/catch backstop, independent of
-    // emitGpsShadowDecision (which must stay strictly log-only).
+    // suggestion always requires user confirmation.
+    //
+    // Gated on MainActivity.isForeground(), NOT getActiveWebView() != null —
+    // this was a real, previously-shipped bug. getActiveWebView() only tells
+    // you the Activity object exists (true for the entire onCreate..onDestroy
+    // span, i.e. the whole backgrounded/paused period too, since KeepRunning
+    // keeps the Activity+WebView alive without destroying them); it says
+    // nothing about whether the Activity is actually visible right now. The
+    // live path this is meant to defer to — js/app.js's #checkGpsSpeed/
+    // #checkGpsDistance, fed by navigator.geolocation.watchPosition() — is a
+    // WebView-level browser API subject to Android's own background-location
+    // throttling tied to Activity *visibility*, not just process/JS-engine
+    // liveness: KeepRunning keeps the JS engine executing, but does not
+    // prevent Android from silently throttling/stopping watchPosition()
+    // updates once the Activity is merely paused (screen off, app
+    // backgrounded, not destroyed) — the far more common case than the
+    // Activity actually being destroyed. The old getActiveWebView() check
+    // treated that entire paused-but-alive window as "handled live," so
+    // nothing ever recorded a suggestion or showed a notification during it —
+    // GpsDecisionEngine's own shadow watch (a plain LocationManager request
+    // made directly from this foreground Service, NOT subject to the same
+    // throttling) kept deciding SuggestEnd correctly the whole time, visible
+    // only in the GPS-SHADOW diagnostic-log category, while the user got no
+    // notification at all until they physically reopened the app — sometimes
+    // long after actually leaving the vehicle. Deliberately a no-op only when
+    // the Activity is genuinely foregrounded right now: the live
+    // #suggestGpsEnd() path is reliable in that case. Wrapped in its own
+    // try/catch backstop, independent of emitGpsShadowDecision (which must
+    // stay strictly log-only).
     private fun maybeRecordPendingGpsSuggestion(decision: GpsDecision?) {
         if (decision == null) return
         try {
-            if (MainActivity.getActiveWebView() != null) return // live path already handles it
+            if (MainActivity.isForeground()) return // live path already handles it
             val prefs = getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
             val activeVehicleId = prefs.getString(WidgetDataPlugin.KEY_ACTIVE_VEHICLE_ID, "") ?: ""
             if (activeVehicleId.isBlank()) return
