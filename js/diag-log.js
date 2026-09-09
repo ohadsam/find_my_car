@@ -12,10 +12,14 @@ const MAX_ENTRIES = 800; // hard cap so a noisy loop can't grow this unbounded
 // device and adb: this lets a user report back exactly what the app saw
 // (or didn't see) instead of just "it doesn't work".
 export class DiagLog {
-  static log(category, message, meta = null) {
+  // `t` lets a caller record a real historical timestamp instead of "now" —
+  // used only to merge NativeLogStore's native-only lifecycle events (which
+  // happened at some point while the app was closed) so they show the time
+  // they actually occurred, not the time they were read on the next resume.
+  static log(category, message, meta = null, t = null) {
     try {
       const entries = this.#load();
-      entries.push({ t: Date.now(), category, message, ...(meta || {}) });
+      entries.push({ t: t ?? Date.now(), category, message, ...(meta || {}) });
       const pruned = this.#prune(entries).slice(-MAX_ENTRIES);
       Store.set(KEY, pruned);
     } catch {

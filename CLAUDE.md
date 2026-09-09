@@ -316,7 +316,7 @@ never loses its own execution context the same way.
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
 | `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`/`getPendingActions`/`clearPendingActions` (the last two Stage 5 of the native migration — see below); emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
-| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage), triggers an `AppWidgetManager` refresh, and (Stage 9) posts/cancels the persistent "active parking" notification directly via `NotificationCompat`. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking`) and the global GPS auto-end setting so `WidgetQuickActionsActivity` can show a vehicle picker natively and the native decision engines have real settings to read. `getPendingGpsSuggestion`/`clearPendingGpsSuggestion` (Stage 7) and `getPendingWidgetActions`/`clearPendingWidgetActions` (Stage 8) let JS read/clear what was recorded while unreachable. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
+| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage), triggers an `AppWidgetManager` refresh, and (Stage 9) posts/cancels the persistent "active parking" notification directly via `NotificationCompat`. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking`) and the global GPS auto-end setting so `WidgetQuickActionsActivity` can show a vehicle picker natively and the native decision engines have real settings to read. `getPendingGpsSuggestion`/`clearPendingGpsSuggestion` (Stage 7) and `getPendingWidgetActions`/`clearPendingWidgetActions` (Stage 8) let JS read/clear what was recorded while unreachable. `getNativeLog`/`clearNativeLog` let JS read/clear `NativeLogStore`'s native-only lifecycle log (see "Native background service log" below) — unlike the `getPending*` pair, these aren't actionable decisions to replay, purely informational. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app. Since Stage 4 of the native migration (shadow mode only), also runs a plain `LocationManager` watch (`updateLocationWatch()`/`onLocationShadow()`) precisely while the `"parking"` reason is active, feeding `GpsDecisionEngine` — wrapped in its own independent try/catch backstop. Since Stage 7, `maybeRecordPendingGpsSuggestion()` runs alongside (not inside) that shadow logging — its own independent try/catch, same `MainActivity.getActiveWebView() != null` no-op gate as `BluetoothClassicPlugin`'s Stage 5 — to record a real `PendingGpsSuggestion` when the WebView is unreachable |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
@@ -436,7 +436,8 @@ fallback either (that now goes through `PendingWidgetActionStore` instead).
 **Diagnostic log (`js/diag-log.js`)**: since background BT/GPS/notification behavior is
 impossible to observe without a connected device and `adb logcat`, every meaningful
 step of that pipeline logs to `DiagLog` (categories `BT`, `BT-RAW`, `BT-SHADOW`,
-`BT-PENDING`, `GPS`, `GPS-SHADOW`, `GPS-PENDING`, `NOTIFY`, `PERM`) — the raw native
+`BT-PENDING`, `GPS`, `GPS-SHADOW`, `GPS-PENDING`, `WIDGET`, `SERVICE`, `NOTIFY`,
+`PERM`) — the raw native
 event handoff in `js/bluetooth-native.js`, the per-vehicle match/skip decisions in
 `#onBtConnected`/`#onBtDisconnected`, what the native `BtDecisionEngine`/
 `GpsDecisionEngine` would have decided for the same event in shadow mode
@@ -444,7 +445,9 @@ event handoff in `js/bluetooth-native.js`, the per-vehicle match/skip decisions 
 `BtDecisionEngine`/`GpsDecisionEngine` recorded and replayed for *real* while the
 WebView was unreachable (`BT-PENDING`/`GPS-PENDING`, Stages 5-7 — distinct from the
 shadow categories: these reflect an actual recorded/replayed decision, not a
-comparison), GPS threshold crossings, `Notify.show()` outcomes, and every permission
+comparison), native-only lifecycle events merged from `NativeLogStore` (`SERVICE` —
+see "Native background service log" below), GPS threshold crossings, `Notify.show()`
+outcomes, and every permission
 prompt result. Entries persist in
 localStorage (3-day retention, capped at 800 entries, deliberately not `fmc_`-prefixed
 so backups stay free of debug noise) and are viewed/filtered by vehicle or category,
@@ -459,6 +462,45 @@ it ~1.5s after calling the native `startWatch()` and logs the result, since
 plugin's perspective. The native side additionally logs to Logcat (tags
 `FMC-FgService`, `FMC-BtPlugin`) for `adb`-based debugging, independent of the in-app
 log.
+
+**Native background service log (`NativeLogStore`, `SERVICE` category)**: everything
+above (`BT-SHADOW`/`GPS-SHADOW`/`BT-PENDING`/`GPS-PENDING`/etc.) only reaches
+`DiagLog` because it rides along on a real decision or a Capacitor plugin event —
+but that leaves a real gap: whether the background machinery *itself* was alive at
+all (the foreground service actually running, the GPS shadow watch actually started,
+the BT ACL receiver actually receiving broadcasts) was previously only visible via
+Logcat (`FMC-FgService`), i.e. only to someone with adb and a connected device — not
+provable from inside the app, which made it easy to misread genuine silence (nothing
+happened to log because nothing happened, e.g. the car was parked and stationary the
+whole time) as "the background service must be broken." `NativeLogStore.add(context,
+tag, message)` — called alongside (never instead of) the existing `Log.i`/`Log.w`/
+`Log.e` calls in `ParkingForegroundService.kt` at every lifecycle transition
+(`onCreate` success/failure, `onDestroy`, BT receiver registration, every raw ACL
+broadcast received — regardless of whether a vehicle is linked to that device label
+or the WebView is reachable, unlike the `BT`/`BT-PENDING` categories which only log
+once something is actually decided — and GPS watch start/stop/failure-to-start with
+the specific reason) — persists a small, bounded (last 200 entries)
+`SharedPreferences`-backed log (`core/NativeLogEntry.kt` + `NativeLogEntryJson.kt`,
+JUnit+Robolectric tested; `NativeLogStore` itself has no unit tests, same precedent
+as the rest of this migration's Service/Plugin wiring). `WidgetDataPlugin.getNativeLog()`/
+`.clearNativeLog()` let JS read/clear it; `js/app.js`'s `#reconcileNativeLog()` merges
+each entry into `DiagLog` under the new `SERVICE` category — **awaited**, and
+deliberately called as the very first thing in `#init()`, before any other `DiagLog`
+entry this session, specifically so these historical entries (which happened at some
+point while the app was closed) land in correct chronological order relative to
+everything else: `DiagLog` stores entries in insertion order and only reverses for
+display, it does not sort by timestamp, so ordering is a property of *when* each
+category merges, not just what timestamp it carries. Each merged entry does carry its
+own real historical timestamp (`DiagLog.log`'s optional 4th argument, `t`) rather than
+`Date.now()`, specifically so the displayed time in the log matches when the native
+event actually happened, not when it was read on the next app open — this was the
+whole point of the feature (being able to see, with certainty, what happened and
+when), and would be defeated if every merged entry showed the reopen time instead.
+Deliberately NOT every location update (`onLocationShadow()` fires every ~3s/5m
+during a drive — logging each one would blow through the 200-entry cap in minutes and
+push out the far more valuable start/stop/error events); the `GPS-SHADOW` category
+already covers the meaningful per-threshold-crossing decision level. No-op in the
+browser/PWA (`getNativeLog()` resolves to `[]` there).
 
 **Why the WebView's JS keeps running in the background at all**: Capacitor's Android
 Activity lifecycle delegates to Cordova's `handlePause(keepRunning)`, which calls
@@ -869,3 +911,5 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: with an active parking, lock the screen (or switch to another app — do NOT force-kill) and drive/walk far enough to cross the GPS distance or speed threshold — a system notification ("🚗 מזוהה נסיעה") should appear at roughly the time the threshold is actually crossed, not only after you manually reopen the app; on reopening, the diagnostic log's `GPS-PENDING` category should show the recorded+replayed suggestion, and `gpsEndModal` should already be open (or open immediately) rather than the suggestion having been silently missed
 - [ ] Android APK: save a new parking and immediately check the "חניה פעילה" widget and "מפה מוקטנת" widget — both should initially show a generic placeholder ("מיקום נשמר"), then within a few seconds (once reverse geocoding completes) update to show the real street address, without needing to reopen the app or tap the widget — if the widget stays stuck on the placeholder indefinitely, that's the geocode-completion sync regression, not a geocoding failure (check the in-app address display: if THAT shows the real address correctly while the widget doesn't, it's confirmed a sync gap, not a geocoding problem)
 - [ ] Android APK: link Bluetooth auto-end to vehicle B while vehicle A is the currently-active one (both have active parking) — connect to vehicle B's device — the "חניה פעילה"/"מפה מוקטנת" widgets (in their multi-vehicle cycle/dual view) should stop showing vehicle B as parked immediately after the auto-end, without needing to switch the active vehicle or reopen the app
+- [ ] Android APK: with an active parking, background the app (screen off or switch apps — do NOT force-kill) for at least a few minutes, then reopen it and check the diagnostic log's `SERVICE` category — it should show entries like "onCreate succeeded", "GPS watch started (provider=...)", and (if Bluetooth is linked) "ACL broadcast: ..." with real timestamps from DURING the background period (not all stamped with the reopen time), interleaved in correct chronological order with entries from before you backgrounded the app — this is the proof that the background service was genuinely alive and doing its job the whole time, independent of whether anything else happened to log
+- [ ] Android APK: force-stop the app from Android's own app-info screen (not just Recents), reopen it, and confirm the `SERVICE` category shows an "onCreate succeeded" entry for the fresh service start with no gap-filling entries claiming activity during the time the app was actually fully dead — the log should honestly reflect that nothing could have been recorded while the process didn't exist
