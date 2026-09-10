@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.36.0',
+  version: '1.36.1',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -40,6 +40,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.36.1',
+      date: '2026-09-10',
+      items: Object.freeze([
+        'נוסף רישום אבחון נוסף לחיבורי Bluetooth כדי לחקור דיווח על כך שחיבור/ניתוק לרכב לא הפעיל התראה — עדיין בבדיקה, אין שינוי בהתנהגות בפועל',
+      ]),
+    }),
     Object.freeze({
       version: '1.36.0',
       date: '2026-09-10',
