@@ -427,6 +427,9 @@ export class UIController {
     const colorInput = Utils.el('vehicleColorInput');
     if (colorInput) colorInput.value = vehicle?.color || '';
 
+    const dailyStatusToggle = Utils.el('vehicleDailyStatusToggle');
+    if (dailyStatusToggle) dailyStatusToggle.checked = vehicle ? vehicle.dailyStatusEnabled !== false : true;
+
     const grid = Utils.el('vehicleIconGrid');
     if (!grid) return;
     grid.innerHTML = '';
@@ -461,7 +464,8 @@ export class UIController {
     const selected        = Utils.el('vehicleIconGrid')?.querySelector('.icon-pick-btn.selected');
     const icon            = selected ? selected.textContent : CFG.vehicleIcons[0];
     const bluetoothDevice = Utils.el('vehicleBtDeviceValue')?.value || null;
-    return { name, icon, plate, color, bluetoothDevice };
+    const dailyStatusEnabled = Utils.el('vehicleDailyStatusToggle')?.checked !== false;
+    return { name, icon, plate, color, bluetoothDevice, dailyStatusEnabled };
   }
 
   // ── WHATSAPP MODAL ────────────────────────────────────────────

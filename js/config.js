@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.35.0',
+  version: '1.36.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -12,6 +12,7 @@ export const CFG = Object.freeze({
     mapCollapsed:      'fmc_map_collapsed_v1',
     bluetoothSettings: 'fmc_bluetooth_v1',
     gpsAutoEnd:        'fmc_gps_auto_end_v1',
+    dailyStatus:       'fmc_daily_status_v1',
     notifTag:          'fmc-parking-active',
   }),
   gpsSpeedThreshold:    7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
@@ -39,6 +40,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.36.0',
+      date: '2026-09-10',
+      items: Object.freeze([
+        'תוקן: רישומי "פעימת לב" של שירות הרקע ברקע לא נרשמו בקצב קבוע (לפעמים עד 20 דקות במקום 5) כשהמכשיר נכנס למצב חיסכון בסוללה עמוק — עכשיו נרשמים בצורה אמינה גם אז',
+        'נוספה התראה יומית (אנדרואיד) שמדווחת אילו רכבים חונים כרגע ואיפה — כדי לוודא שהאפליקציה וזיהוי הרקע פעילים. ניתן להפעיל/לכבות אותה גלובלית בהגדרות, ובנפרד לכל רכב',
+      ]),
+    }),
     Object.freeze({
       version: '1.35.0',
       date: '2026-09-09',

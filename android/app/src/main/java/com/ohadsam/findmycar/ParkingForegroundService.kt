@@ -1,6 +1,7 @@
 package com.ohadsam.findmycar
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -17,9 +18,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -67,6 +66,7 @@ class ParkingForegroundService : Service() {
         // shared source between JS and Kotlin, keep in sync if it ever
         // changes (see CLAUDE.md "Heartbeats").
         private const val HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000L
+        private const val ACTION_HEARTBEAT = "com.ohadsam.findmycar.ACTION_HEARTBEAT"
 
         // Set true only after startForeground() actually succeeds, false the
         // instant it fails or the service is torn down — lets the JS side
@@ -129,8 +129,8 @@ class ParkingForegroundService : Service() {
     private var locationListener: LocationListener? = null
     private var gpsShadowState = GpsDecisionState()
 
-    private val heartbeatHandler = Handler(Looper.getMainLooper())
-    private var heartbeatRunnable: Runnable? = null
+    private var heartbeatReceiver: BroadcastReceiver? = null
+    private var heartbeatPendingIntent: PendingIntent? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -195,32 +195,78 @@ class ParkingForegroundService : Service() {
         super.onDestroy()
     }
 
-    // Logs a "heartbeat" entry to NativeLogStore's SERVICE category every
-    // HEARTBEAT_INTERVAL_MS for as long as this service instance is alive —
-    // the native counterpart to js/app.js's #startDiagHeartbeat(). Neither
-    // heartbeat is useful moment-to-moment; both exist so a gap in the
-    // diagnostic log is provably a real gap (that side genuinely stopped
-    // running) rather than just "nothing happened to log", which was
-    // previously indistinguishable from "it's broken" when reviewing a
-    // report. A self-rescheduling Runnable on the main Looper rather than a
-    // raw Thread/Timer — this service already runs its other callbacks
-    // (BroadcastReceiver, LocationListener) on the main thread, so this
-    // stays consistent and needs no extra synchronization.
+    // Logs a "heartbeat" entry to NativeLogStore's SERVICE category roughly
+    // every HEARTBEAT_INTERVAL_MS for as long as this service instance is
+    // alive — the native counterpart to js/app.js's #startDiagHeartbeat().
+    // Neither heartbeat is useful moment-to-moment; both exist so a gap in
+    // the diagnostic log is provably a real gap (that side genuinely
+    // stopped running) rather than just "nothing happened to log", which
+    // was previously indistinguishable from "it's broken" when reviewing a
+    // report.
+    //
+    // A real, previously-shipped bug: the first version of this used a
+    // plain Handler(Looper.getMainLooper()).postDelayed(...)
+    // self-rescheduling Runnable — that has NO wake source of its own.
+    // Once the device enters Doze (screen off, stationary), a Handler
+    // timer only actually runs whenever the CPU happens to wake up for
+    // some UNRELATED reason (a GPS fix, an incoming broadcast, a Doze
+    // maintenance window) — confirmed from real production diagnostic-log
+    // evidence: heartbeats that should have landed exactly 5 minutes apart
+    // instead landed 7-21+ minutes apart, growing more irregular the
+    // longer the device stayed idle (classic Doze maintenance-window
+    // backoff). That's not "approximately every 5 minutes" — it's
+    // "whenever something else happens to wake the CPU", which defeats the
+    // whole point of a heartbeat (a predictable liveness cadence, not an
+    // opportunistic one). Fixed by using
+    // AlarmManager.setExactAndAllowWhileIdle instead — the OS-documented,
+    // no-special-permission API specifically meant for "run approximately
+    // on schedule even during Doze" (distinct from setExact()/
+    // setAlarmClock(), which need the user-facing SCHEDULE_EXACT_ALARM
+    // permission and exist for a different, user-visible-alarm purpose).
+    // Below API 23 (Doze itself doesn't exist pre-M), falls back to a
+    // plain AlarmManager.set() — still routed through the same
+    // receiver/reschedule path rather than branching into a second
+    // implementation.
     private fun startHeartbeat() {
-        stopHeartbeat() // idempotent — never double-schedule if called twice
-        val runnable = object : Runnable {
-            override fun run() {
-                NativeLogStore.add(this@ParkingForegroundService, TAG, "SERVICE", "heartbeat — foreground service alive (reasons=$activeReasons)")
-                heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+        stopHeartbeat() // idempotent — never double-register/double-schedule if called twice
+        NativeLogStore.add(this, TAG, "SERVICE", "heartbeat — foreground service alive (reasons=$activeReasons)")
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                NativeLogStore.add(ctx, TAG, "SERVICE", "heartbeat — foreground service alive (reasons=$activeReasons)")
+                scheduleNextHeartbeat()
             }
         }
-        heartbeatRunnable = runnable
-        heartbeatHandler.postDelayed(runnable, HEARTBEAT_INTERVAL_MS)
+        ContextCompat.registerReceiver(this, receiver, IntentFilter(ACTION_HEARTBEAT), ContextCompat.RECEIVER_NOT_EXPORTED)
+        heartbeatReceiver = receiver
+        scheduleNextHeartbeat()
+    }
+
+    private fun scheduleNextHeartbeat() {
+        try {
+            val am = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val intent = Intent(ACTION_HEARTBEAT).setPackage(packageName)
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0)
+            val pi = PendingIntent.getBroadcast(this, 0, intent, flags)
+            heartbeatPendingIntent = pi
+            val triggerAt = System.currentTimeMillis() + HEARTBEAT_INTERVAL_MS
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            } else {
+                am.set(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "scheduleNextHeartbeat failed (non-fatal)", e)
+        }
     }
 
     private fun stopHeartbeat() {
-        heartbeatRunnable?.let { heartbeatHandler.removeCallbacks(it) }
-        heartbeatRunnable = null
+        heartbeatReceiver?.let { try { unregisterReceiver(it) } catch (e: IllegalArgumentException) { /* already gone */ } }
+        heartbeatReceiver = null
+        heartbeatPendingIntent?.let { pi ->
+            (getSystemService(Context.ALARM_SERVICE) as? AlarmManager)?.cancel(pi)
+        }
+        heartbeatPendingIntent = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

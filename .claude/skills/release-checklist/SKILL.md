@@ -59,10 +59,11 @@ available, report that check as a explicit FAIL/UNKNOWN with the reason, not omi
     `.widgets.MiniMapWidgetProvider` (`<receiver>`, each with an
     `android.appwidget.provider` meta-data pointing at a `res/xml/widget_*_info.xml`
     that exists)
+  - `.DailyStatusReceiver` (`<receiver>`, with a `BOOT_COMPLETED` `<intent-filter>`)
   - Permissions: `BLUETOOTH_CONNECT`, `FOREGROUND_SERVICE`,
     `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `POST_NOTIFICATIONS`,
     `ACCESS_FINE_LOCATION`, `CAMERA`, `RECORD_AUDIO`,
-    `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` — a permission missing here
+    `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `RECEIVE_BOOT_COMPLETED` — a permission missing here
     isn't caught by any build step (the app compiles fine and only fails at
     runtime when that specific feature is used), so check this list literally
     every release, not just when a new native feature is added
@@ -587,6 +588,19 @@ diagnostic log back to "silence is ambiguous" without any other test catching it
   persistent background loop of their own (only `ParkingForegroundService` and the
   web app's JS engine do), so a heartbeat added to either plugin class would be
   meaningless noise, not a real liveness signal.
+- Confirm `ParkingForegroundService.kt`'s `startHeartbeat()`/`scheduleNextHeartbeat()`
+  use `AlarmManager.setExactAndAllowWhileIdle` (guarded to API 23+, falling back to
+  plain `AlarmManager.set()` pre-M) — NOT `Handler.postDelayed`/`Handler(Looper...)`.
+  A real, previously-shipped bug (see CLAUDE.md "the native heartbeat needs
+  `AlarmManager`, not a `Handler`"): a plain `Handler` timer has no wake source, so
+  once the device enters Doze it only fires whenever the CPU happens to wake for some
+  unrelated reason — production diagnostic-log evidence showed 7-21+ minute gaps
+  instead of a steady 5-minute cadence. Grep the file for `Handler(` / `postDelayed` —
+  neither should appear anywhere in this class after the fix. Also confirm
+  `stopHeartbeat()` unregisters the dynamic `BroadcastReceiver` AND cancels the
+  pending `AlarmManager` alarm (both, not just one) — leaking either would either keep
+  firing heartbeats after the service should have stopped, or throw on
+  `unregisterReceiver` the next time `startHeartbeat()` tries to register a fresh one.
 
 ## 10. Cross-channel behavior parity
 
@@ -594,6 +608,85 @@ diagnostic log back to "silence is ambiguous" without any other test catching it
   `window.Capacitor` branch in `js/app.js` is genuinely a no-op in the browser (no
   code path that throws or behaves differently for PWA users when `window.Capacitor`
   is `undefined`) — spot-read the guards, don't just grep for their existence.
+
+## 11. Once-daily status notification
+
+A user-facing system notification, once a day, reporting per-vehicle parked/not-
+parked status — added specifically so background detection health is visible without
+opening the app or reading the diagnostic log. A regression here is easy to miss
+because it only manifests roughly once every 24 hours:
+
+- Confirm `js/config.js` declares `CFG.keys.dailyStatus` (`fmc_daily_status_v1`) and
+  `js/vehicles.js`'s `add()`/`update()` both accept and persist a `dailyStatusEnabled`
+  parameter, defaulting to `true` — including in `update()`'s backward-compat default
+  block (`...vehicles[idx]` spread) for vehicles created before this field existed,
+  matching the established pattern for `bluetoothAutoEnd`/etc.
+- Confirm `index.html` has a `dailyStatusToggle` checkbox in Settings (global master
+  switch) and a `vehicleDailyStatusToggle` checkbox in the vehicle edit modal
+  (per-vehicle), and that `js/app.js`'s `#init()` sets the global toggle's `checked`
+  from `#getDailyStatusSettings().enabled` while `js/ui.js`'s
+  `populateVehicleModal()`/`getVehicleModalValues()` read/write the per-vehicle one —
+  a regression that drops either wiring silently reverts to whatever the checkbox's
+  static HTML `checked` attribute says, not the vehicle's actual stored value.
+- Confirm toggling `dailyStatusToggle` calls `this.#syncUI()` immediately (not just
+  `Store.set(...)`) — without it, the native alarm only picks up the change on the
+  next unrelated parking-state sync, not right away.
+- Confirm `js/widget-bridge.js`'s `syncVehicles()` payload includes
+  `dailyStatusNotificationEnabled` at the top level (read fresh via `Store.get`, not
+  cached from `state`) and `dailyStatusEnabled` per vehicle — a regression that drops
+  either wouldn't fail any test (the JSON still parses) but would silently make the
+  native side always believe the feature is off, or ignore per-vehicle opt-outs.
+- Confirm `WidgetDataPlugin.syncVehicles()` reads `dailyStatusNotificationEnabled`,
+  persists it under `KEY_DAILY_STATUS_ENABLED`, and calls
+  `DailyStatusScheduler.scheduleOrCancel(context, dailyStatusEnabled)` — every single
+  call, not conditionally — this is the ONLY place that keeps the alarm in sync with
+  the setting (there's no separate "settings changed" plugin method), so a regression
+  here means toggling the setting has no real effect until some other code path
+  happens to call it.
+- Confirm `DailyStatusScheduler.scheduleNext()`/`cancel()` use
+  `AlarmManager.setExactAndAllowWhileIdle` (API 23+, falling back to `set()` pre-M) —
+  same Doze-awareness requirement and same real-bug precedent as the heartbeat fix
+  above; grep for `Handler(`/`postDelayed` — neither should appear in this file or in
+  `DailyStatusReceiver.kt`.
+- Confirm `DailyStatusReceiver` is registered in `AndroidManifest.xml` as a
+  **manifest-declared** `<receiver>` (not dynamically registered like
+  `ParkingForegroundService`'s BT ACL receiver) with an `<intent-filter>` for
+  `android.intent.action.BOOT_COMPLETED`, and that
+  `android.permission.RECEIVE_BOOT_COMPLETED` is declared — without manifest
+  registration, `BOOT_COMPLETED` can never reach it at all, and the feature would
+  silently stop working after every device reboot until the user happened to reopen
+  the app (which is the only other place anything re-arms the alarm).
+- Confirm `DailyStatusReceiver.onReceive()`'s `BOOT_COMPLETED` branch only
+  reschedules (`DailyStatusScheduler.scheduleNext()`) when the stored
+  `KEY_DAILY_STATUS_ENABLED` is true, and never fires the notification itself on
+  boot — a regression that unconditionally reschedules (or fires) on every boot would
+  re-enable a feature the user had explicitly turned off, or show a notification
+  immediately after every restart regardless of the target hour.
+- Confirm `DailyStatusReceiver`'s `ACTION_DAILY_STATUS` branch calls
+  `DailyStatusScheduler.scheduleNext()` (for tomorrow) **unconditionally** — including
+  when `showStatusNotification()` throws — wrapped so a single transient failure
+  (e.g. a `SharedPreferences` read hiccup) can never silently end the whole daily
+  cadence; same "always clean up even on per-entry failure" principle as the
+  pending-action reconcilers.
+- Confirm `DailyStatusVehicles.parse()` defaults a missing `dailyStatusEnabled` field
+  to `true` (matching the JS-side default for vehicles created before this field
+  existed) and filters OUT vehicles with it explicitly `false` — a regression to the
+  opposite default would silently exclude every pre-existing vehicle from a feature
+  the user just turned on globally, with no error to catch it.
+- Confirm `showStatusNotification()` returns early (no notification) when the
+  filtered vehicle list is empty (global on, but nothing opted in, or no vehicles
+  exist) — never posts an empty/blank notification.
+- Confirm the `findmycar_daily_status` notification channel uses
+  `NotificationManager.IMPORTANCE_DEFAULT`, not `IMPORTANCE_LOW`/`IMPORTANCE_MIN` —
+  unlike the persistent parking/background notifications (deliberately silent, since
+  they're always-on), this is a once-a-day digest the user opted into specifically to
+  notice it landed; a regression to a lower importance would make it easy to miss,
+  defeating the point (see CLAUDE.md's prior "must be visible in the shade directly"
+  lesson for the background-service notification, same principle applies here).
+- Confirm `index.html`'s `diagLogCategoryFilter` has a `DAILY` option (a prior
+  release shipped `BT-PENDING` without adding it to this dropdown — caught and fixed
+  when `GPS-PENDING` was added; check every new category explicitly rather than
+  assuming past coverage was complete).
 
 ## Output format
 

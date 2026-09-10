@@ -25,7 +25,7 @@ export const VehicleController = {
 
   getById(id) { return this.getAll().find(v => v.id === id) || null; },
 
-  add(name, icon, plate, color, bluetoothDevice = null) {
+  add(name, icon, plate, color, bluetoothDevice = null, dailyStatusEnabled = true) {
     const vehicles = this.getAll();
     if (vehicles.length >= CFG.maxVehicles) return null;
     const v = {
@@ -38,13 +38,14 @@ export const VehicleController = {
       bluetoothAutoEnd:    false,
       bluetoothAutoStart:  false,
       bluetoothStartPopup: true,
+      dailyStatusEnabled:  dailyStatusEnabled !== false,
     };
     vehicles.push(v);
     Store.set(CFG.keys.vehicles, vehicles);
     return v;
   },
 
-  update(id, name, icon, plate, color, bluetoothDevice = null) {
+  update(id, name, icon, plate, color, bluetoothDevice = null, dailyStatusEnabled = true) {
     const vehicles = this.getAll();
     const idx = vehicles.findIndex(v => v.id === id);
     if (idx === -1) return false;
@@ -52,12 +53,14 @@ export const VehicleController = {
       bluetoothAutoEnd:    false,     // defaults for vehicles created before BT fields existed
       bluetoothAutoStart:  false,
       bluetoothStartPopup: true,
+      dailyStatusEnabled:  true,      // default for vehicles created before this field existed
       ...vehicles[idx],              // existing values take priority over defaults
       name:            (name || '').trim().slice(0, CFG.maxVehicleNameLen) || 'רכב',
       icon,
       plate:           (plate || '').trim().slice(0, CFG.maxPlateLen) || null,
       color:           (color || '').trim().slice(0, CFG.maxColorLen) || null,
       bluetoothDevice: bluetoothDevice || null,
+      dailyStatusEnabled: dailyStatusEnabled !== false,
     };
     Store.set(CFG.keys.vehicles, vehicles);
     return true;

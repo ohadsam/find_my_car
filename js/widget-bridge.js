@@ -116,10 +116,17 @@ export class WidgetBridge {
           lat:                 parking?.location?.lat ?? null,
           lng:                 parking?.location?.lng ?? null,
           timestamp:           parking?.timestamp ?? null,
+          dailyStatusEnabled:  v.dailyStatusEnabled !== false,
         };
       }),
       activeVehicleId: state.activeVehicleId ?? '',
       gpsAutoEndEnabled: !!Store.get(CFG.keys.gpsAutoEnd, { enabled: false })?.enabled,
+      // Global master switch for the once-daily "is anything parked, and
+      // where" system notification (see WidgetDataPlugin.kt/
+      // DailyStatusReceiver.kt) — read fresh on every sync so toggling it
+      // in Settings takes effect on the native side immediately, not only
+      // on the next unrelated parking-state change.
+      dailyStatusNotificationEnabled: !!Store.get(CFG.keys.dailyStatus, { enabled: false })?.enabled,
     }).catch(() => {});
 
     const current = state.current;
