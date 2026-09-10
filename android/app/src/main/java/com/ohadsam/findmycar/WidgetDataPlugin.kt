@@ -54,6 +54,7 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         const val KEY_VEHICLES_JSON     = "vehicles_json"
         const val KEY_ACTIVE_VEHICLE_ID = "active_vehicle_id"
         const val KEY_GPS_AUTO_END_ENABLED = "gps_auto_end_enabled"
+        const val KEY_DAILY_STATUS_ENABLED = "daily_status_notification_enabled"
         private const val TAG = "FMC-WidgetData"
         private const val PARKING_NOTIF_CHANNEL_ID = "findmycar_parking_active"
         private const val PARKING_NOTIF_ID = 4202
@@ -89,12 +90,23 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         val vehiclesArray = call.getArray("vehicles")
         val activeId = call.getString("activeVehicleId", "") ?: ""
         val gpsAutoEndEnabled = call.getBoolean("gpsAutoEndEnabled", false) ?: false
+        val dailyStatusEnabled = call.getBoolean("dailyStatusNotificationEnabled", false) ?: false
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putString(KEY_VEHICLES_JSON, vehiclesArray?.toString() ?: "[]")
             .putString(KEY_ACTIVE_VEHICLE_ID, activeId)
             .putBoolean(KEY_GPS_AUTO_END_ENABLED, gpsAutoEndEnabled)
+            .putBoolean(KEY_DAILY_STATUS_ENABLED, dailyStatusEnabled)
             .apply()
+        // Re-arms (or cancels) the once-daily status-notification alarm on
+        // every sync — cheap and idempotent (recomputing "next occurrence of
+        // the target hour" from wall-clock "now" always lands on the same
+        // target unless the setting itself just changed), and self-healing:
+        // syncVehicles() already fires on nearly every real state change and
+        // on every app init, so there's no separate "settings changed" event
+        // to track — this just piggybacks on that existing high-frequency
+        // call site. See DailyStatusScheduler/DailyStatusReceiver.
+        DailyStatusScheduler.scheduleOrCancel(context, dailyStatusEnabled)
         call.resolve()
     }
 

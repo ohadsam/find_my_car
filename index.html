@@ -307,6 +307,18 @@
           </label>
         </div>
       </div>
+      <div class="gps-settings-wrapper">
+        <div class="gps-toggle-row">
+          <div class="gps-toggle-info">
+            <span class="gps-toggle-label">📋 התראת סטטוס יומית</span>
+            <span class="gps-toggle-desc">התראה יומית (אנדרואיד) שמדווחת אילו רכבים חונים כרגע ואיפה — כדי לוודא שהאפליקציה פעילה ברקע</span>
+          </div>
+          <label class="bt-toggle" aria-label="התראת סטטוס יומית">
+            <input type="checkbox" id="dailyStatusToggle">
+            <span class="bt-toggle-slider"></span>
+          </label>
+        </div>
+      </div>
       <div class="settings-reload-wrapper">
         <button class="settings-reload-btn" id="reloadAppBtn" aria-label="טען גרסה חדשה">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -729,6 +741,17 @@
           <input type="hidden" id="vehicleBtDeviceValue" value="">
           <div class="bt-device-list" id="vehicleBtDeviceList" style="display:none;"></div>
         </div>
+        <div class="form-group">
+          <div class="gps-toggle-row">
+            <div class="gps-toggle-info">
+              <span class="gps-toggle-label">📋 כלול בהתראת הסטטוס היומית</span>
+            </div>
+            <label class="bt-toggle" aria-label="כלול בהתראת הסטטוס היומית">
+              <input type="checkbox" id="vehicleDailyStatusToggle" checked>
+              <span class="bt-toggle-slider"></span>
+            </label>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="modal-btn secondary" data-close="vehicleModal">ביטול</button>
@@ -906,6 +929,7 @@
             <option value="WIDGET">ווידג'טים</option>
             <option value="SERVICE">שירות רקע (נייטיב)</option>
             <option value="BRIDGE">תקשורת נייטיב↔אפליקציה</option>
+            <option value="DAILY">סטטוס יומי</option>
             <option value="NOTIFY">התראות</option>
             <option value="PERM">הרשאות</option>
           </select>

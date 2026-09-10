@@ -41,6 +41,21 @@
             android:name=".widgets.WidgetCycleVehicleReceiver"
             android:exported="false" />
 
+        <!-- Handles the once-daily status-notification alarm (own explicit
+             PendingIntent, no intent-filter match needed for that) AND
+             BOOT_COMPLETED (a protected system broadcast — safe to declare
+             even though exported=false, since only the system can send it).
+             Manifest-registered rather than dynamic specifically so it keeps
+             receiving BOOT_COMPLETED across reboots regardless of whether
+             any Service happens to be running. -->
+        <receiver
+            android:name=".DailyStatusReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -123,4 +138,5 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>

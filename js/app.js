@@ -155,6 +155,9 @@ class FindMyCarApp {
     const gpsToggle = Utils.el('gpsAutoEndToggle');
     if (gpsToggle) gpsToggle.checked = this.#getGpsSettings().enabled;
 
+    const dailyStatusToggle = Utils.el('dailyStatusToggle');
+    if (dailyStatusToggle) dailyStatusToggle.checked = this.#getDailyStatusSettings().enabled;
+
     // Init map; after loading screen fades, invalidate size to handle any CSS transition artifacts
     setTimeout(() => {
       this.#map.init(this.#state.current);
@@ -373,6 +376,13 @@ class FindMyCarApp {
     Utils.el('gpsEndDismissBtn')?.addEventListener('click', () => this.#closeModal('gpsEndModal'));
     Utils.el('gpsAutoEndToggle')?.addEventListener('change', e => {
       Store.set(CFG.keys.gpsAutoEnd, { enabled: e.target.checked });
+    });
+    Utils.el('dailyStatusToggle')?.addEventListener('change', e => {
+      Store.set(CFG.keys.dailyStatus, { enabled: e.target.checked });
+      // Re-sync immediately (not just on the next unrelated state change) so
+      // the native side schedules/cancels its daily alarm right away —
+      // WidgetBridge.sync() reads this setting fresh on every call.
+      this.#syncUI();
     });
 
     // Bluetooth
@@ -896,14 +906,14 @@ class FindMyCarApp {
   }
 
   #saveVehicle() {
-    const { name, icon, plate, color, bluetoothDevice } = this.#ui.getVehicleModalValues();
+    const { name, icon, plate, color, bluetoothDevice, dailyStatusEnabled } = this.#ui.getVehicleModalValues();
     if (!name) { this.#ui.showToast('יש להזין שם לרכב', 'warning'); return; }
 
     if (this.#state.vehicleEditId) {
-      VehicleController.update(this.#state.vehicleEditId, name, icon, plate, color, bluetoothDevice);
+      VehicleController.update(this.#state.vehicleEditId, name, icon, plate, color, bluetoothDevice, dailyStatusEnabled);
       this.#ui.showToast('✅ הרכב עודכן', 'success');
     } else {
-      const v = VehicleController.add(name, icon, plate, color, bluetoothDevice);
+      const v = VehicleController.add(name, icon, plate, color, bluetoothDevice, dailyStatusEnabled);
       if (!v) { this.#ui.showToast(`ניתן להוסיף עד ${CFG.maxVehicles} רכבים`, 'warning'); return; }
       this.#ui.showToast(`${icon} ${name} נוסף!`, 'success');
     }
@@ -1153,6 +1163,16 @@ class FindMyCarApp {
   // ── GPS AUTO-END ──────────────────────────────────────────────
   #getGpsSettings() {
     return Store.get(CFG.keys.gpsAutoEnd, { enabled: false });
+  }
+
+  // ── DAILY STATUS NOTIFICATION ───────────────────────────────────
+  // Global master switch — Android-only (no PWA equivalent, see
+  // js/widget-bridge.js). Reading this here (rather than a plain Store.get
+  // at each call site) matches #getGpsSettings()'s precedent. Default
+  // false: a new notification category should be opt-in, not sprung on
+  // existing users after an update.
+  #getDailyStatusSettings() {
+    return Store.get(CFG.keys.dailyStatus, { enabled: false });
   }
 
   #checkGpsSpeed(speed) {

@@ -62,6 +62,7 @@ Loaded via `<script type="module" src="js/app.js">` with `<link rel="moduleprelo
   bluetoothAutoEnd:   boolean,           // auto-end parking on BT connect
   bluetoothAutoStart: boolean,           // auto-start parking on BT disconnect
   bluetoothStartPopup:boolean,           // show media popup after auto-start
+  dailyStatusEnabled: boolean,           // include this vehicle in the once-daily Android status notification (default true)
 }
 
 // Bluetooth settings (localStorage key: fmc_bluetooth_v1)
@@ -72,6 +73,11 @@ Loaded via `<script type="module" src="js/app.js">` with `<link rel="moduleprelo
 // GPS auto-end settings (localStorage key: fmc_gps_auto_end_v1)
 {
   enabled: boolean   // suggest end-parking when vehicle-speed movement detected
+}
+
+// Daily status notification settings (localStorage key: fmc_daily_status_v1)
+{
+  enabled: boolean   // global master switch — Android-only, see "Once-daily status notification" below (default false)
 }
 
 // Active vehicle ID (localStorage key: fmc_active_v1)
@@ -316,7 +322,7 @@ never loses its own execution context the same way.
 | Android source | Capacitor plugin name (`window.Capacitor.Plugins.*`) | Purpose |
 |---|---|---|
 | `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`/`getPendingActions`/`clearPendingActions` (the last two Stage 5 of the native migration — see below); emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
-| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage), triggers an `AppWidgetManager` refresh, and (Stage 9) posts/cancels the persistent "active parking" notification directly via `NotificationCompat`. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking`) and the global GPS auto-end setting so `WidgetQuickActionsActivity` can show a vehicle picker natively and the native decision engines have real settings to read. `getPendingGpsSuggestion`/`clearPendingGpsSuggestion` (Stage 7) and `getPendingWidgetActions`/`clearPendingWidgetActions` (Stage 8) let JS read/clear what was recorded while unreachable. `getNativeLog`/`clearNativeLog` let JS read/clear `NativeLogStore`'s native-only lifecycle log (see "Native background service log" below) — unlike the `getPending*` pair, these aren't actionable decisions to replay, purely informational. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
+| `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage), triggers an `AppWidgetManager` refresh, and (Stage 9) posts/cancels the persistent "active parking" notification directly via `NotificationCompat`. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled, dailyStatusNotificationEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking` + `dailyStatusEnabled`), the global GPS auto-end setting, and the global daily-status-notification setting, so `WidgetQuickActionsActivity` can show a vehicle picker natively, the native decision engines have real settings to read, and `DailyStatusReceiver` (see "Once-daily status notification" below) knows what to report — also (re-)arms/cancels `DailyStatusScheduler`'s alarm on every call. `getPendingGpsSuggestion`/`clearPendingGpsSuggestion` (Stage 7) and `getPendingWidgetActions`/`clearPendingWidgetActions` (Stage 8) let JS read/clear what was recorded while unreachable. `getNativeLog`/`clearNativeLog` let JS read/clear `NativeLogStore`'s native-only lifecycle log (see "Native background service log" below) — unlike the `getPending*` pair, these aren't actionable decisions to replay, purely informational. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app. Since Stage 4 of the native migration (shadow mode only), also runs a plain `LocationManager` watch (`updateLocationWatch()`/`onLocationShadow()`) precisely while the `"parking"` reason is active, feeding `GpsDecisionEngine` — wrapped in its own independent try/catch backstop. Since Stage 7, `maybeRecordPendingGpsSuggestion()` runs alongside (not inside) that shadow logging — its own independent try/catch, same `MainActivity.getActiveWebView() != null` no-op gate as `BluetoothClassicPlugin`'s Stage 5 — to record a real `PendingGpsSuggestion` when the WebView is unreachable |
 | `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
@@ -326,6 +332,9 @@ never loses its own execution context the same way.
 | *(official `@capacitor/filesystem`)* | `Filesystem` | Used only by `#exportData()` to write the backup JSON to the app's private Cache dir (no permissions needed) |
 | *(official `@capacitor/share`)* | `Share` | Used only by `#exportData()` to open the native Share sheet for the backup file — no custom Kotlin for either plugin, both auto-registered by `cap sync` |
 | *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification, which since Stage 9 of the native migration is posted/cancelled directly by `WidgetDataPlugin.update()`/`.clear()` (plain `NotificationCompat`, not this plugin) on native; `#showParkingNotification`/`#cancelParkingNotification` (js/app.js) now skip themselves on native and keep using the browser-safe `ServiceWorkerRegistration.showNotification()` path only on the PWA, which has no native equivalent to delegate to |
+| `android/.../DailyStatusReceiver.kt` | *(no JS-facing methods — receives, not called from JS)* | Manifest-registered `BroadcastReceiver` (see "Once-daily status notification" below) that fires once a day, posts the status notification (per-vehicle parked/not-parked + address, filtered to vehicles with `dailyStatusEnabled`), and reschedules itself for tomorrow — also handles `BOOT_COMPLETED` to re-arm the alarm across reboots (`AlarmManager` alarms don't survive a restart) |
+| `android/.../DailyStatusScheduler.kt` | *(internal)* | `scheduleOrCancel`/`scheduleNext`/`cancel` — owns the `AlarmManager.setExactAndAllowWhileIdle` scheduling math (next occurrence of a fixed target hour) for `DailyStatusReceiver`; called from `WidgetDataPlugin.syncVehicles()` on every sync (idempotent) and from `DailyStatusReceiver` itself after each fire/boot |
+| `android/.../DailyStatusVehicles.kt` | *(internal)* | Minimal parser of the `vehicles_json` `SharedPreferences` mirror, independent of `VehicleJsonParser`/`ParkedVehicles` (same "multiple independent readers" precedent as `ParkedVehicles.kt`) — reads only what `DailyStatusReceiver` needs: name/icon/hasParking/address, filtered to `dailyStatusEnabled` |
 
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
 state change must go through) calls `WidgetBridge.sync(state)` after
@@ -575,23 +584,121 @@ session that closes again well within the first 5-minute interval) and then on a
 plain `setInterval`; it runs unconditionally, including in the browser/PWA, where "is
 the tab's JS still executing" is exactly as meaningful a liveness signal as it is on
 native. `ParkingForegroundService.kt`'s `startHeartbeat()`/`stopHeartbeat()` mirror
-this natively via a self-rescheduling `Runnable` on `Handler(Looper.getMainLooper())`
-— consistent with the service's other callbacks (`BroadcastReceiver`,
-`LocationListener`), which already run on the main thread, so no extra
-synchronization is needed. Wired into `onCreate()`'s success path (right after the
-existing "onCreate succeeded" log) and `onDestroy()` (right after the existing
-"onDestroy" log); `startHeartbeat()` is idempotent (`stopHeartbeat()` first) so
-calling it twice never double-schedules. **Deliberately only these two sources get a
-heartbeat** — `BluetoothClassicPlugin`/`WidgetDataPlugin` do not, because they are
-Capacitor plugin classes with no independent persistent background loop of their own
-(they only ever run synchronously, invoked either by `ParkingForegroundService` or by
-a live JS call) — they are not separate "processes" with their own aliveness to prove;
-their own liveness is entirely a function of whichever of the two heartbeat-bearing
-processes is calling into them. `CFG.diagHeartbeatIntervalMs` (`js/config.js`) and
+this natively. Wired into `onCreate()`'s success path (right after the existing
+"onCreate succeeded" log) and `onDestroy()` (right after the existing "onDestroy"
+log); `startHeartbeat()` is idempotent (`stopHeartbeat()` first) so calling it twice
+never double-schedules. **Deliberately only these two sources get a heartbeat** —
+`BluetoothClassicPlugin`/`WidgetDataPlugin` do not, because they are Capacitor plugin
+classes with no independent persistent background loop of their own (they only ever
+run synchronously, invoked either by `ParkingForegroundService` or by a live JS call)
+— they are not separate "processes" with their own aliveness to prove; their own
+liveness is entirely a function of whichever of the two heartbeat-bearing processes is
+calling into them. `CFG.diagHeartbeatIntervalMs` (`js/config.js`) and
 `ParkingForegroundService.HEARTBEAT_INTERVAL_MS` (Kotlin) both hardcode 5 minutes —
 there is no single shared constant source between JS and Kotlin anywhere in this
 codebase (see GPS thresholds above for the same precedent), so keep them in sync by
 hand if this interval ever changes.
+
+**Real, previously-shipped bug: the native heartbeat needs `AlarmManager`, not a
+`Handler`** — the first version of `startHeartbeat()`/`stopHeartbeat()` used a plain
+self-rescheduling `Runnable` on `Handler(Looper.getMainLooper())`. That has no wake
+source of its own: once the device enters Doze (screen off, stationary), a Handler
+timer only actually runs whenever the CPU happens to wake up for some *unrelated*
+reason (a GPS fix, an incoming broadcast, a Doze maintenance window) — it does not
+itself wake the CPU. This was caught from real production diagnostic-log evidence a
+user reported: `[FMC-FgService]` heartbeats that should have landed exactly 5 minutes
+apart instead landed 7–21+ minutes apart, growing more irregular the longer the
+device stayed idle — the classic exponential-backoff signature of Doze maintenance
+windows, not "approximately every 5 minutes" as the feature was supposed to provide.
+**Fix**: `startHeartbeat()` now dynamically registers a `BroadcastReceiver` for a
+private `ACTION_HEARTBEAT` action and schedules it via
+`AlarmManager.setExactAndAllowWhileIdle` (guarded to API 23+; falls back to a plain
+`AlarmManager.set()` pre-M, where Doze doesn't exist anyway) instead of
+`Handler.postDelayed` — this is the OS-documented, no-special-permission API
+specifically meant for "run approximately on schedule even during Doze" (distinct
+from `setExact()`/`setAlarmClock()`, which need the user-facing
+`SCHEDULE_EXACT_ALARM` permission and exist for a different, user-visible-alarm
+purpose). The receiver re-registers and reschedules itself on every fire, mirroring
+the old Handler code's self-rescheduling shape, just Doze-aware. This same lesson is
+why the new once-daily status notification (below) is built on `AlarmManager` from
+the start rather than any `Handler`/`Timer`-based approach.
+
+**Once-daily status notification (`DailyStatusReceiver`)**: a separate feature from
+the heartbeats above, though it exists for the same underlying reason — proving the
+app's background detection is genuinely alive, this time as a **user-facing**
+system notification rather than something only visible in the diagnostic log. Once a
+day (fixed at `DailyStatusScheduler.TARGET_HOUR`:`TARGET_MINUTE` = 09:00 local device
+time, not user-configurable today), a single notification lists, for every vehicle
+with the per-vehicle setting on, whether it currently has an active parking and — if
+so — its address; a vehicle with no active parking shows "אין חניה פעילה" instead.
+Two settings gate this, mirroring the existing Bluetooth-settings pattern of a global
+master switch plus independent per-vehicle opt-out: a global master switch
+(`fmc_daily_status_v1` → `{enabled: boolean}`, `js/config.js`'s `CFG.keys.dailyStatus`,
+toggled via the "📋 התראת סטטוס יומית" row in Settings, default **off** — a new
+notification category should be opt-in, not sprung on existing users after an
+update) and a per-vehicle `dailyStatusEnabled` field (default **true**, so once the
+global switch is turned on, every vehicle shows up without an extra per-vehicle step;
+toggled via the "📋 כלול בהתראת הסטטוס היומית" checkbox in the vehicle edit modal).
+Both are read fresh, every time, inside `WidgetBridge.sync()` (not cached in
+`state`) so toggling either takes effect on the very next sync, and are mirrored into
+`WidgetDataPlugin`'s `SharedPreferences` by `syncVehicles()` — the global flag under a
+new `KEY_DAILY_STATUS_ENABLED`, the per-vehicle flag as one more field in the existing
+`vehicles_json` mirror (see "Widget data flow" above) — the same JSON every other
+native background feature already reads, no new sync path needed.
+
+**Native-only by construction** (like the Stage 9 persistent parking notification):
+there is no PWA equivalent — a browser tab has no reliable way to run code once a day
+regardless of whether it's open, so the Settings toggle and vehicle checkbox are
+simply no-ops in the browser (`WidgetBridge.#plugin` is `null` there, so
+`syncVehicles?.()` never reaches native) rather than being hidden — consistent with
+every other native-only capability in this codebase (see "Cross-channel behavior
+parity" in the release-checklist skill).
+
+**Scheduling (`DailyStatusScheduler`)**: uses `AlarmManager.setExactAndAllowWhileIdle`
+(Doze-aware, same API and reasoning as the heartbeat fix directly above — this
+feature never used a `Handler`-based approach in the first place, precisely because
+that bug had just been found) anchored to the next occurrence of the fixed target
+hour, computed fresh from wall-clock "now" every time — which makes
+`scheduleOrCancel()` naturally idempotent: `WidgetDataPlugin.syncVehicles()` calls it
+on **every** invocation (not just when the setting actually changed, since there's no
+separate "settings changed" event to hook — `syncVehicles()` already fires on nearly
+every real state change and on every app init, so piggybacking on that existing
+high-frequency call site is simpler and self-healing than tracking a diff), and
+recomputing "next occurrence of 09:00" from the current moment always lands on the
+same target unless the setting just flipped, so this never drifts the notification
+later with repeated calls. `DailyStatusReceiver.onReceive()` reschedules for
+"tomorrow" every time it actually fires (by which point today's target time has
+necessarily passed), and does so **unconditionally** — even if building/showing the
+notification itself threw — so one transient failure (e.g. a `SharedPreferences` read
+hiccup) can never silently end the whole daily cadence, the same "always clean up
+even on a per-entry failure" principle used throughout the pending-action reconcilers
+above.
+
+**Survives reboot**: `AlarmManager` alarms are cleared when the device reboots, so
+without handling this, the feature would silently stop working after every restart
+until the user happened to reopen the app (which is the only other place anything
+re-arms the alarm, via `syncVehicles()`). `DailyStatusReceiver` is therefore
+**manifest-registered** (unlike `ParkingForegroundService`'s dynamically-registered BT
+ACL receiver, which only needs to exist while that service happens to be running) and
+declares an `<intent-filter>` for `BOOT_COMPLETED` (a protected system broadcast, safe
+to declare with `exported="false"` since only the system can send it) — on boot, if
+the stored global setting is still on, it just reschedules the next occurrence; it
+never fires the notification immediately on boot itself. Requires the
+`RECEIVE_BOOT_COMPLETED` permission.
+
+**Parsing (`DailyStatusVehicles`)**: a small, independent parser of the same
+`vehicles_json` mirror `VehicleJsonParser`/`ParkedVehicles` already read for their own
+different purposes (`BtDecisionEngine`'s decisions; the widgets' multi-vehicle
+display) — same established "multiple independent readers, each parsing only what
+they need" pattern documented on `ParkedVehicles.kt` itself, rather than a shared
+model every consumer must agree on. Lives in the root package (not `core`) since it
+touches `org.json`, matching `ParkedVehicles.kt`'s own precedent — and, like
+`ParkedVehicles.kt`, `DailyStatusScheduler.kt`, and `DailyStatusReceiver.kt`, has no
+unit test of its own (none of these need Android-framework classes complex enough to
+justify Robolectric beyond what `core`'s existing tests already cover, and the
+receiver/scheduler wiring itself needs a live `Context`/`AlarmManager` — same
+precedent as the rest of this migration's Service/Plugin/Receiver wiring, verified
+manually/via the diagnostic log's new `DAILY` category on a real device instead).
 
 **Why the WebView's JS keeps running in the background at all**: Capacitor's Android
 Activity lifecycle delegates to Cordova's `handlePause(keepRunning)`, which calls
@@ -1006,4 +1113,10 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: force-stop the app from Android's own app-info screen (not just Recents), reopen it, and confirm the `SERVICE` category shows an "onCreate succeeded" entry for the fresh service start with no gap-filling entries claiming activity during the time the app was actually fully dead — the log should honestly reflect that nothing could have been recorded while the process didn't exist
 - [ ] Android APK: after any normal session (open the app, toggle Bluetooth settings, save/end a parking, background and reopen), check the diagnostic log's `BRIDGE` category — it should show a mix of "← JS: <method>() called" entries (e.g. `syncVehicles`, `update`, `startWatch`) and "→ JS: notifyListeners(...)" entries (e.g. `connected`/`disconnected`, `btShadowDecision`, `gpsShadowDecision`), and each "→ JS" entry should be followed within moments by a matching live entry in its real category (e.g. a `BRIDGE` "→ JS: notifyListeners(connected...)" followed by a `BT` "connected event received") if the message actually completed its round trip to JS — a `BRIDGE` send entry with no matching follow-up is the message-lost signal this feature exists to make visible
 - [ ] Every line in the diagnostic log (Settings → "יומן אבחון") shows a `[source]` prefix — `[WEB]` for live in-app entries, `[FMC-FgService]`/`[FMC-BtPlugin]`/`[FMC-WidgetData]` for entries merged from native — so it's obvious at a glance which process wrote each line without reading the message text; a native-merged entry whose real event time is more than ~2 seconds before it was actually written to the log additionally shows a "(נרשם בפועל ב-...)" suffix with the real write time, while a live entry shows no such suffix
-- [ ] Android APK: with the app open and idle (or backgrounded, not force-killed) for 15+ minutes, the diagnostic log's `SERVICE` category shows a `[WEB]` "heartbeat — app JS alive" entry and a `[FMC-FgService]` "heartbeat — foreground service alive (reasons=...)" entry roughly every 5 minutes from each source, proving both sides were genuinely running continuously during that window rather than the silence being ambiguous between "nothing happened" and "this side died"
+- [ ] Android APK: with the app open and idle (or backgrounded, not force-killed) for 15+ minutes, the diagnostic log's `SERVICE` category shows a `[WEB]` "heartbeat — app JS alive" entry and a `[FMC-FgService]` "heartbeat — foreground service alive (reasons=...)" entry roughly every 5 minutes from each source (allow a couple minutes' slack — `AlarmManager.setExactAndAllowWhileIdle` is Doze-aware but not perfectly punctual — but NOT 15+ minute gaps; that would be the old Handler-based-timer bug regressing), proving both sides were genuinely running continuously during that window rather than the silence being ambiguous between "nothing happened" and "this side died"
+- [ ] Settings shows a "📋 התראת סטטוס יומית" toggle (off by default) and, in each vehicle's edit modal, a "📋 כלול בהתראת הסטטוס היומית" toggle (on by default); toggling the vehicle modal's off, then reopening the vehicle for edit, shows it still off (persisted correctly)
+- [ ] Android APK: with the global daily-status toggle ON and at least one vehicle opted in, wait for (or manually trigger via adb, see below) the once-daily alarm — a single "FindMyCar — סטטוס יומי" notification appears in the shade listing each opted-in vehicle's status: "🚗 <name> — חניה פעילה: <address>" for a parked vehicle, "🚗 <name> — אין חניה פעילה" otherwise; with 2+ opted-in vehicles the notification expands (inbox style) to show every line, not just the first
+- [ ] Android APK: turning the global toggle OFF (or opting every vehicle out individually) means the daily notification never appears, even with an active parking — the diagnostic log's `DAILY` category shows a "skipped" entry, not silence, confirming the alarm still fired and correctly chose not to notify
+- [ ] Android APK: to verify without waiting a full day — `adb shell am broadcast -a com.ohadsam.findmycar.ACTION_DAILY_STATUS -n com.ohadsam.findmycar/.DailyStatusReceiver` fires the notification immediately and reschedules for tomorrow's target hour; check the diagnostic log's `DAILY` category for the matching "shown"/"skipped" entry
+- [ ] Android APK: reboot the device with the global toggle ON, then check (after boot, without opening the app) that the diagnostic log's `DAILY` category — once merged in on next app open — shows a "boot: rescheduling" entry, confirming the alarm survives a restart instead of silently going dead until the app is reopened
+- [ ] Android APK: the "FindMyCar — סטטוס יומי" notification is visible directly in the shade with a sound/heads-up on arrival (DEFAULT importance, not silent like the persistent parking/background notifications) — since the whole point is for the user to notice it landed
