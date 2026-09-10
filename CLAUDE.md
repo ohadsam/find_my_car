@@ -719,6 +719,45 @@ require re-implementing the parking business logic (vehicle matching, history wr
 geocoding) natively against WebView storage — out of scope; the existing JS logic
 stays the single implementation.
 
+**Open investigation: zero ACL broadcasts ever received on a real device, despite
+real BT connect/disconnect and driving.** A user reported connecting/disconnecting
+Bluetooth to their car (and driving) twice with no end/start-parking notification at
+all. Diagnostic-log analysis across two separate reports (hours apart) found: the
+`ParkingForegroundService`'s BT `BroadcastReceiver` (registered once in `onCreate()`,
+confirmed alive continuously for the entire multi-hour window — only one
+"onCreate succeeded" `SERVICE` entry the whole time, meaning it was never torn down
+and re-registered) logs `"ACL broadcast: ..."` to `NativeLogStore` **unconditionally**
+on every raw `ACTION_ACL_CONNECTED`/`ACTION_ACL_DISCONNECTED` it receives — before any
+downstream vehicle-matching or WebView-reachability check. That line never appeared
+even once across either report. Since the receiver's own registration and aliveness
+are both confirmed from the log, this means the OS itself never delivered a single ACL
+broadcast to the process during either window — the gap is upstream of all of this
+app's own BT decision logic (`BtEventBus`, `BtDecisionEngine`, the JS handlers),
+not inside it. The `"bluetooth"` reason flapping on/off in the heartbeat's
+`reasons=[...]` set (visible in the same logs) is a separate, expected side effect —
+`MainActivity`/`BluetoothClassicPlugin` getting recreated on each app reopen resets
+the plugin's own `watching` flag and toggles the `"bluetooth"` service-keepalive
+reason — and does **not** affect the Service's own BT receiver, which is independent
+and was confirmed alive throughout.
+
+Diagnostic-only addition made to help narrow this down on the next report (not a
+fix — there isn't enough evidence yet to know what to fix): `registerBtReceiver()`'s
+`IntentFilter` now also includes `BluetoothAdapter.ACTION_STATE_CHANGED` (the radio's
+own on/off/connecting/disconnecting state, distinct from a specific device's ACL
+state), logged under the same `SERVICE` category with a message that says explicitly
+it's diagnostic-only. On the next report: if adapter-state-changed entries appear but
+ACL entries still don't, that proves Bluetooth broadcasts in general DO reach the
+app and the gap is specific to ACL/device-level events (pointing at the device
+connection never actually completing at the classic-BT layer, or this
+phone/car's BT stack not emitting ACL for that link) — if **neither** kind ever
+appears, that points at broadcasts being blocked entirely before reaching the app
+(OS-level permission enforcement for protected broadcasts, or an OEM-specific
+restriction beyond the battery-optimization one already documented below). Ruled
+out already: the BT master switch (`fmc_bluetooth_v1`) is confirmed on every session
+(`"app init: starting Bluetooth watch (master switch is on)"` logs each time), and
+`BLUETOOTH_CONNECT` is reported granted on every session
+(`"Bluetooth permission request result: granted"`).
+
 **Battery optimization can silently disable everything, without a force-kill.** A
 foreground service keeps the *process* alive, but does not by itself guarantee
 `MainActivity`'s *Activity* (and therefore its WebView, where every bit of BT/GPS JS
@@ -1120,3 +1159,4 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: to verify without waiting a full day — `adb shell am broadcast -a com.ohadsam.findmycar.ACTION_DAILY_STATUS -n com.ohadsam.findmycar/.DailyStatusReceiver` fires the notification immediately and reschedules for tomorrow's target hour; check the diagnostic log's `DAILY` category for the matching "shown"/"skipped" entry
 - [ ] Android APK: reboot the device with the global toggle ON, then check (after boot, without opening the app) that the diagnostic log's `DAILY` category — once merged in on next app open — shows a "boot: rescheduling" entry, confirming the alarm survives a restart instead of silently going dead until the app is reopened
 - [ ] Android APK: the "FindMyCar — סטטוס יומי" notification is visible directly in the shade with a sound/heads-up on arrival (DEFAULT importance, not silent like the persistent parking/background notifications) — since the whole point is for the user to notice it landed
+- [ ] Android APK: connect/disconnect a real Bluetooth device (ideally the one linked to a vehicle) while the app is backgrounded — the diagnostic log's `SERVICE` category should show an "ACL broadcast: ..." entry for each; if it shows "Bluetooth adapter state changed: ..." entries but no ACL entries at all, that's the open investigation above (broadcasts reach the app in general, but not ACL/device-level ones) — report both kinds of entries (or their absence) if this still doesn't produce a notification

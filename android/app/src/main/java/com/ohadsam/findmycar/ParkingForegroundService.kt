@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -271,13 +272,47 @@ class ParkingForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Real, reported bug under investigation: a user connected/disconnected
+    // Bluetooth to their car (and drove) but got zero end/start-parking
+    // notifications. Diagnostic-log evidence showed this receiver's own
+    // "ACL broadcast: ..." line — logged UNCONDITIONALLY on every raw
+    // ACTION_ACL_CONNECTED/DISCONNECTED, regardless of whether a vehicle is
+    // linked or the WebView is reachable — never appeared even once across
+    // many hours the receiver was confirmed alive (one continuous
+    // "onCreate succeeded" the whole window, meaning this receiver was never
+    // re-registered or torn down). That means the OS never delivered a
+    // single ACL broadcast to this process during that window — the failure
+    // is upstream of all of this app's own decision logic, not inside it.
+    // Also listens for ACTION_STATE_CHANGED (the Bluetooth radio's own
+    // on/off/connecting/disconnecting state, distinct from a specific
+    // device's ACL state) purely as an additional diagnostic signal: if the
+    // next report shows adapter-state-changed entries but still zero ACL
+    // entries, that proves broadcasts in general DO reach the app and the
+    // gap is specific to ACL/device-level events (pointing at a real device
+    // connection never actually completing, or this device's BT stack not
+    // emitting ACL for its car link) — if NEITHER ever appears, that points
+    // at broadcasts being blocked entirely (OS/permission/OEM level).
     private fun registerBtReceiver() {
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
         }
         val r = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                    val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
+                    val stateName = when (state) {
+                        BluetoothAdapter.STATE_OFF          -> "OFF"
+                        BluetoothAdapter.STATE_TURNING_OFF   -> "TURNING_OFF"
+                        BluetoothAdapter.STATE_ON           -> "ON"
+                        BluetoothAdapter.STATE_TURNING_ON    -> "TURNING_ON"
+                        else -> "UNKNOWN($state)"
+                    }
+                    Log.i(TAG, "Bluetooth adapter state changed: $stateName")
+                    NativeLogStore.add(context, TAG, "SERVICE", "Bluetooth adapter state changed: $stateName (diagnostic only — not a device connect/disconnect)")
+                    return
+                }
                 val device: BluetoothDevice? =
                     intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                 val label = try { device?.name } catch (e: SecurityException) {
