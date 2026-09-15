@@ -707,6 +707,80 @@ because it only manifests roughly once every 24 hours:
   when `GPS-PENDING` was added; check every new category explicitly rather than
   assuming past coverage was complete).
 
+## 6. Background-service survivability (the v1.36.3 audit)
+
+Everything in sections 4-5 assumes `ParkingForegroundService` is actually running and
+actually permitted to do its job. Five separate, independently-shipped gaps meant it
+often wasn't — each invisible to every build step and every test, and each producing
+exactly the same user-visible symptom ("nothing happens in the background"). Verify
+all five literally, every release:
+
+- Confirm `AndroidManifest.xml`'s `<service android:name=".ParkingForegroundService">`
+  declares `android:foregroundServiceType="connectedDevice|specialUse|location"` —
+  **including `location`** — and that
+  `android.permission.FOREGROUND_SERVICE_LOCATION` is declared alongside the other
+  `FOREGROUND_SERVICE_*` permissions. This was a real, previously-shipped bug: from
+  Android 10, a background process only keeps receiving `LocationManager` updates if
+  it holds `ACCESS_BACKGROUND_LOCATION` **or** runs a `location`-typed foreground
+  service. Without the type, the Service's GPS watch silently stopped delivering the
+  moment the app was backgrounded — the exact scenario Stage 4/7 exist for — with the
+  telltale signature of `GPS-SHADOW` entries appearing only ~1 second after each app
+  open and never during an actual drive. Nothing fails to compile, and no unit test
+  can reach it.
+- Confirm `ParkingForegroundService.resolveForegroundServiceType()` **OR-combines**
+  the types it's actually allowed to use rather than picking exactly one: `location`
+  only when a location permission is granted, `connectedDevice` only when
+  `BLUETOOTH_CONNECT` is granted, falling back to `specialUse` (API 34+) when neither
+  is. Android 14+ throws from `startForeground()` if a declared type's runtime
+  prerequisite isn't granted, so a version that unconditionally declares `location`
+  would crash on a fresh install (location is requested lazily), and a version that
+  picks only one type would lose background location whenever Bluetooth happened to
+  be granted first.
+- Confirm `refreshForegroundServiceType()` exists and is called from
+  `updateLocationWatch(true)` — the Service frequently starts for the `"bluetooth"`
+  reason alone (no `location` type needed or permitted yet) and only later gains a
+  parking session. Re-calling `startForeground()` with the newly-resolved type is the
+  documented way to add a type to an already-running FGS; without this call, a GPS
+  watch started mid-session runs under a non-`location` type and is throttled exactly
+  as if the type were missing entirely.
+- Confirm `restoreReasons(context)` exists, is called from **both** `onCreate()` and
+  `onStartCommand()`, and is **additive** (it may only add reasons derived from the
+  persisted mirror — `KEY_HAS_PARKING` → `"parking"`, `KEY_BT_ENABLED` →
+  `"bluetooth"` — never clear reasons already set in memory). `activeReasons` is
+  in-memory static state: a process death (OEM kill, `START_STICKY` restart, reboot)
+  wipes it, and every `setReasonActive()` caller is a Capacitor `@PluginMethod`
+  reachable only from live JS — so without this, a restarted Service came back with
+  an empty reason set and immediately stopped itself, or ran with no GPS watch.
+- Confirm `ServiceRestartReceiver` is registered in `AndroidManifest.xml` with an
+  `<intent-filter>` covering **both** `android.intent.action.BOOT_COMPLETED` and
+  `android.intent.action.MY_PACKAGE_REPLACED`, and that its `onReceive()` calls
+  `ParkingForegroundService.startIfNeeded(context)` inside a try/catch. Both are
+  protected system broadcasts (so `exported="false"` is correct) and both are exempt
+  from Android 12+'s background-FGS-start restriction. Without this, a reboot or an
+  APK update left background detection dead until the user next opened the app by
+  hand — with nothing in the diagnostic log to explain the silence, since a
+  non-running service can't log.
+- Confirm `startIfNeeded()` calls `restoreReasons()` first and only starts the
+  service when at least one reason is derivable — it must never start a foreground
+  service (and its persistent notification) for a user who has no parking and
+  Bluetooth turned off.
+- Confirm `WidgetDataPlugin` defines `KEY_BT_ENABLED` and `syncVehicles()` reads
+  `bluetoothEnabled` from the call and persists it, and that `js/widget-bridge.js`'s
+  `sync()` sends `bluetoothEnabled` (read fresh from `CFG.keys.bluetoothSettings`,
+  defaulting to `true` to match `js/app.js`'s own `#getBtSettings()` default). This
+  is the only input `restoreReasons()` has for the `"bluetooth"` reason — an
+  unmirrored master switch means a post-reboot restart never re-enables BT detection
+  no matter what the user's actual setting is.
+- Confirm **every** settings mutation that the native side mirrors calls
+  `this.#syncUI()` afterwards — specifically the GPS auto-end toggle and all three BT
+  settings callbacks (`onToggleEnabled`, `onToggleVehicle`, `onSetAll`) in
+  `js/app.js`. `#syncUI()` is the only thing that ever calls `WidgetBridge.sync()`;
+  a settings write without it leaves the native mirror stale until some unrelated
+  parking-state change happens to sync, so a user could turn Bluetooth on and have
+  the native decision engines keep reading `false` indefinitely. Grep every
+  `Store.set(CFG.keys.` call site in `js/app.js` and check each one that writes a
+  setting native reads.
+
 ## Output format
 
 A markdown table per channel (check | status | detail), then:

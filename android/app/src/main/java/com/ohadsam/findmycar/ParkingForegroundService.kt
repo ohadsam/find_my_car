@@ -124,6 +124,50 @@ class ParkingForegroundService : Service() {
 
         @Synchronized
         private fun isParkingReasonActive(): Boolean = activeReasons.contains("parking")
+
+        // activeReasons is plain in-memory static state — it does NOT survive
+        // process death (an OEM background killer, an OOM kill, a reboot, or an
+        // app update all wipe it), and every setReasonActive() caller is a
+        // Capacitor @PluginMethod, i.e. only ever reachable while the app is
+        // actually open. So after any process restart the set is empty and
+        // nothing short of the user reopening the app can repopulate it: a
+        // START_STICKY-restarted service would come back with its BT receiver
+        // registered but its GPS watch never started, despite a parking being
+        // genuinely active. Re-deriving both reasons from the persisted mirror
+        // (the same SharedPreferences the widgets and native decision engines
+        // already read) is what makes the service self-healing instead.
+        // Additive on purpose — never clears a reason a live JS call has since
+        // set, it only fills in what was lost.
+        @Synchronized
+        fun restoreReasons(context: Context) {
+            try {
+                val prefs = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
+                if (prefs.getBoolean(WidgetDataPlugin.KEY_HAS_PARKING, false)) activeReasons.add("parking")
+                if (prefs.getBoolean(WidgetDataPlugin.KEY_BT_ENABLED, false)) activeReasons.add("bluetooth")
+            } catch (e: Exception) {
+                Log.w(TAG, "restoreReasons failed (non-fatal)", e)
+            }
+        }
+
+        // Boot/app-update recovery: nothing else starts this service without the
+        // app being opened first, so after a reboot (or an APK update, which
+        // also kills the process) background BT/GPS detection stayed dead until
+        // the user happened to launch the app. Called from ServiceRestartReceiver.
+        fun startIfNeeded(context: Context) {
+            restoreReasons(context)
+            val reasons = synchronized(this) { activeReasons.toSet() }
+            if (reasons.isEmpty()) {
+                NativeLogStore.add(context, TAG, "SERVICE", "restart check: nothing to restore (no parking, Bluetooth off) — service not started")
+                return
+            }
+            try {
+                NativeLogStore.add(context, TAG, "SERVICE", "restarting foreground service after boot/update (reasons=$reasons)")
+                ContextCompat.startForegroundService(context, Intent(context, ParkingForegroundService::class.java))
+            } catch (e: Exception) {
+                Log.e(TAG, "startIfNeeded: startForegroundService threw", e)
+                NativeLogStore.add(context, TAG, "SERVICE", "restart after boot/update FAILED (${e.message})")
+            }
+        }
     }
 
     private var locationManager: LocationManager? = null
@@ -145,6 +189,9 @@ class ParkingForegroundService : Service() {
             }
             registerBtReceiver()
             instanceRef = WeakReference(this)
+            // Rebuild any reason lost to a process restart before deciding
+            // whether the GPS watch should be running (see restoreReasons()).
+            restoreReasons(this)
             // Covers the case where "parking" was already active before this
             // instance started (e.g. the service starts fresh because of the
             // "parking" reason itself) — setReasonActive()'s direct nudge to
@@ -165,24 +212,68 @@ class ParkingForegroundService : Service() {
         }
     }
 
-    // connectedDevice requires BLUETOOTH_CONNECT to already be GRANTED at
-    // runtime on Android 12+ (enforced once targetSdk reaches 34) — that
-    // permission is only requested lazily when the user links a vehicle's BT
-    // device, so it's very often not granted yet when this service first
-    // starts (e.g. from any parking save, unrelated to Bluetooth). specialUse
-    // has no such prerequisite and is always safe to fall back to.
+    // **The `location` type is what makes background GPS work at all** — a real,
+    // previously-shipped bug (see CLAUDE.md "Background location needs a
+    // location-typed foreground service"). From Android 10 (API 29) on, an app
+    // may only receive location updates while it isn't in the foreground if
+    // either it holds ACCESS_BACKGROUND_LOCATION, or the updates come from a
+    // foreground service declared with the `location` type — and this service
+    // had neither, so updateLocationWatch()'s LocationManager request silently
+    // stopped delivering the moment the Activity left the foreground. Confirmed
+    // from a real device log: the native GPS watch only ever produced a
+    // GPS-SHADOW decision one second after the app was opened (foregrounded),
+    // never once during an actual drive with the app closed.
+    //
+    // Each type OR'd in here must ALSO be declared in the manifest's
+    // android:foregroundServiceType AND have its runtime prerequisite granted —
+    // Android 14+ throws from startForeground() otherwise, which for a service
+    // that starts on EVERY parking save would crash the app. So each bit is
+    // gated on its own permission check, with specialUse (no prerequisite at
+    // all) as the always-safe fallback when neither is granted yet.
     private fun resolveForegroundServiceType(): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0
         val btGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==
             PackageManager.PERMISSION_GRANTED
-        return when {
-            btGranted -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE // pre-14: declaring it isn't runtime-permission-gated
+        val locationGranted =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+        var type = 0
+        if (locationGranted) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        if (btGranted) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        if (type != 0) return type
+
+        // Neither granted yet (e.g. very first parking save before any prompt) —
+        // specialUse is the only type with no runtime-permission prerequisite.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        } else {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE // pre-14: not runtime-permission-gated
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // START_STICKY means Android restarts this service (with a null intent)
+        // after a process kill — but activeReasons is plain in-memory static
+        // state, so it comes back EMPTY, and nothing but a JS call would ever
+        // repopulate it. Re-derive it from the persisted state on every start,
+        // so a restarted service knows whether to run its GPS watch instead of
+        // silently coming back half-dead. See restoreReasons().
+        restoreReasons(this)
+        if (isParkingReasonActive()) updateLocationWatch(true)
+        return START_STICKY
+    }
+
+    private fun refreshForegroundServiceType() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        try {
+            val type = resolveForegroundServiceType()
+            if (type != 0) startForeground(NOTIFICATION_ID, buildNotification(), type)
+        } catch (e: Exception) {
+            Log.w(TAG, "refreshForegroundServiceType failed (non-fatal)", e)
+            NativeLogStore.add(this, TAG, "SERVICE", "could not refresh foreground-service type (${e.message})")
+        }
+    }
 
     override fun onDestroy() {
         isRunning = false
@@ -400,6 +491,15 @@ class ParkingForegroundService : Service() {
                     NativeLogStore.add(this, TAG, "SERVICE", "GPS watch NOT started — no enabled location provider (GPS/network both off?)")
                     return
                 }
+                // The service very often starts BEFORE location permission is
+                // granted — it starts on every parking save, while the prompt
+                // happens during app init — so onCreate()'s startForeground()
+                // may have picked a type WITHOUT the `location` bit. Android
+                // would then keep withholding background location updates even
+                // though the permission is granted by now. Re-calling
+                // startForeground() with a freshly resolved type is the
+                // documented way to add a type to an already-running FGS.
+                refreshForegroundServiceType()
                 // New parking session — reset the sustained-speed/already-
                 // suggested state, matching js/app.js resetting
                 // #state.gpsSpeedSince/#state.gpsEndSuggested on every save/swap.

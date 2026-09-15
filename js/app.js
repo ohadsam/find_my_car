@@ -376,6 +376,12 @@ class FindMyCarApp {
     Utils.el('gpsEndDismissBtn')?.addEventListener('click', () => this.#closeModal('gpsEndModal'));
     Utils.el('gpsAutoEndToggle')?.addEventListener('change', e => {
       Store.set(CFG.keys.gpsAutoEnd, { enabled: e.target.checked });
+      // Native's GpsDecisionEngine reads this from WidgetDataPlugin's
+      // KEY_GPS_AUTO_END_ENABLED mirror to decide whether to suggest ending a
+      // parking while the app is closed — without an immediate re-sync the
+      // mirror stays stale until some unrelated parking-state change happens,
+      // so the setting the user just flipped isn't the one actually in effect.
+      this.#syncUI();
     });
     Utils.el('dailyStatusToggle')?.addEventListener('change', e => {
       Store.set(CFG.keys.dailyStatus, { enabled: e.target.checked });
@@ -1449,6 +1455,14 @@ class FindMyCarApp {
         } else {
           this.#bluetooth.stopWatch();
         }
+        // Mirror the new setting to native immediately. The native side reads
+        // these (BtDecisionEngine via the vehicles_json mirror, and the
+        // "bluetooth" foreground-service keep-alive reason via
+        // KEY_BT_ENABLED) to decide what to do while the app is CLOSED — so
+        // leaving the mirror stale until some unrelated parking-state sync
+        // happens means a setting the user just changed isn't the one acting
+        // on their next real BT event.
+        this.#syncUI();
         this.#refreshBtModal();
       },
       onToggleVehicle: (vehicleId, updates) => {
@@ -1456,12 +1470,14 @@ class FindMyCarApp {
         DiagLog.log('BT', `per-vehicle settings changed: ${JSON.stringify(updates)}`, { vehicleName: v?.name, vehicleIcon: v?.icon });
         VehicleController.updateBluetooth(vehicleId, updates);
         this.#state.vehicles = VehicleController.getAll();
+        this.#syncUI();
         this.#refreshBtModal();
       },
       onSetAll: updates => {
         DiagLog.log('BT', `settings changed for all vehicles: ${JSON.stringify(updates)}`);
         VehicleController.updateAllBluetooth(updates);
         this.#state.vehicles = VehicleController.getAll();
+        this.#syncUI();
         this.#refreshBtModal();
       },
     };
