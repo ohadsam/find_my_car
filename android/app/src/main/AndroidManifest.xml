@@ -162,4 +162,32 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Package visibility (Android 11+): without these, packageManager
+         .resolveActivity() cannot SEE these OEM settings apps at all, so
+         OemSettingsIntents.autostartAvailable()/oemBatteryAvailable() would
+         always report false and the setup guide would wrongly tell the user
+         their device has no Autostart screen. Launching still works via
+         try/catch regardless — this is purely so the guide can tell the truth
+         about what's available BEFORE the user taps. Deliberately an explicit
+         list rather than QUERY_ALL_PACKAGES, which is a restricted permission
+         requiring Play Store justification and is wildly disproportionate for
+         this. -->
+    <queries>
+        <!-- Xiaomi / Redmi / POCO (MIUI + HyperOS) -->
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.powerkeeper" />
+        <!-- Huawei / Honor -->
+        <package android:name="com.huawei.systemmanager" />
+        <!-- Oppo / Realme (ColorOS) -->
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.coloros.oppoguardelf" />
+        <!-- Vivo -->
+        <package android:name="com.vivo.permissionmanager" />
+        <!-- Samsung -->
+        <package android:name="com.samsung.android.lool" />
+        <!-- Letv / Asus -->
+        <package android:name="com.letv.android.letvsafe" />
+        <package android:name="com.asus.mobilemanager" />
+    </queries>
 </manifest>

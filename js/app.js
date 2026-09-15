@@ -13,6 +13,7 @@ import { NativeBluetoothController } from './bluetooth-native.js';
 import { WidgetBridge } from './widget-bridge.js';
 import { Notify } from './notify.js';
 import { DiagLog } from './diag-log.js';
+import { OemSetup } from './oem-setup.js';
 
 class FindMyCarApp {
   #state = {
@@ -157,6 +158,23 @@ class FindMyCarApp {
 
     const dailyStatusToggle = Utils.el('dailyStatusToggle');
     if (dailyStatusToggle) dailyStatusToggle.checked = this.#getDailyStatusSettings().enabled;
+
+    // The device-settings guide only means anything on native (the OemSetup
+    // plugin is absent in the browser), so its Settings entry point stays
+    // hidden on the PWA rather than opening a modal with nothing to show.
+    if (OemSetup.isSupported()) {
+      const oemSection = Utils.el('oemSetupSection');
+      if (oemSection) oemSection.style.display = '';
+      // Auto-open once the app has settled, and only while something is
+      // genuinely outstanding — never awaited, so a slow plugin call can't
+      // hold up init. Deliberately after the loading screen fades, since it
+      // is a modal over the main UI, not part of startup.
+      setTimeout(() => {
+        OemSetup.shouldAutoShow()
+          .then(show => { if (show) this.#openOemSetupModal(); })
+          .catch(() => {});
+      }, 2500);
+    }
 
     // Init map; after loading screen fades, invalidate size to handle any CSS transition artifacts
     setTimeout(() => {
@@ -310,6 +328,14 @@ class FindMyCarApp {
       const file = e.target.files?.[0];
       e.target.value = ''; // allow re-selecting the same file next time
       if (file) this.#importData(file);
+    });
+
+    Utils.el('openOemSetupBtn')?.addEventListener('click',     () => this.#openOemSetupModal());
+    Utils.el('oemSetupRefreshBtn')?.addEventListener('click',  () => this.#refreshOemSetupView());
+    Utils.el('oemSetupDismissBtn')?.addEventListener('click',  () => {
+      OemSetup.setManual({ dismissed: true });
+      this.#closeModal('oemSetupModal');
+      this.#ui.showToast('המדריך לא יוצג שוב אוטומטית — הוא נשאר זמין בהגדרות', 'info');
     });
 
     Utils.el('openDiagLogBtn')?.addEventListener('click',   () => this.#openDiagLogModal());
@@ -1813,6 +1839,87 @@ class FindMyCarApp {
   }
 
   // ── DIAGNOSTIC LOG ───────────────────────────────────────────
+  // ── BACKGROUND-DETECTION SETUP GUIDE ──────────────────────────
+  // Android-only in practice (OemSetup.buildSteps() returns [] in the
+  // browser), which is why the Settings entry point stays hidden on the PWA
+  // rather than opening an empty modal.
+  async #openOemSetupModal() {
+    await this.#refreshOemSetupView();
+    this.#ui.openModal('oemSetupModal');
+  }
+
+  async #refreshOemSetupView() {
+    const list = Utils.el('oemSetupList');
+    const intro = Utils.el('oemSetupIntro');
+    if (!list) return;
+
+    const steps = await OemSetup.buildSteps();
+    if (!steps.length) {
+      list.innerHTML = '<p class="oem-setup-empty">אין הגדרות מכשיר לבדוק בגרסה הזו (זמין באפליקציית האנדרואיד בלבד).</p>';
+      if (intro) intro.textContent = '';
+      return;
+    }
+
+    const todo = steps.filter(s => s.state !== 'ok').length;
+    if (intro) {
+      intro.textContent = todo
+        ? `${todo} מתוך ${steps.length} הגדרות עדיין דורשות טיפול. לחץ על כל שלב כדי לפתוח את המסך המתאים.`
+        : 'כל ההגדרות שניתן לבדוק תקינות. שים לב שאת שלבי היצרן אי אפשר לאמת — הסימון מבוסס על מה שסימנת בעצמך.';
+    }
+
+    list.innerHTML = steps.map(s => {
+      const badge = {
+        ok:      '<span class="oem-step-badge oem-step-ok">תקין</span>',
+        todo:    '<span class="oem-step-badge oem-step-todo">דורש טיפול</span>',
+        unknown: '<span class="oem-step-badge oem-step-unknown">לא ניתן לבדוק</span>',
+      }[s.state];
+      // Manual steps carry their own "I did this" checkbox precisely because
+      // no API can confirm them — see js/oem-setup.js.
+      const confirm = s.kind === 'manual'
+        ? `<label class="oem-step-confirm">
+             <input type="checkbox" data-oem-confirm="${Utils.escHtml(s.id)}" ${s.state === 'ok' ? 'checked' : ''}>
+             <span>סימנתי שביצעתי את זה</span>
+           </label>`
+        : '';
+      const action = s.action
+        ? `<button class="settings-backup-btn oem-step-btn" data-oem-action="${Utils.escHtml(s.action)}">
+             <span>${Utils.escHtml(s.actionLabel)}</span>
+           </button>`
+        : '';
+      return `<div class="oem-step oem-step-${s.state}">
+        <div class="oem-step-head">
+          <span class="oem-step-icon">${s.icon}</span>
+          <span class="oem-step-title">${Utils.escHtml(s.title)}</span>
+          ${badge}
+        </div>
+        <p class="oem-step-desc">${Utils.escHtml(s.desc)}</p>
+        ${action}
+        ${confirm}
+      </div>`;
+    }).join('');
+
+    list.querySelectorAll('[data-oem-action]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const result = await OemSetup.runAction(btn.dataset.oemAction);
+        // A vendor screen that doesn't exist on this ROM silently falls back
+        // to the generic app-settings page — say so, or the user is left
+        // wondering why the screen they were promised never appeared.
+        if (result === 'fallback') {
+          this.#ui.showToast('מסך היצרן לא זמין במכשיר הזה — נפתחו הגדרות האפליקציה במקום', 'warning');
+        } else if (result === 'failed' || result === null) {
+          this.#ui.showToast('לא ניתן היה לפתוח את המסך — פתח אותו ידנית בהגדרות המכשיר', 'error');
+        }
+      });
+    });
+
+    list.querySelectorAll('[data-oem-confirm]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        OemSetup.setManual({ [cb.dataset.oemConfirm]: cb.checked });
+        this.#refreshOemSetupView();
+      });
+    });
+  }
+
   #openDiagLogModal() {
     const select = Utils.el('diagLogVehicleFilter');
     if (select) {

@@ -781,6 +781,81 @@ all five literally, every release:
   `Store.set(CFG.keys.` call site in `js/app.js` and check each one that writes a
   setting native reads.
 
+## 7. OEM background-restriction setup guide
+
+The guide's whole value is that a user who has been chasing an invisible
+background problem can *trust what it tells them*. Every check here protects
+that, not a feature:
+
+- Confirm `OemSetupPlugin.status()` returns `autostartAvailable`/
+  `oemBatteryAvailable` for the OEM steps and NEVER a field named `granted`
+  (or any equivalent) for them — there is no Android API that can read MIUI's
+  Autostart or an OEM's per-app battery policy, so any code path that reports
+  those as verified is reporting a guess as a fact. Correspondingly, confirm
+  `js/oem-setup.js`'s `buildSteps()` gives every `kind: 'manual'` step the
+  state `'unknown'` unless the USER's own stored confirmation
+  (`CFG.keys.oemSetup`) says otherwise — a manual step must never derive
+  `'ok'` from anything the app observed itself.
+- Confirm the verifiable steps are re-read live on every `buildSteps()` call
+  (it `await`s `status()` each time) rather than cached — revoking a
+  permission in system settings and reopening the guide must flip that step
+  back to `'todo'`.
+- Confirm `status()` version-gates `POST_NOTIFICATIONS` (API 33+) and
+  `BLUETOOTH_CONNECT` (API 31+) and reports `true` below those levels —
+  minSdk here is 22, and an ungated `checkSelfPermission` on a permission that
+  doesn't exist yet reports "denied" forever, which would show a permanently
+  unfixable red step on older devices.
+- Confirm the location step requires `ACCESS_FINE_LOCATION` specifically (not
+  just "some location permission") — coarse-only silently degrades drive-away
+  detection without any other symptom, so a guide that passes it is actively
+  misleading.
+- Confirm every launcher in `OemSettingsIntents` returns one of
+  `RESULT_OPENED`/`RESULT_FALLBACK`/`RESULT_FAILED` and that `js/app.js`'s
+  setup-modal handler surfaces `fallback` and `failed` as a toast. A vendor
+  screen that doesn't exist on a given ROM silently opening the generic
+  app-info page instead — with no explanation — is the exact
+  indistinguishable-from-a-bug dead end this feature exists to remove.
+- Confirm `OemSettingsIntents.launch()` catches `Exception` (not just
+  `ActivityNotFoundException`) around `startActivity` — several OEMs guard
+  these Activities with a `SecurityException` instead, and an uncaught one
+  crashes the app from a settings button.
+- Confirm `AndroidManifest.xml` has the `<queries>` block listing the OEM
+  settings packages, and that it does NOT use `QUERY_ALL_PACKAGES`. Without
+  `<queries>`, Android 11+ package-visibility filtering makes
+  `resolveActivity()` blind to those packages, so `autostartAvailable()`
+  returns false and a Xiaomi user is told their device has no Autostart
+  screen — the single most important step silently vanishing from the list,
+  with nothing failing to build or throwing.
+- Confirm `BluetoothClassicPlugin`'s `openAppSettingsInternal()` and
+  `requestIgnoreBatteryOptimizations()` both delegate to `OemSettingsIntents`
+  rather than building their intents inline — two copies of the
+  launch/fallback logic would drift (same precedent as
+  `BackgroundAlertNotifier`).
+- Confirm `OemSetupPlugin` is registered in `MainActivity.onCreate()`'s
+  `registerPlugin(...)` list alongside the other two — a Capacitor plugin that
+  isn't registered simply resolves to `undefined` in JS, so the guide would
+  quietly report "not supported" on native and hide itself, exactly as it
+  correctly does in the browser.
+- Confirm `OemSetupPlugin` does NOT redeclare a `context` property — the other
+  two plugins use `Plugin`'s inherited `getContext()` via Kotlin's synthetic
+  property, and shadowing it risks an accidental-override compile error that
+  this sandbox (no Android SDK) cannot catch locally.
+- Confirm `OemSetup.shouldAutoShow()` returns false once every step is `'ok'`,
+  and that `#init()` calls it fire-and-forget on a timer (never `await`ed) —
+  a guide that reappears when there is nothing left to do trains users to
+  dismiss it reflexively, and blocking init on a plugin call would stall the
+  loading screen.
+- Confirm `js/oem-setup.js` is in `sw.js`'s `STATIC_ASSETS` and has a
+  `<link rel="modulepreload">` (covered generically by section 2, but named
+  here since a miss breaks the whole feature rather than something cosmetic).
+- Confirm `#oemSetupSection` in `index.html` starts `style="display:none;"`
+  and is only revealed when `OemSetup.isSupported()` — the PWA has no native
+  plugin and no device settings to open, so the entry point must not appear
+  there at all.
+- Confirm every string interpolated into the modal's `innerHTML` goes through
+  `Utils.escHtml()` — the step list includes `Build.MANUFACTURER`, which comes
+  from the device, not from this codebase.
+
 ## Output format
 
 A markdown table per channel (check | status | detail), then:
