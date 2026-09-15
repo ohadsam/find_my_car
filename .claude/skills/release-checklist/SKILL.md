@@ -181,16 +181,35 @@ step broken or skipped:
   `js/widget-bridge.js`'s `initShadowListener()` is called once from `js/app.js`'s
   `#init()` — losing this wiring has no other symptom (shadow mode has no real
   effect), so nothing else would catch it.
-- Confirm `BluetoothClassicPlugin.maybeRecordPendingAction()` (Stage 5) still gates
-  on `MainActivity.getActiveWebView() != null` and returns immediately when the
-  WebView IS reachable — this is what prevents a real BT event from producing BOTH
-  the normal live JS-handled action AND a recorded pending action, which would
-  otherwise double-apply the same auto-end/auto-start once a later stage starts
-  replaying pending actions. This is a correctness bug with no test coverage
-  (`BluetoothClassicPlugin.kt` needs a live `Bridge`/`Activity`, same precedent as
-  its other wiring) — verify by reading the code, not just grepping for the guard's
-  existence.
-- Confirm `maybeRecordPendingAction`/`recordPendingAction` (native side) never call
+- Confirm `BtPendingActionRecorder.maybeRecord()` (Stage 5; moved out of
+  `BluetoothClassicPlugin` — see CLAUDE.md "Resolved: real, previously-shipped bug")
+  still gates on `MainActivity.getActiveWebView() != null` and returns immediately
+  when the WebView IS reachable — this is what prevents a real BT event from
+  producing BOTH the normal live JS-handled action AND a recorded pending action,
+  which would otherwise double-apply the same auto-end/auto-start once a later stage
+  starts replaying pending actions. This is a correctness bug with no test coverage
+  (needs a live `Context` with real `SharedPreferences`, same precedent as the rest
+  of this migration's Service/Plugin wiring) — verify by reading the code, not just
+  grepping for the guard's existence.
+- Confirm `ParkingForegroundService`'s BT receiver calls
+  `BtPendingActionRecorder.maybeRecord(context, label, connected)` directly and
+  unconditionally, alongside (not instead of) `BtEventBus.emitConnected/
+  emitDisconnected()` — NOT gated behind whether a `BtEventBus` listener currently
+  exists. A regression back to only calling it from `BluetoothClassicPlugin.onConnected/
+  onDisconnected` (i.e. only when a live Activity-bound Plugin instance happens to be
+  registered) would silently reintroduce the exact bug this fix resolved: that
+  listener is torn down precisely when the Activity is destroyed, which is the one
+  scenario Stage 5 exists to handle — so recording would again only ever succeed
+  while the WebView IS reachable, when it's needed least.
+- Confirm `BluetoothClassicPlugin.handleOnDestroy()` calls `BtEventBus.removeListener(this)`
+  but does **NOT** call `ParkingForegroundService.setReasonActive(context, "bluetooth",
+  false)` — a real, previously-shipped bug: clearing the "bluetooth" reason here fires
+  on every routine Activity destruction (not just when the user disables BT), which
+  — whenever no parking was also active — stopped the ENTIRE foreground service
+  (receiver included) until the app was next reopened, producing a total background-
+  detection outage. The reason must only ever be cleared by an explicit `stopWatch()`
+  call (the user turning off the BT master switch in Settings).
+- Confirm `maybeRecord`/`record` (in `BtPendingActionRecorder`) never call
   `WidgetDataPlugin.update`/`.clear`, open any modal, or otherwise touch real parking
   state directly — only `PendingBtActionStore.add(...)` and a plain
   `NotificationCompat`/`NotificationManagerCompat` notification. The *native*

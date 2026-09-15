@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.36.1',
+  version: '1.36.2',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -40,6 +40,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.36.2',
+      date: '2026-09-15',
+      items: Object.freeze([
+        'תוקן באג משמעותי: כשלא הייתה חניה פעילה, סגירת האפליקציה גרמה לשירות הרקע כולו להיעצר לגמרי (לא רק המסך) — כך שזיהוי Bluetooth ברקע פסק לעבוד עד לפתיחה הבאה של האפליקציה, גם כשההגדרה הייתה דלוקה',
+        'תוקן: גם לאחר שהשירות נשאר פעיל, רישום פעולות Bluetooth שקרו כשהאפליקציה סגורה (לצורך ביצוען בפתיחה הבאה) לא תמיד עבד — עכשיו זה קורה ישירות משירות הרקע ולא תלוי בכך שהאפליקציה הייתה פתוחה לאחרונה',
+      ]),
+    }),
     Object.freeze({
       version: '1.36.1',
       date: '2026-09-10',

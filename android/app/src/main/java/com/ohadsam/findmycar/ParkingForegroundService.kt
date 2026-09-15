@@ -332,9 +332,24 @@ class ParkingForegroundService : Service() {
                 // whether the event turns into a decision worth its own
                 // BT/BT-SHADOW/BT-PENDING entry.
                 NativeLogStore.add(context, TAG, "SERVICE", "ACL broadcast: ${intent.action} label=$label")
+                // BtEventBus still delivers to a live BluetoothClassicPlugin
+                // listener when the Activity is alive (the normal foregrounded
+                // case) — but that listener is torn down exactly when the
+                // Activity is destroyed, so BtPendingActionRecorder is called
+                // directly here too, unconditionally, since THIS receiver (owned
+                // by the Service, not the Activity) is what's actually alive
+                // independent of Activity lifecycle. It no-ops itself via its own
+                // MainActivity.getActiveWebView() check when the live path is
+                // the one handling the event, so this never double-acts.
                 when (intent.action) {
-                    BluetoothDevice.ACTION_ACL_CONNECTED    -> BtEventBus.emitConnected(label)
-                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> BtEventBus.emitDisconnected(label)
+                    BluetoothDevice.ACTION_ACL_CONNECTED -> {
+                        BtEventBus.emitConnected(label)
+                        BtPendingActionRecorder.maybeRecord(context, label, connected = true)
+                    }
+                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                        BtEventBus.emitDisconnected(label)
+                        BtPendingActionRecorder.maybeRecord(context, label, connected = false)
+                    }
                 }
             }
         }

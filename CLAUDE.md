@@ -324,7 +324,8 @@ never loses its own execution context the same way.
 | `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`/`getPendingActions`/`clearPendingActions` (the last two Stage 5 of the native migration — see below); emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
 | `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage), triggers an `AppWidgetManager` refresh, and (Stage 9) posts/cancels the persistent "active parking" notification directly via `NotificationCompat`. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled, dailyStatusNotificationEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking` + `dailyStatusEnabled`), the global GPS auto-end setting, and the global daily-status-notification setting, so `WidgetQuickActionsActivity` can show a vehicle picker natively, the native decision engines have real settings to read, and `DailyStatusReceiver` (see "Once-daily status notification" below) knows what to report — also (re-)arms/cancels `DailyStatusScheduler`'s alarm on every call. `getPendingGpsSuggestion`/`clearPendingGpsSuggestion` (Stage 7) and `getPendingWidgetActions`/`clearPendingWidgetActions` (Stage 8) let JS read/clear what was recorded while unreachable. `getNativeLog`/`clearNativeLog` let JS read/clear `NativeLogStore`'s native-only lifecycle log (see "Native background service log" below) — unlike the `getPending*` pair, these aren't actionable decisions to replay, purely informational. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app. Since Stage 4 of the native migration (shadow mode only), also runs a plain `LocationManager` watch (`updateLocationWatch()`/`onLocationShadow()`) precisely while the `"parking"` reason is active, feeding `GpsDecisionEngine` — wrapped in its own independent try/catch backstop. Since Stage 7, `maybeRecordPendingGpsSuggestion()` runs alongside (not inside) that shadow logging — its own independent try/catch, same `MainActivity.getActiveWebView() != null` no-op gate as `BluetoothClassicPlugin`'s Stage 5 — to record a real `PendingGpsSuggestion` when the WebView is unreachable |
-| `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
+| `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin — delivers to a live `BluetoothClassicPlugin` listener only while the Activity is alive; see `BtPendingActionRecorder.kt` for the Activity-independent path |
+| `android/.../BtPendingActionRecorder.kt` | *(internal)* | Stage 5's actual pending-action recording (`maybeRecord(context, label, connected)`), extracted out of `BluetoothClassicPlugin` and called directly from `ParkingForegroundService`'s own BT receiver instead of via `BtEventBus` — see "Resolved: real, previously-shipped bug" below for why: `BtEventBus`'s listener is torn down exactly when the Activity is destroyed, which is the one scenario this recording exists for |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
 | `android/.../widgets/WidgetQuickActionsActivity.kt` | *(no JS-facing methods)* | Small floating dialog (not a plugin) opened from the "⋮" button on every widget — real `AppWidgetProvider`s can't intercept long-press (the launcher reserves that gesture for move/resize/remove), so this tap-to-open popup is the practical equivalent of a widget context menu. Shows a vehicle picker (`Spinner`, populated from `WidgetData`'s synced vehicle list, defaulting to the active vehicle) plus שמור/החלף/סיים buttons that broadcast to `WidgetActionReceiver` — headless, never launches `MainActivity`. Only "ניהול רכבים" still opens the app, since adding/editing a vehicle needs real UI. Declared with `android:taskAffinity=""` in the manifest — without it, this activity defaults to the *same* task affinity as `MainActivity` (neither declares one, so both fall back to the app's package name), and since it's launched with `FLAG_ACTIVITY_NEW_TASK`, Android would reuse/foreground any existing `MainActivity` task instead of creating a truly isolated one; finishing the dialog would then reveal `MainActivity` underneath — looking exactly like the widget action "opened the app," even though this class never calls `startActivity(MainActivity)` for those actions. This was a real, previously-shipped bug (reproduces only once a `MainActivity` task already exists in recents, i.e. any time after the user has opened the app once) — `taskAffinity=""` forces a genuinely isolated task every time, so finishing always returns to whatever was truly in the foreground before (the home screen, another app) |
 | `android/.../WidgetActionReceiver.kt` | *(no JS-facing methods — receives, not called from JS)* | Runs a widget action (`save`/`swap`/`end`) headlessly: grabs `MainActivity`'s already-running `WebView` (via a static `WeakReference` set in `onCreate`/cleared in `onDestroy`) and calls `window.app.performWidgetAction(action, vehicleId)` through `evaluateJavascript()` — the app's JS keeps running in the background already (see `KeepRunning` below), so this normally reaches a live page without ever bringing the Activity forward. Falls back to actually launching `MainActivity` with the old `?action=` deep link only if the WebView isn't alive (app fully killed) |
@@ -719,44 +720,79 @@ require re-implementing the parking business logic (vehicle matching, history wr
 geocoding) natively against WebView storage — out of scope; the existing JS logic
 stays the single implementation.
 
-**Open investigation: zero ACL broadcasts ever received on a real device, despite
-real BT connect/disconnect and driving.** A user reported connecting/disconnecting
-Bluetooth to their car (and driving) twice with no end/start-parking notification at
-all. Diagnostic-log analysis across two separate reports (hours apart) found: the
-`ParkingForegroundService`'s BT `BroadcastReceiver` (registered once in `onCreate()`,
-confirmed alive continuously for the entire multi-hour window — only one
-"onCreate succeeded" `SERVICE` entry the whole time, meaning it was never torn down
-and re-registered) logs `"ACL broadcast: ..."` to `NativeLogStore` **unconditionally**
-on every raw `ACTION_ACL_CONNECTED`/`ACTION_ACL_DISCONNECTED` it receives — before any
-downstream vehicle-matching or WebView-reachability check. That line never appeared
-even once across either report. Since the receiver's own registration and aliveness
-are both confirmed from the log, this means the OS itself never delivered a single ACL
-broadcast to the process during either window — the gap is upstream of all of this
-app's own BT decision logic (`BtEventBus`, `BtDecisionEngine`, the JS handlers),
-not inside it. The `"bluetooth"` reason flapping on/off in the heartbeat's
-`reasons=[...]` set (visible in the same logs) is a separate, expected side effect —
-`MainActivity`/`BluetoothClassicPlugin` getting recreated on each app reopen resets
-the plugin's own `watching` flag and toggles the `"bluetooth"` service-keepalive
-reason — and does **not** affect the Service's own BT receiver, which is independent
-and was confirmed alive throughout.
+**Resolved: real, previously-shipped bug — `handleOnDestroy()` stopped the ENTIRE
+foreground service (not just the Activity) whenever the app closed with no active
+parking, killing Bluetooth background detection until the app was reopened.** A user
+reported connecting/disconnecting Bluetooth to their car (and driving) with zero
+end/start-parking notifications, across multiple reports spanning days. The first
+report's diagnostic-log evidence (`ParkingForegroundService`'s BT `BroadcastReceiver`
+alive for hours, zero `"ACL broadcast: ..."` entries ever) proved broadcasts weren't
+reaching the app at all, but didn't yet explain why. A diagnostic-only addition
+(`BluetoothAdapter.ACTION_STATE_CHANGED` logging, added specifically to narrow this
+down) and a third, more complete report finally exposed the actual mechanism:
 
-Diagnostic-only addition made to help narrow this down on the next report (not a
-fix — there isn't enough evidence yet to know what to fix): `registerBtReceiver()`'s
-`IntentFilter` now also includes `BluetoothAdapter.ACTION_STATE_CHANGED` (the radio's
-own on/off/connecting/disconnecting state, distinct from a specific device's ACL
-state), logged under the same `SERVICE` category with a message that says explicitly
-it's diagnostic-only. On the next report: if adapter-state-changed entries appear but
-ACL entries still don't, that proves Bluetooth broadcasts in general DO reach the
-app and the gap is specific to ACL/device-level events (pointing at the device
-connection never actually completing at the classic-BT layer, or this
-phone/car's BT stack not emitting ACL for that link) — if **neither** kind ever
-appears, that points at broadcasts being blocked entirely before reaching the app
-(OS-level permission enforcement for protected broadcasts, or an OEM-specific
-restriction beyond the battery-optimization one already documented below). Ruled
-out already: the BT master switch (`fmc_bluetooth_v1`) is confirmed on every session
-(`"app init: starting Bluetooth watch (master switch is on)"` logs each time), and
-`BLUETOOTH_CONNECT` is reported granted on every session
-(`"Bluetooth permission request result: granted"`).
+```
+16:33:15 SERVICE  starting foreground service (reason=parking)   — app opened, parking active
+16:33:15 SERVICE  heartbeat — foreground service alive (reasons=[parking, bluetooth])
+16:33:23 BRIDGE   ← JS: clear() called                            — parking ended (GPS suggestion confirmed)
+16:35:34 SERVICE  onDestroy — foreground service stopped (last reason=bluetooth cleared)
+```
+
+`BluetoothClassicPlugin.handleOnDestroy()` used to also clear the `"bluetooth"`
+keep-alive reason: `if (watching) ParkingForegroundService.setReasonActive(context,
+"bluetooth", false)`. But this Plugin instance is tied to the Activity/Bridge
+lifecycle — `handleOnDestroy()` fires every time the Activity is destroyed, which is
+**routine** (app closed/backgrounded long enough), not exceptional. The entire point
+of the `"bluetooth"` reason is to keep `ParkingForegroundService` (and its BT
+receiver) alive **precisely while there's no live Activity to rely on** — clearing it
+on Activity death defeated that purpose completely: the log above shows exactly this
+— parking ended, `"bluetooth"` was the only reason left, the Activity was destroyed
+shortly after (app closed), and the entire foreground service — receiver included —
+stopped just 2 minutes after the app had been opened. From that point until the user
+next opened the app, there was no foreground service, no BT receiver, nothing — a
+100% background-detection outage, matching precisely "days of driving, connecting,
+disconnecting — zero detection until I opened the app."
+
+**Fix, part 1**: `handleOnDestroy()` no longer clears the `"bluetooth"` reason at
+all — only `stopWatch()` (the user explicitly disabling BT detection in Settings)
+does. The reason now tracks the actual master-switch setting, not this Plugin
+instance's own lifecycle: once set, it persists across every Activity destroy/recreate
+cycle, exactly like a real background BT watcher should.
+
+**Fix, part 2 — a second, related structural gap this also exposed**: even with the
+service+receiver now staying alive, `BluetoothClassicPlugin.onConnected`/
+`onDisconnected` (the `BtEventBus.Listener` methods that used to call
+`maybeRecordPendingAction()`, Stage 5's actual pending-action recording) only ever
+fire while a live Plugin instance is registered with `BtEventBus` — and that
+registration is *also* torn down in `handleOnDestroy()` (correctly — `BtEventBus`
+holds a growing list of listeners, so a dead instance must unregister itself or leak).
+Since `handleOnDestroy()` fires at essentially the same moment `MainActivity`'s own
+`getActiveWebView()` becomes `null`, this meant Stage 5's WebView-unreachable
+recording path could **never actually run in the one scenario it exists for** — by
+the time the WebView is genuinely unreachable, the very listener meant to record a
+pending action for it is already gone. Fixed by extracting that logic into a new
+`BtPendingActionRecorder` object (`maybeRecord(context, label, connected)`,
+`core`-touching purity not required since it already needs `Context`/
+`SharedPreferences`/`LocationManager`) and calling it **directly and
+unconditionally** from `ParkingForegroundService`'s own BT receiver — the thing
+that's genuinely alive independent of Activity/Plugin lifecycle — right alongside the
+existing `BtEventBus.emitConnected/emitDisconnected()` call. Its own
+`MainActivity.getActiveWebView() != null` guard (unchanged) is what still correctly
+no-ops it when the live JS path is the one handling the event, so this never
+double-acts — `BluetoothClassicPlugin.onConnected/onDisconnected` now only do
+`emitAndTrack()` (live JS delivery) and `runShadowDecision()` (diagnostic-only
+shadow logging), both of which are genuinely fine to lose during an Activity-dead
+window (the live path has nothing to deliver to anyway; shadow logging is purely
+informational and the raw `"ACL broadcast: ..."` `SERVICE` entry already proves the
+receiver saw the event).
+
+Ruled out earlier in the investigation, still true: the BT master switch
+(`fmc_bluetooth_v1`) is confirmed on every session (`"app init: starting Bluetooth
+watch (master switch is on)"` logs each time), and `BLUETOOTH_CONNECT` is reported
+granted on every session. The `BluetoothAdapter.ACTION_STATE_CHANGED` diagnostic
+logging added mid-investigation stays in place — it's cheap, harmless, and remains
+useful for distinguishing a future "broadcasts blocked entirely" report from this
+now-fixed "service died" one.
 
 **Battery optimization can silently disable everything, without a force-kill.** A
 foreground service keeps the *process* alive, but does not by itself guarantee
@@ -1159,4 +1195,6 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: to verify without waiting a full day — `adb shell am broadcast -a com.ohadsam.findmycar.ACTION_DAILY_STATUS -n com.ohadsam.findmycar/.DailyStatusReceiver` fires the notification immediately and reschedules for tomorrow's target hour; check the diagnostic log's `DAILY` category for the matching "shown"/"skipped" entry
 - [ ] Android APK: reboot the device with the global toggle ON, then check (after boot, without opening the app) that the diagnostic log's `DAILY` category — once merged in on next app open — shows a "boot: rescheduling" entry, confirming the alarm survives a restart instead of silently going dead until the app is reopened
 - [ ] Android APK: the "FindMyCar — סטטוס יומי" notification is visible directly in the shade with a sound/heads-up on arrival (DEFAULT importance, not silent like the persistent parking/background notifications) — since the whole point is for the user to notice it landed
-- [ ] Android APK: connect/disconnect a real Bluetooth device (ideally the one linked to a vehicle) while the app is backgrounded — the diagnostic log's `SERVICE` category should show an "ACL broadcast: ..." entry for each; if it shows "Bluetooth adapter state changed: ..." entries but no ACL entries at all, that's the open investigation above (broadcasts reach the app in general, but not ACL/device-level ones) — report both kinds of entries (or their absence) if this still doesn't produce a notification
+- [ ] Android APK: connect/disconnect a real Bluetooth device (ideally the one linked to a vehicle) while the app is backgrounded — the diagnostic log's `SERVICE` category should show an "ACL broadcast: ..." entry for each; if it ever shows "Bluetooth adapter state changed: ..." entries but no ACL entries at all, broadcasts reach the app in general but not ACL/device-level ones specifically — report that pattern if seen
+- [ ] Android APK: with NO active parking, enable the Bluetooth master switch in Settings, then fully close the app (swipe from Recents) for several minutes — reopen it and check the diagnostic log's `SERVICE` category: it should show continuous heartbeats the whole time (no "onDestroy — foreground service stopped" / fresh "onCreate succeeded" pair in the middle), proving the foreground service and its BT receiver stayed alive the entire time the app was closed, independent of whether any parking was active — this is the real, previously-shipped bug ("Resolved" in CLAUDE.md): the service used to fully stop the moment the app closed with no active parking, killing all background BT detection until reopened
+- [ ] Android APK: with NO active parking and the app fully closed (as above), connect/disconnect the linked Bluetooth device — a native notification ("🚗 חניה הסתיימה אוטומטית" or "🅿️ חניה חדשה תישמר בפתיחה הבאה") should appear even though no Activity/WebView was alive to handle it live; reopening the app should then actually apply the action (new parking saved, or existing one ended) — the diagnostic log's `BT-PENDING` category should show the recorded+replayed entry
