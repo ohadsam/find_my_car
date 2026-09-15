@@ -55,6 +55,14 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         const val KEY_ACTIVE_VEHICLE_ID = "active_vehicle_id"
         const val KEY_GPS_AUTO_END_ENABLED = "gps_auto_end_enabled"
         const val KEY_DAILY_STATUS_ENABLED = "daily_status_notification_enabled"
+        // The Bluetooth master switch (js/config.js's CFG.keys.bluetoothSettings),
+        // mirrored here purely so the native side can answer "should BT detection
+        // be running?" WITHOUT the app being open — needed by
+        // ParkingForegroundService.restoreReasons()/startIfNeeded() to rebuild the
+        // "bluetooth" keep-alive reason after a process death or reboot, since
+        // every setReasonActive() caller is a @PluginMethod only reachable from
+        // live JS. This was the one BT-relevant setting never mirrored.
+        const val KEY_BT_ENABLED = "bluetooth_enabled"
         private const val TAG = "FMC-WidgetData"
         private const val PARKING_NOTIF_CHANNEL_ID = "findmycar_parking_active"
         private const val PARKING_NOTIF_ID = 4202
@@ -91,12 +99,14 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         val activeId = call.getString("activeVehicleId", "") ?: ""
         val gpsAutoEndEnabled = call.getBoolean("gpsAutoEndEnabled", false) ?: false
         val dailyStatusEnabled = call.getBoolean("dailyStatusNotificationEnabled", false) ?: false
+        val bluetoothEnabled = call.getBoolean("bluetoothEnabled", false) ?: false
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putString(KEY_VEHICLES_JSON, vehiclesArray?.toString() ?: "[]")
             .putString(KEY_ACTIVE_VEHICLE_ID, activeId)
             .putBoolean(KEY_GPS_AUTO_END_ENABLED, gpsAutoEndEnabled)
             .putBoolean(KEY_DAILY_STATUS_ENABLED, dailyStatusEnabled)
+            .putBoolean(KEY_BT_ENABLED, bluetoothEnabled)
             .apply()
         // Re-arms (or cancels) the once-daily status-notification alarm on
         // every sync — cheap and idempotent (recomputing "next occurrence of

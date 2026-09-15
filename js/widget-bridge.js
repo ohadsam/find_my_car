@@ -127,6 +127,12 @@ export class WidgetBridge {
       // in Settings takes effect on the native side immediately, not only
       // on the next unrelated parking-state change.
       dailyStatusNotificationEnabled: !!Store.get(CFG.keys.dailyStatus, { enabled: false })?.enabled,
+      // The Bluetooth master switch — mirrored so the native side can rebuild
+      // its "bluetooth" foreground-service keep-alive reason after a process
+      // death/reboot without the app being open (see
+      // ParkingForegroundService.restoreReasons()). Default true matches
+      // js/app.js's own #getBtSettings() default.
+      bluetoothEnabled: Store.get(CFG.keys.bluetoothSettings, { enabled: true })?.enabled !== false,
     }).catch(() => {});
 
     const current = state.current;
