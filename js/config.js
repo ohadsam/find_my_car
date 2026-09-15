@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.36.3',
+  version: '1.37.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -13,6 +13,12 @@ export const CFG = Object.freeze({
     bluetoothSettings: 'fmc_bluetooth_v1',
     gpsAutoEnd:        'fmc_gps_auto_end_v1',
     dailyStatus:       'fmc_daily_status_v1',
+    // Which manual steps of the background-setup guide the user says they've
+    // completed, plus whether they dismissed it. Manual-only by necessity:
+    // MIUI Autostart / the OEM battery policy / the Recents lock have no API
+    // to read, so this stores the user's own word — never a verified fact
+    // (see js/oem-setup.js).
+    oemSetup:          'fmc_oem_setup_v1',
     notifTag:          'fmc-parking-active',
   }),
   gpsSpeedThreshold:    7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
@@ -40,6 +46,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.37.0',
+      date: '2026-09-15',
+      items: Object.freeze([
+        'נוסף מדריך "הגדרת זיהוי ברקע" (אנדרואיד) — מציג רשימה של כל הגדרות המכשיר שקובעות אם האפליקציה בכלל רשאית לפעול ברקע, ופותח כל מסך בלחיצה אחת במקום לחפש אותו ידנית בהגדרות',
+        'המדריך בודק בפועל מה שניתן לבדוק (פטור מחיסכון בסוללה, הרשאות מיקום/התראות/Bluetooth) ומסמן בבירור אילו הגדרות של היצרן — כמו "הפעלה אוטומטית" בשיאומי — אי אפשר לאמת מתוך האפליקציה, כדי שלא יוצג מידע שאינו נכון',
+        'המדריך נפתח אוטומטית בפתיחת האפליקציה רק כל עוד משהו עדיין דורש טיפול, וזמין תמיד מתוך ההגדרות',
+      ]),
+    }),
     Object.freeze({
       version: '1.36.3',
       date: '2026-09-15',

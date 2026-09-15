@@ -41,6 +41,7 @@
   <link rel="modulepreload" href="js/bluetooth-native.js">
   <link rel="modulepreload" href="js/widget-bridge.js">
   <link rel="modulepreload" href="js/notify.js">
+  <link rel="modulepreload" href="js/oem-setup.js">
   <link rel="modulepreload" href="js/app.js">
 
   <title>FindMyCar - מצא את הרכב שלך</title>
@@ -350,6 +351,21 @@
           </button>
         </div>
         <input type="file" id="importDataInput" accept="application/json,.json" style="display:none;">
+      </div>
+      <div class="settings-backup-wrapper" id="oemSetupSection" style="display:none;">
+        <div class="settings-backup-title">הגדרת זיהוי ברקע (אנדרואיד)</div>
+        <p class="settings-backup-desc">
+          הגדרות המכשיר שקובעות אם האפליקציה בכלל רשאית לפעול ברקע — במיוחד בשיאומי, הואווי, אופו וויוו. המדריך פותח כל מסך בלחיצה.
+        </p>
+        <div class="settings-backup-actions">
+          <button class="settings-backup-btn" id="openOemSetupBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span>פתח מדריך הגדרות</span>
+          </button>
+        </div>
       </div>
       <div class="settings-backup-wrapper">
         <div class="settings-backup-title">יומן אבחון (Bluetooth / GPS / התראות)</div>
@@ -899,6 +915,35 @@
   </div>
 
   <!-- ── DIAGNOSTIC LOG MODAL ── -->
+  <!-- Guided setup for the device-level settings that decide whether
+       background detection may run. Android-only in practice: the list is
+       built from OemSetup.buildSteps(), which returns [] in the browser, so
+       the modal simply never opens there. -->
+  <div id="oemSetupModal" class="modal" role="dialog" aria-modal="true" aria-label="הגדרת זיהוי ברקע" style="display:none;">
+    <div class="modal-backdrop" data-close="oemSetupModal"></div>
+    <div class="modal-sheet modal-sheet-tall">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">⚙️ הגדרת זיהוי ברקע</h3>
+        <button class="modal-close-btn" data-close="oemSetupModal" aria-label="סגור">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <p class="oem-setup-intro" id="oemSetupIntro"></p>
+      <div class="oem-setup-list" id="oemSetupList"></div>
+      <div class="oem-setup-footer">
+        <button class="settings-backup-btn" id="oemSetupRefreshBtn">
+          <span>בדוק מחדש</span>
+        </button>
+        <button class="settings-backup-btn" id="oemSetupDismissBtn">
+          <span>אל תציג שוב אוטומטית</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="diagLogModal" class="modal" role="dialog" aria-modal="true" aria-label="יומן אבחון" style="display:none;">
     <div class="modal-backdrop" data-close="diagLogModal"></div>
     <div class="modal-sheet modal-sheet-tall">

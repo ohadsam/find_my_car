@@ -30,6 +30,7 @@ Since v1.11.0 the same web app also ships as a **native Android APK** (Capacitor
 | `js/bluetooth.js` | `BluetoothController` — device watch via `enumerateDevices` + `devicechange`; connect/disconnect callbacks; `checkNow()` for on-demand re-scan |
 | `js/bluetooth-native.js` | `NativeBluetoothController` — same interface as `BluetoothController`, backed by the native `BluetoothClassic` Capacitor plugin (real ACL connect/disconnect). Selected instead of `BluetoothController` in `js/app.js` when `NativeBluetoothController.isSupported()` |
 | `js/widget-bridge.js` | `WidgetBridge` — pushes the active-parking snapshot to the native `WidgetData` plugin so Android home-screen widgets stay current; no-op in the browser |
+| `js/oem-setup.js` | `OemSetup` — builds the "הגדרת זיהוי ברקע" guide's step list and runs each step's action via the native `OemSetup` plugin; no-op in the browser. See "OEM background-restriction setup guide" below |
 | `js/notify.js` | `Notify` — one-off system notifications for background BT/GPS events; native uses `@capacitor/local-notifications`, browser uses `ServiceWorkerRegistration.showNotification()` |
 | `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing, Bluetooth |
 | `sw.js` | Service Worker — cache strategies for app shell, tiles, Leaflet CDN |
@@ -336,6 +337,8 @@ never loses its own execution context the same way.
 | *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification, which since Stage 9 of the native migration is posted/cancelled directly by `WidgetDataPlugin.update()`/`.clear()` (plain `NotificationCompat`, not this plugin) on native; `#showParkingNotification`/`#cancelParkingNotification` (js/app.js) now skip themselves on native and keep using the browser-safe `ServiceWorkerRegistration.showNotification()` path only on the PWA, which has no native equivalent to delegate to |
 | `android/.../DailyStatusReceiver.kt` | *(no JS-facing methods — receives, not called from JS)* | Manifest-registered `BroadcastReceiver` (see "Once-daily status notification" below) that fires once a day, posts the status notification (per-vehicle parked/not-parked + address, filtered to vehicles with `dailyStatusEnabled`), and reschedules itself for tomorrow — also handles `BOOT_COMPLETED` to re-arm the alarm across reboots (`AlarmManager` alarms don't survive a restart) |
 | `android/.../DailyStatusScheduler.kt` | *(internal)* | `scheduleOrCancel`/`scheduleNext`/`cancel` — owns the `AlarmManager.setExactAndAllowWhileIdle` scheduling math (next occurrence of a fixed target hour) for `DailyStatusReceiver`; called from `WidgetDataPlugin.syncVehicles()` on every sync (idempotent) and from `DailyStatusReceiver` itself after each fire/boot |
+| `android/.../OemSetupPlugin.kt` | `OemSetup` | `status()`/`openAutostart()`/`openOemBattery()`/`openAppSettings()`/`requestIgnoreBatteryOptimizations()` — backs the in-app setup guide (see "OEM background-restriction setup guide" below) |
+| `android/.../OemSettingsIntents.kt` | *(internal)* | The actual intent launching + per-OEM component tables, shared by `OemSetupPlugin` and `BluetoothClassicPlugin` (whose `openAppSettings`/battery-exemption entry points now delegate here rather than building the intents inline — same anti-drift reasoning as `BackgroundAlertNotifier`) |
 | `android/.../DailyStatusVehicles.kt` | *(internal)* | Minimal parser of the `vehicles_json` `SharedPreferences` mirror, independent of `VehicleJsonParser`/`ParkedVehicles` (same "multiple independent readers" precedent as `ParkedVehicles.kt`) — reads only what `DailyStatusReceiver` needs: name/icon/hasParking/address, filtered to `dailyStatusEnabled` |
 
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
@@ -896,6 +899,71 @@ solve OEM-specific background killers (Xiaomi's "autostart" permission, Huawei's
 developer option) — those have no public API to query or toggle from an app, and
 remain something only the user can find in their device's own settings.
 
+### OEM background-restriction setup guide (`js/oem-setup.js` + `OemSetupPlugin.kt`)
+
+Everything above fixes what this app controls. The battery-optimization section
+directly above names what it doesn't: OEM-specific background killers with no
+public API. This feature is the practical answer to "then where do I turn those
+on?" — a step list in Settings ("הגדרת זיהוי ברקע") that opens each device
+screen directly instead of leaving the user to hunt for a toggle whose name
+changes between ROM versions.
+
+**The load-bearing distinction — verifiable vs. openable.** Conflating these
+would make the guide actively harmful, since its entire value is that a user
+who has been chasing an invisible problem for days can believe what it says:
+
+- **Verifiable** (`OemSetupPlugin.status()` reports these truthfully, re-read
+  every time the guide opens): the standard battery-optimization exemption
+  (`PowerManager.isIgnoringBatteryOptimizations`), location (including whether
+  it's `ACCESS_FINE_LOCATION` specifically — coarse-only silently degrades
+  drive-away detection), `POST_NOTIFICATIONS` (API 33+), `BLUETOOTH_CONNECT`
+  (API 31+). Both version-gated ones report `true` below their API level,
+  which is correct there, not a lie.
+- **Openable but never verifiable**: MIUI's "Autostart" permission and the
+  OEM's own per-app battery policy. **No API exists to read either.**
+  `status()` therefore reports `autostartAvailable`/`oemBatteryAvailable`
+  ("can we open that screen at all?") and deliberately never anything named
+  `granted`. The JS side stores the user's own "I did this" confirmation in
+  `CFG.keys.oemSetup` and renders it as exactly that — their word, badge
+  "לא ניתן לבדוק", not a verified fact.
+- **Neither**: locking the app in Recents is a launcher gesture with no API
+  and no launchable screen, so it has no method in the plugin at all — only an
+  instruction in the guide.
+
+**Why the OEM screens open at all**: each vendor ships a settings Activity
+(`com.miui.securitycenter/...AutoStartManagementActivity` and friends) that can
+be launched directly. These component names are unofficial and version-specific
+by nature, so `OemSettingsIntents` resolves first, wraps `startActivity` in
+try/catch anyway, and **always falls back** to the app's own system settings
+page — which always exists. Every launch returns `opened`/`fallback`/`failed`
+and `js/app.js` surfaces `fallback` as a toast, because a screen that silently
+doesn't appear is indistinguishable from a bug, which is the exact failure mode
+this feature exists to eliminate. MIUI additionally gets a second chance via the
+action-based `miui.intent.action.APP_PERM_EDITOR`, which survives Activity
+renames across MIUI versions.
+
+**`<queries>` in the manifest is required, not optional**: under Android 11+
+package-visibility filtering, `resolveActivity()` cannot see those OEM packages
+without an explicit `<queries>` entry, so `autostartAvailable()` would always
+return false and the guide would wrongly tell a Xiaomi user their device has no
+Autostart screen. Launching still works via try/catch either way — the
+`<queries>` block exists purely so the guide can tell the truth *before* the
+user taps. Deliberately an explicit package list rather than
+`QUERY_ALL_PACKAGES`, a restricted permission needing Play Store justification
+and wildly disproportionate here.
+
+**Auto-show discipline**: `shouldAutoShow()` returns true only while something
+is genuinely outstanding *and* the user hasn't dismissed it. A guide that
+reappears after everything is handled trains people to dismiss it reflexively,
+which costs exactly the users who most need it later. It opens on a timer after
+the loading screen fades (it's a modal over the main UI, not part of startup)
+and is never awaited during `#init()`.
+
+**No-op in the browser by construction**: `OemSetup.isSupported()` is false
+without the plugin, so the Settings entry point stays hidden on the PWA rather
+than opening a modal with nothing in it — consistent with every other
+native-only capability here.
+
 ### Native background detection (`core` package) — in-progress migration
 
 The battery-optimization exemption above is a mitigation, not a structural fix — it
@@ -1281,3 +1349,10 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: reboot the device (with either an active parking or the Bluetooth master switch on), and WITHOUT opening the app, check the notification shade — "FindMyCar פעיל ברקע" should reappear on its own within a minute or so of boot; on next app open the `SERVICE` category should show a "received android.intent.action.BOOT_COMPLETED" entry followed by "restarting foreground service after boot/update". On Xiaomi/MIUI this specifically requires the app's "הפעלה אוטומטית" (Autostart) setting to be enabled — the receiver is otherwise blocked by the OEM before Android ever delivers the broadcast
 - [ ] Android APK: install a new build over an existing one and, WITHOUT opening the app, confirm the same thing happens via `MY_PACKAGE_REPLACED` (the app update kills the process, so without this the service would stay dead until first launch — which is exactly what made every previous "I updated and it still didn't detect anything for days" report start from a dead service)
 - [ ] Android APK: change a Bluetooth setting (master switch, a per-vehicle toggle, or "apply to all") or the GPS auto-end toggle, then immediately close the app and trigger the corresponding real event — the setting you just changed must be the one that takes effect, not the previous value (all four toggles re-sync the native mirror immediately; a regression here is invisible in-app and only shows up in background behavior)
+- [ ] Android APK (setup guide): on a device with outstanding settings, the "הגדרת זיהוי ברקע" modal opens by itself a couple of seconds after launch; once every step is either verified-OK or manually confirmed, it stops opening by itself but stays reachable from Settings
+- [ ] Android APK (setup guide) on a Xiaomi/MIUI device: the "הפעלה אוטומטית (Autostart)" step is present, and its button opens MIUI's real Autostart list — NOT the generic app-info page. If it opens app-info instead, a `fallback` toast appears saying so (never a silent wrong screen), which means the component name changed in this MIUI version and `OemSettingsIntents.AUTOSTART_COMPONENTS` needs a new entry
+- [ ] Android APK (setup guide): the Autostart and OEM-battery steps show the badge "לא ניתן לבדוק" with a self-confirm checkbox — never "תקין" on their own. Toggling a checkbox flips that step to "תקין" and survives reopening the guide; nothing about them ever claims to have been verified by the app
+- [ ] Android APK (setup guide): revoke the notification (or Bluetooth) permission from system settings, reopen the guide, and confirm that step flips back to "דורש טיפול" on its own — the verifiable steps must re-read live state on every open, not cache a past result
+- [ ] Android APK (setup guide): grant location as "approximate" only — the location step must still show "דורש טיפול" with the precise-location wording, since coarse-only silently degrades drive-away detection
+- [ ] Android APK (setup guide) on a Pixel/stock-Android device: the Autostart and OEM-battery steps are absent entirely (no such screens exist), and the guide shows only the verifiable steps plus the Recents-lock instruction — it must not list a step whose button could never work
+- [ ] PWA (setup guide): the "הגדרת זיהוי ברקע" section does NOT appear in Settings in the browser, and nothing throws — `OemSetup.isSupported()` is false without the native plugin

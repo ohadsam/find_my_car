@@ -60,6 +60,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BluetoothClassicPlugin.class);
         registerPlugin(WidgetDataPlugin.class);
+        registerPlugin(OemSetupPlugin.class);
         super.onCreate(savedInstanceState);
         activeInstance = new WeakReference<>(this);
 

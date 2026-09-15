@@ -2069,6 +2069,87 @@ audio { width: 100%; }
   margin: 0;
 }
 .diag-log-footer > * { font-size: 0.78rem; }
+
+/* ── BACKGROUND-DETECTION SETUP GUIDE ── */
+.oem-setup-intro {
+  margin: 0 0 12px;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.oem-setup-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 58vh;
+}
+.oem-setup-empty {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.oem-step {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  padding: 12px;
+}
+/* A left border keyed to state, so scanning the list for what still needs
+   doing works without reading every badge. */
+.oem-step-ok      { border-inline-start: 3px solid var(--color-success); }
+.oem-step-todo    { border-inline-start: 3px solid var(--color-danger); }
+.oem-step-unknown { border-inline-start: 3px solid var(--color-warning); }
+.oem-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.oem-step-icon  { font-size: 1.1rem; line-height: 1; }
+.oem-step-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+}
+.oem-step-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+.oem-step-ok      .oem-step-badge { background: var(--color-success-glow); color: var(--color-success); }
+.oem-step-todo    .oem-step-badge { background: var(--color-danger-hover); color: var(--color-danger); }
+.oem-step-unknown .oem-step-badge { background: var(--color-warning-glow); color: var(--color-warning); }
+.oem-step-desc {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.oem-step-btn { margin-top: 10px; }
+.oem-step-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.oem-step-confirm input { width: 16px; height: 16px; accent-color: var(--color-success); flex-shrink: 0; }
+.oem-setup-footer {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.oem-setup-footer > * { flex: 1; font-size: 0.78rem; }
 .settings-backup-btn:active { transform: scale(0.97); }
 
 /* ── BLUETOOTH SETTINGS BUTTON ── */

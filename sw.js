@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME      = 'findmycar-v1.36.3';
+const CACHE_NAME      = 'findmycar-v1.37.0';
 const TILES_CACHE     = 'findmycar-tiles-v1.0.0';
 const STATIC_ASSETS = [
   './',
@@ -22,6 +22,7 @@ const STATIC_ASSETS = [
   './js/bluetooth-native.js',
   './js/widget-bridge.js',
   './js/notify.js',
+  './js/oem-setup.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-192.png',
