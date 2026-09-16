@@ -133,14 +133,16 @@
         android:text="⋮" />
 
     <!-- Background-detection liveness dots — see widget_active_parking.xml.
-         Bottom|start keeps them clear of the cycle (top|start) and
-         quick-actions (top|end) buttons; the badge background keeps them
-         legible over an arbitrary map tile. -->
+         Top|center_horizontal is the only free corner here: 🔁 takes
+         top|start, ⋮ takes top|end, and the address caption is a
+         full-width bar along the bottom of every map slot — dots placed
+         bottom|start would sit on top of a long address. The badge
+         background keeps them legible over an arbitrary map tile. -->
     <LinearLayout
         android:id="@+id/widget_status_row"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom|start"
+        android:layout_gravity="top|center_horizontal"
         android:layout_margin="4dp"
         android:padding="3dp"
         android:background="@drawable/widget_icon_badge_bg"
