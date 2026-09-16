@@ -126,6 +126,10 @@ class FindMyCarApp {
     // diagnostic log alongside the real BT-SHADOW entries — no-op in the
     // browser/PWA.
     WidgetBridge.initShadowListener();
+
+    // Shade buttons for the confirmation notifications — see
+    // #initNotificationActions(). Not awaited: it only registers listeners.
+    this.#initNotificationActions().catch(() => {});
     if (this.#getBtSettings().enabled) {
       DiagLog.log('BT', 'app init: starting Bluetooth watch (master switch is on)');
       this.#bluetooth.startWatch();
@@ -1239,7 +1243,11 @@ class FindMyCarApp {
     this.#state.gpsSpeedSince   = null;
     DiagLog.log('GPS', 'showing end-parking suggestion (speed or distance threshold crossed)');
     this.#ui.openModal('gpsEndModal');
-    this.#notifyIfBackground('🚗 מזוהה נסיעה', 'ייתכן שהרכב זז ממקום החניה. פתח את האפליקציה לסיים את החניה.');
+    this.#notifyIfBackground(
+      '🚗 מזוהה נסיעה',
+      'ייתכן שהרכב זז ממקום החניה.',
+      { actionTypeId: Notify.CONFIRM_END, extra: { vehicleId: this.#state.activeVehicleId } },
+    );
   }
 
   // Stage 7 of the native background-detection migration (see CLAUDE.md
@@ -1278,9 +1286,40 @@ class FindMyCarApp {
   // Background-only system notification alongside an in-app toast/modal —
   // if the app is visible the on-screen UI already alerts the user, so a
   // notification would just be redundant noise.
-  #notifyIfBackground(title, body) {
+  #notifyIfBackground(title, body, opts) {
     if (document.visibilityState === 'visible') return;
-    Notify.show(title, body);
+    Notify.show(title, body, opts);
+  }
+
+  // Wires the shade buttons on the two confirmation notifications (GPS
+  // "the car seems to have moved", Bluetooth "you connected — end the
+  // parking?"). Both used to say "open the app to confirm", which is the
+  // wrong thing to ask of someone who is driving: it's a one-tap decision
+  // and it belongs in the shade.
+  //
+  // "end" deliberately routes through the SAME performWidgetAction() the
+  // widgets use rather than calling #resetParking()/#btEndParking()
+  // directly — that method already handles switching to a non-active
+  // vehicle, guards against the parking having been ended since, and posts
+  // its own result notification. One headless action path, not two.
+  // Called once, fire-and-forget, from #init(); no-op in the browser.
+  async #initNotificationActions() {
+    await Notify.registerActionTypes();
+    await Notify.addActionListener(async ({ actionId, extra }) => {
+      const vehicleId = extra?.vehicleId ?? null;
+      DiagLog.log('NOTIFY', `notification action "${actionId}" (vehicleId=${vehicleId || '(active)'})`);
+      if (actionId !== 'end') return; // 'dismiss' and a plain 'tap' just open/close
+      // The in-app modals become stale the moment the action is taken from
+      // the shade — close whichever one is showing so the user doesn't come
+      // back to a question they already answered.
+      this.#closeModal('gpsEndModal');
+      this.#closeModal('btParkingModal');
+      try {
+        await this.performWidgetAction('end', vehicleId);
+      } catch (e) {
+        DiagLog.log('NOTIFY', `notification action "end" threw — ${e?.message || e}`);
+      }
+    });
   }
 
   // ── BLUETOOTH ─────────────────────────────────────────────────
@@ -1315,7 +1354,11 @@ class FindMyCarApp {
         if (title) title.textContent = `${v.icon} הגעת לרכב?`;
         if (desc)  desc.textContent  = `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`;
         this.#ui.openModal('btParkingModal');
-        this.#notifyIfBackground(`${v.icon} הגעת לרכב?`, `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}. פתח את האפליקציה לאישור.`);
+        this.#notifyIfBackground(
+          `${v.icon} הגעת לרכב?`,
+          `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`,
+          { actionTypeId: Notify.CONFIRM_END, extra: { vehicleId: v.id } },
+        );
       }
     }
     if (!matched) DiagLog.log('BT', `no vehicle is linked to device label="${label}" — event ignored`);

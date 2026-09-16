@@ -967,6 +967,44 @@ thing that makes them worth having:
   be able to break the machinery it reports on, which is also why every entry
   point here is wrapped in try/catch.
 
+## 9. Notification action buttons
+
+The two confirmation notifications (GPS "car moved", BT "you arrived") are
+answerable from the shade. Every check protects the property that makes them
+worth having — that they work without opening the app:
+
+- Confirm both buttons route through `performWidgetAction()` /
+  `WidgetActionReceiver` rather than a notification-specific action path. That
+  reuse is what gives them silent vehicle switching, the already-ended guard,
+  the result notification, and the `PendingWidgetActionStore` fallback; a
+  parallel implementation would have to re-earn all four and would drift.
+- Confirm `Notify.registerActionTypes()` is called (from
+  `#initNotificationActions()`, once, from `#init()`) BEFORE any notification
+  using `Notify.CONFIRM_END` can be scheduled — Android silently drops actions
+  for an unregistered type, so the failure mode is buttons just not appearing,
+  with no error anywhere.
+- Confirm `#notifyIfBackground()` forwards its third `opts` argument to
+  `Notify.show()`, and that both confirmation call sites (`#suggestGpsEnd()` and
+  the BT connect-confirm branch) pass `actionTypeId` **and** an
+  `extra.vehicleId` — without the vehicle id the action would act on whichever
+  vehicle happens to be active when the button is pressed, not the one the
+  notification was about.
+- Confirm the action handler ignores `dismiss` and a bare `tap`, acting only on
+  `end` — `tap` fires for the notification body, which should just open the app.
+- Confirm the handler closes BOTH `gpsEndModal` and `btParkingModal` before
+  acting: answering in the shade makes the in-app modal stale, and returning to
+  a question you already answered is its own bug.
+- Confirm `BackgroundAlertNotifier.show()` gives each action a request code of
+  `notifId + index`. A shared request code makes Android reuse one
+  `PendingIntent` across buttons, so every button performs whichever was built
+  last — a silent, easily-missed wrong-action bug.
+- Confirm `WidgetActionReceiver` cancels `EXTRA_NOTIFICATION_ID` for *every*
+  button before running the action (not only on success), and that
+  `ACTION_DISMISS` returns immediately after cancelling without touching the
+  WebView or recording a pending action.
+- Confirm `ACTION_DISMISS` is handled inside `WidgetActionReceiver` rather than
+  by a second receiver — one path for every notification button.
+
 ## Output format
 
 A markdown table per channel (check | status | detail), then:
