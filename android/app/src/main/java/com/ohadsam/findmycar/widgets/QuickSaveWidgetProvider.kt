@@ -20,11 +20,13 @@ import com.ohadsam.findmycar.WidgetActionReceiver
 class QuickSaveWidgetProvider : AppWidgetProvider() {
     companion object {
         const val EXTRA_ACTION = "widget_action"
-    }
 
-    override fun onUpdate(context: Context, mgr: AppWidgetManager, ids: IntArray) {
-        for (id in ids) {
+
+        // Hoisted out of onUpdate so WidgetStatusRefresher can repaint this
+        // widget's status dots on its own timer, exactly like the other two.
+        fun updateOne(context: Context, mgr: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_quick_save)
+            WidgetStatus.render(context, views)
             val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0)
 
@@ -47,4 +49,12 @@ class QuickSaveWidgetProvider : AppWidgetProvider() {
             mgr.updateAppWidget(id, views)
         }
     }
+
+    override fun onUpdate(context: Context, mgr: AppWidgetManager, ids: IntArray) {
+        for (id in ids) updateOne(context, mgr, id)
+        WidgetStatusRefresher.scheduleOrCancel(context)
+    }
+
+    override fun onEnabled(context: Context) = WidgetStatusRefresher.scheduleOrCancel(context)
+    override fun onDisabled(context: Context) = WidgetStatusRefresher.scheduleOrCancel(context)
 }

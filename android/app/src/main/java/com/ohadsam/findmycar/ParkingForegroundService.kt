@@ -29,6 +29,7 @@ import com.ohadsam.findmycar.core.GpsDecisionState
 import com.ohadsam.findmycar.core.GpsMath
 import com.ohadsam.findmycar.core.PendingGpsSuggestion
 import com.ohadsam.findmycar.core.VehicleJsonParser
+import com.ohadsam.findmycar.widgets.WidgetStatusRefresher
 import java.lang.ref.WeakReference
 
 /**
@@ -389,6 +390,35 @@ class ParkingForegroundService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Persists one live-state flag for the widgets' status dots (WidgetStatus).
+     * Written alongside — never instead of — the NativeLogStore entry at the
+     * same point, so the diagnostic log and the dots can never disagree about
+     * what happened. Wrapped because a status indicator must never be able to
+     * break the machinery it reports on.
+     */
+    private fun recordHeartbeatAt() {
+        try {
+            getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
+                .edit().putLong(WidgetDataPlugin.KEY_SVC_HEARTBEAT_AT, System.currentTimeMillis()).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "recordHeartbeatAt failed (non-fatal)", e)
+        }
+        // The dots' own refresh alarm is Doze-throttled the same way this
+        // heartbeat is, so repainting here too means a widget is never staler
+        // than the most recent proof-of-life the service itself produced.
+        WidgetStatusRefresher.refreshAll(this)
+    }
+
+    private fun setStatusFlag(key: String, value: Boolean) {
+        try {
+            getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(key, value).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "setStatusFlag($key) failed (non-fatal)", e)
+        }
+    }
+
     private fun refreshForegroundServiceType() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         try {
@@ -404,6 +434,12 @@ class ParkingForegroundService : Service() {
         isRunning = false
         Log.i(TAG, "onDestroy — foreground service stopped")
         NativeLogStore.add(this, TAG, "SERVICE", "onDestroy — foreground service stopped")
+        // Nothing is running any more — clear every liveness flag so the
+        // widgets' dots go red rather than showing the last good state forever.
+        setStatusFlag(WidgetDataPlugin.KEY_BT_RECEIVER_ACTIVE, false)
+        setStatusFlag(WidgetDataPlugin.KEY_GPS_WATCH_ACTIVE, false)
+        setStatusFlag(WidgetDataPlugin.KEY_GPS_LOCATION_TYPE_ACTIVE, false)
+        WidgetStatusRefresher.refreshAll(this)
         stopHeartbeat()
         receiver?.let { try { unregisterReceiver(it) } catch (e: IllegalArgumentException) { /* already gone */ } }
         receiver = null
@@ -447,9 +483,11 @@ class ParkingForegroundService : Service() {
     private fun startHeartbeat() {
         stopHeartbeat() // idempotent — never double-register/double-schedule if called twice
         NativeLogStore.add(this, TAG, "SERVICE", "heartbeat — foreground service alive (reasons=$activeReasons)")
+        recordHeartbeatAt()
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 NativeLogStore.add(ctx, TAG, "SERVICE", "heartbeat — foreground service alive (reasons=$activeReasons)")
+                recordHeartbeatAt()
                 scheduleNextHeartbeat()
             }
         }
@@ -576,6 +614,7 @@ class ParkingForegroundService : Service() {
         receiver = r
         Log.i(TAG, "BT ACL receiver registered")
         NativeLogStore.add(this, TAG, "SERVICE", "BT ACL receiver registered")
+        setStatusFlag(WidgetDataPlugin.KEY_BT_RECEIVER_ACTIVE, true)
     }
 
     // Stage 4 of the native background-detection migration (see CLAUDE.md
@@ -642,6 +681,9 @@ class ParkingForegroundService : Service() {
                 // before — so say which of the two it is.
                 val locationTypeActive = canStartLocationType() &&
                     ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                setStatusFlag(WidgetDataPlugin.KEY_GPS_WATCH_ACTIVE, true)
+                setStatusFlag(WidgetDataPlugin.KEY_GPS_LOCATION_TYPE_ACTIVE, locationTypeActive)
+                WidgetStatusRefresher.refreshAll(this)
                 NativeLogStore.add(
                     this, TAG, "SERVICE",
                     if (locationTypeActive) "GPS watch started (provider=$provider)"
@@ -654,6 +696,9 @@ class ParkingForegroundService : Service() {
                 locationManager = null
                 Log.i(TAG, "GPS shadow watch stopped")
                 NativeLogStore.add(this, TAG, "SERVICE", "GPS watch stopped")
+                setStatusFlag(WidgetDataPlugin.KEY_GPS_WATCH_ACTIVE, false)
+                setStatusFlag(WidgetDataPlugin.KEY_GPS_LOCATION_TYPE_ACTIVE, false)
+                WidgetStatusRefresher.refreshAll(this)
             }
         } catch (e: Exception) {
             Log.w(TAG, "updateLocationWatch($active) failed (non-fatal)", e)

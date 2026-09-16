@@ -41,6 +41,14 @@
             android:name=".widgets.WidgetCycleVehicleReceiver"
             android:exported="false" />
 
+        <!-- Repaints the widgets' background-detection status dots on a timer
+             (own explicit PendingIntent, no intent-filter needed). The alarm
+             only exists while at least one widget is placed — see
+             WidgetStatusRefresher.scheduleOrCancel(). -->
+        <receiver
+            android:name=".widgets.WidgetStatusRefreshReceiver"
+            android:exported="false" />
+
         <!-- Handles the once-daily status-notification alarm (own explicit
              PendingIntent, no intent-filter match needed for that) AND
              BOOT_COMPLETED (a protected system broadcast — safe to declare

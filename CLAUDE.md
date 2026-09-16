@@ -955,6 +955,59 @@ solve OEM-specific background killers (Xiaomi's "autostart" permission, Huawei's
 developer option) — those have no public API to query or toggle from an app, and
 remain something only the user can find in their device's own settings.
 
+### Widget liveness dots (`widgets/WidgetStatus.kt` + `WidgetStatusRefresher.kt`)
+
+Three consecutive bugs — the service stopping when the app closed with no
+parking; background location silently withheld without a `location`-typed FGS;
+that same type then killing the service outright on a boot restart — all
+produced the *identical*, completely silent symptom: nothing happens. Each was
+only diagnosable by exporting the diagnostic log and reading it line by line.
+Every widget now carries two small tinted icons (GPS, Bluetooth) that make that
+state visible from the home screen.
+
+**Four states, not two — this is the load-bearing decision.** A red dot for
+something the user deliberately turned off would be a lie, and would teach them
+to ignore the dot entirely, costing exactly the users who later need it. Same
+discipline as the setup guide's "cannot verify" badge:
+
+- **GREEN** working as intended.
+- **AMBER** running but degraded in a way that matters — specifically the GPS
+  watch is active while the `location` FGS type is NOT, so Android withholds
+  every update whenever the app isn't visible. That is the v1.37.1 post-reboot
+  state, and it is invisible in every other way: the service looks alive and the
+  watch reports "started."
+- **RED** should be running and isn't. The only state meaning something is wrong.
+- **GRAY** deliberately off, or nothing to do right now (no active parking).
+  Never a fault.
+
+**Where the truth comes from**: `ParkingForegroundService` writes
+`KEY_GPS_WATCH_ACTIVE` / `KEY_GPS_LOCATION_TYPE_ACTIVE` / `KEY_BT_RECEIVER_ACTIVE`
+/ `KEY_SVC_HEARTBEAT_AT` at the same points it already logs to `NativeLogStore`
+— alongside, never instead of — so the diagnostic log and the dots cannot
+disagree about what happened. Service liveness itself is read directly from
+`ParkingForegroundService.isRunning`, a static in the same process: a running
+foreground service keeps that process alive, so a genuine `true` has no
+staleness, and if the process had to be started just to render the widget,
+`false` is the correct answer rather than a stale one.
+
+**Refresh cadence, honestly**: `updatePeriodMillis` is floored at 30 minutes by
+Android, so this uses `AlarmManager`. The scheduled interval is 2 minutes, but
+`setExactAndAllowWhileIdle` is granted roughly once per 9-15 minutes per app in
+Doze — so on a pocketed phone the real cadence degrades to that, and nothing
+here claims otherwise. That is acceptable by construction: the dots describe a
+condition that changes on the scale of app launches and reboots, not seconds.
+The alarm exists only while at least one widget is placed
+(`WidgetStatusRefresher.scheduleOrCancel()` re-counts across all three providers
+on every `onUpdate`/`onEnabled`/`onDisabled`), because waking the CPU every two
+minutes for a widget nobody has placed is pure battery cost.
+
+**`syncVehicles()` must repaint too**: `WidgetDataPlugin.refreshWidgets()` only
+targets the two data-driven providers and only runs from `update()`/`clear()`,
+so a settings change alone would leave the dots showing the previous setting
+until an unrelated parking event. `syncVehicles()` therefore calls
+`WidgetStatusRefresher.refreshAll()` directly — the native counterpart of the
+rule that every settings toggle must call `#syncUI()`.
+
 ### OEM background-restriction setup guide (`js/oem-setup.js` + `OemSetupPlugin.kt`)
 
 Everything above fixes what this app controls. The battery-optimization section
@@ -1414,3 +1467,9 @@ round-trip, before the next stage builds on it.
 - [ ] PWA (setup guide): the "הגדרת זיהוי ברקע" section does NOT appear in Settings in the browser, and nothing throws — `OemSetup.isSupported()` is false without the native plugin
 - [ ] **Android APK (the boot/update regression fix, v1.37.1): with an active parking AND the Bluetooth master switch on, reboot the device. WITHOUT opening the app, check the notification shade — "FindMyCar פעיל ברקע" must appear on its own.** On next app open the `SERVICE` category must show "received android.intent.action.BOOT_COMPLETED", "restarting foreground service after boot/update", and then **"onCreate succeeded"** — NOT "onCreate FAILED". An `onCreate FAILED` mentioning `Starting FGS with type location` is this exact regression returning: the service claimed the location type from a background start, which Android 14 refuses without while-in-use location access (see CLAUDE.md). Repeat the same check after installing a build over an existing one (`MY_PACKAGE_REPLACED`) — the two paths fail identically and only one is usually tested
 - [ ] Android APK: after that boot, the `SERVICE` log's "GPS watch started" line should say the location type is NOT active (honest — the service came up in the background); then open the app and confirm a follow-up entry shows the type being upgraded, proving `MainActivity.onResume()` → `onAppForegrounded()` actually ran. Background GPS is only genuinely working from that point on
+- [ ] Android APK (widget liveness dots): with GPS auto-end ON, Bluetooth ON and a parking active, both dots on all three widgets are GREEN. Turn the Bluetooth master switch off in Settings — the Bluetooth dot must turn GRAY (not red: the user chose this) on the very next repaint, without waiting for a parking event
+- [ ] Android APK (widget liveness dots): end the parking — the GPS dot turns GRAY (nothing to watch), not red. With no parking AND GPS auto-end off, gray is the only correct color for it
+- [ ] Android APK (widget liveness dots): reboot the device and, WITHOUT opening the app, look at a widget — the GPS dot should be AMBER (service came up in the background, so the `location` FGS type could not be claimed; see CLAUDE.md). Open the app once and it must go GREEN. An amber dot that never resolves after opening the app means `onAppForegrounded()` isn't upgrading the type
+- [ ] Android APK (widget liveness dots): force-stop the app from app-info, then look at a widget — both dots RED (service genuinely not running). This is the one state that should alarm; confirm it never appears while everything is actually working
+- [ ] Android APK (widget liveness dots): remove every widget from the home screen, then check (via adb `dumpsys alarm | grep findmycar`) that the 2-minute refresh alarm is gone — it must not keep waking the device for widgets nobody has placed; re-adding a widget must re-arm it
+- [ ] Android APK (widget liveness dots): the dots never overlap or hide the "⋮" quick-actions button or the 🔁 cycle button on any of the three widgets, at both default and resized sizes

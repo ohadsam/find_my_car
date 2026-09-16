@@ -131,4 +131,35 @@
         android:textSize="14sp"
         android:textColor="#FFFFFF"
         android:text="⋮" />
+
+    <!-- Background-detection liveness dots — see widget_active_parking.xml.
+         Bottom|start keeps them clear of the cycle (top|start) and
+         quick-actions (top|end) buttons; the badge background keeps them
+         legible over an arbitrary map tile. -->
+    <LinearLayout
+        android:id="@+id/widget_status_row"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="4dp"
+        android:padding="3dp"
+        android:background="@drawable/widget_icon_badge_bg"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/widget_status_gps"
+            android:layout_width="11dp"
+            android:layout_height="11dp"
+            android:src="@drawable/ic_status_gps"
+            android:contentDescription="@null" />
+
+        <ImageView
+            android:id="@+id/widget_status_bt"
+            android:layout_width="11dp"
+            android:layout_height="11dp"
+            android:layout_marginStart="4dp"
+            android:src="@drawable/ic_status_bt"
+            android:contentDescription="@null" />
+    </LinearLayout>
 </FrameLayout>

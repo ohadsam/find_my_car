@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.37.1',
+  version: '1.38.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -46,6 +46,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.38.0',
+      date: '2026-09-16',
+      items: Object.freeze([
+        'נוספו לכל שלושת הווידג\'טים שני סמלי חיווי קטנים — מיקום ו-Bluetooth — שצבעם מראה במבט אחד אם זיהוי הרקע באמת פועל כרגע, בלי להיכנס לאפליקציה או לקרוא את יומן האבחון',
+        'ירוק = פעיל, כתום = רץ אך אנדרואיד מונע עדכונים ברקע (פתח את האפליקציה פעם אחת), אדום = אמור לרוץ ולא רץ, אפור = כבוי בהגדרות או שאין חניה פעילה — כדי שאדום יסמן תמיד תקלה אמיתית ולא הגדרה שכיבית בכוונה',
+        'החיווי מתרענן כל 2 דקות, וגם מיד עם כל שינוי הגדרה או פעולת חניה',
+      ]),
+    }),
     Object.freeze({
       version: '1.37.1',
       date: '2026-09-16',

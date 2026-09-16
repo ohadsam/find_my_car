@@ -888,6 +888,62 @@ that, not a feature:
   `Utils.escHtml()` — the step list includes `Build.MANUFACTURER`, which comes
   from the device, not from this codebase.
 
+## 8. Widget liveness dots
+
+The dots exist so three consecutive silent-failure bugs become visible from the
+home screen. Every check here protects their trustworthiness, which is the only
+thing that makes them worth having:
+
+- Confirm `WidgetStatus.render()` produces **four** states and that `GRAY` (not
+  `RED`) is what a deliberately-disabled setting or an absent parking maps to —
+  specifically `!gpsEnabled || !hasParking` → gray, and `!btEnabled` → gray. A
+  red dot for something the user turned off themselves is a false alarm that
+  teaches them to ignore the indicator, exactly what the OEM guide's "cannot
+  verify" badge exists to avoid.
+- Confirm the `AMBER` branch exists and is reached when the GPS watch is active
+  but `KEY_GPS_LOCATION_TYPE_ACTIVE` is false — this is the v1.37.1 post-reboot
+  state, invisible in every other way (service alive, watch reports started),
+  and collapsing it into green or red would hide the exact condition the dots
+  were added for.
+- Confirm `ParkingForegroundService` writes `KEY_GPS_WATCH_ACTIVE`,
+  `KEY_GPS_LOCATION_TYPE_ACTIVE` and `KEY_BT_RECEIVER_ACTIVE` **alongside** (not
+  instead of) its existing `NativeLogStore` entries at the same points, and
+  clears all three in `onDestroy()`. A flag left `true` after teardown would
+  show green for a service that is gone — worse than no indicator at all.
+- Confirm `WidgetStatus` reads `ParkingForegroundService.isRunning` directly
+  rather than inferring liveness from a persisted timestamp alone: a running
+  foreground service keeps this process alive, so the static is precise here,
+  while a staleness heuristic would lag by whatever the Doze-throttled refresh
+  interval happens to be.
+- Confirm `WidgetStatusRefresher.scheduleOrCancel()` counts placed widgets
+  across **all three** providers and cancels when the total is zero, and that
+  every provider calls it from `onUpdate`/`onEnabled`/`onDisabled`. Removing the
+  last widget must stop the alarm — a 2-minute CPU wake for a widget nobody has
+  placed is pure battery cost, and a per-provider `onDisabled` that cancelled
+  unconditionally would kill the refresh for the other two types.
+- Confirm `WidgetDataPlugin.syncVehicles()` calls
+  `WidgetStatusRefresher.refreshAll()`. `refreshWidgets()` covers only the two
+  data-driven providers and only runs from `update()`/`clear()`, so without this
+  a settings toggle would leave the dots showing the previous setting until an
+  unrelated parking event — the native counterpart of the "every settings toggle
+  must call `#syncUI()`" rule.
+- Confirm all three widget layouts declare `widget_status_gps` and
+  `widget_status_bt`, and that on `widget_quick_save.xml` / `widget_mini_map.xml`
+  the status row is positioned so it cannot overlap the `⋮` quick-actions button
+  (top|end) or the 🔁 cycle button (top|start).
+- Confirm `ic_status_gps.xml`/`ic_status_bt.xml` are white-sourced vectors —
+  `RemoteViews.setInt(id, "setColorFilter", …)` blends with the source color, so
+  a colored drawable would render the wrong hue with no error.
+- Confirm `WidgetStatusRefreshReceiver` is registered in `AndroidManifest.xml`
+  with `exported="false"` — without registration the alarm fires into nothing and
+  the dots silently stop refreshing on a timer (they would still update on real
+  parking events, which makes the regression easy to miss).
+- Confirm `WidgetStatus`/`WidgetStatusRefresher` never call
+  `WidgetDataPlugin.update`/`.clear`, `setReasonActive`, or anything with a real
+  side effect on parking state. A status indicator must only read — it must never
+  be able to break the machinery it reports on, which is also why every entry
+  point here is wrapped in try/catch.
+
 ## Output format
 
 A markdown table per channel (check | status | detail), then:
