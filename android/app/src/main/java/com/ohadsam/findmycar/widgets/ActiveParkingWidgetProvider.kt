@@ -30,6 +30,7 @@ class ActiveParkingWidgetProvider : AppWidgetProvider() {
         fun updateOne(context: Context, mgr: AppWidgetManager, id: Int) {
             val prefs = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
             val views = RemoteViews(context.packageName, R.layout.widget_active_parking)
+            WidgetStatus.render(context, views)
             val parked = ParkedVehicles.parse(prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]")
             val isLarge = (mgr.getAppWidgetOptions(id)?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0) ?: 0) >=
                 LARGE_MIN_HEIGHT_DP
@@ -110,7 +111,11 @@ class ActiveParkingWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, mgr: AppWidgetManager, ids: IntArray) {
         for (id in ids) updateOne(context, mgr, id)
+        WidgetStatusRefresher.scheduleOrCancel(context)
     }
+
+    override fun onEnabled(context: Context) = WidgetStatusRefresher.scheduleOrCancel(context)
+    override fun onDisabled(context: Context) = WidgetStatusRefresher.scheduleOrCancel(context)
 
     override fun onAppWidgetOptionsChanged(
         context: Context, mgr: AppWidgetManager, appWidgetId: Int, newOptions: Bundle?,

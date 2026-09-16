@@ -161,4 +161,32 @@
                 android:text="🚗" />
         </FrameLayout>
     </LinearLayout>
+
+    <!-- Background-detection liveness dots (WidgetStatus tints these): 📍 GPS
+         and Bluetooth. Green = working, amber = running but Android is
+         withholding background updates, red = should be running and isn't,
+         gray = deliberately off / nothing to do. Deliberately small and
+         low-contrast: this is a reassurance glance, not a call to action. -->
+    <LinearLayout
+        android:id="@+id/widget_status_row"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/widget_status_gps"
+            android:layout_width="11dp"
+            android:layout_height="11dp"
+            android:src="@drawable/ic_status_gps"
+            android:contentDescription="@null" />
+
+        <ImageView
+            android:id="@+id/widget_status_bt"
+            android:layout_width="11dp"
+            android:layout_height="11dp"
+            android:layout_marginStart="4dp"
+            android:src="@drawable/ic_status_bt"
+            android:contentDescription="@null" />
+    </LinearLayout>
 </LinearLayout>
