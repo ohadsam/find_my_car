@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.38.0',
+  version: '1.38.1',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -46,6 +46,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.38.1',
+      date: '2026-09-16',
+      items: Object.freeze([
+        'תוקן שורש הבעיה של זיהוי נסיעה ברקע: כששירות הרקע עולה מחדש לבד (אחרי עדכון או הפעלת המכשיר), אנדרואיד לא מעניקה לו הרשאת מיקום-ברקע — והוספת ההרשאה מאוחר יותר לא עוזרת רטרואקטיבית. השירות פשוט לא קיבל אף עדכון מיקום, בזמן שכל הסימנים הראו "פעיל". עכשיו הוא מופעל מחדש מתוך האפליקציה ברגע שהיא נפתחת, וכך מקבל את ההרשאה באמת',
+        'רישום "פעימת הלב" כולל עכשיו כמה עדכוני GPS התקבלו בפועל, לפני כמה זמן היה העדכון האחרון, והמרחק הנוכחי מהחניה — כדי שלא תהיה יותר אי-ודאות בין "המעקב לא רץ", "רץ אבל לא מגיע אף עדכון" ו"מגיעים עדכונים אך לא נחצה הסף"',
+      ]),
+    }),
     Object.freeze({
       version: '1.38.0',
       date: '2026-09-16',

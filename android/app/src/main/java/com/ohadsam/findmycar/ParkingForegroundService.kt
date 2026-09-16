@@ -198,6 +198,32 @@ class ParkingForegroundService : Service() {
     private var heartbeatReceiver: BroadcastReceiver? = null
     private var heartbeatPendingIntent: PendingIntent? = null
 
+    // The foreground-service type currently in effect, and whether the LOCATION
+    // bit was present when this service ENTERED the foreground state.
+    //
+    // These are different facts, and conflating them was the v1.38.1 bug: the
+    // while-in-use location capability an FGS gets is bound to the moment it
+    // entered foreground state. A service started from a background context
+    // (ServiceRestartReceiver on BOOT_COMPLETED/MY_PACKAGE_REPLACED) never had
+    // that capability — and re-calling startForeground() later with the LOCATION
+    // bit added does NOT grant it retroactively. Android accepts the new type
+    // without error and keeps withholding updates, so every signal we had said
+    // "location type active" while the OS delivered nothing.
+    @Volatile private var currentType = 0
+    @Volatile private var startedWithLocationType = false
+    // One restart attempt per process — a restart loop would be far worse than
+    // the bug it fixes.
+    @Volatile private var locationRestartAttempted = false
+
+    // Rolling GPS-delivery counters, reported in each heartbeat. This is the
+    // diagnostic that was missing: "GPS watch started" told us the request was
+    // accepted, never whether a single fix actually arrived. Folded into the
+    // existing 5-minute heartbeat rather than logged per update, so it costs
+    // zero extra entries against NativeLogStore's 200-entry cap.
+    @Volatile private var gpsUpdatesSinceHeartbeat = 0
+    @Volatile private var lastFixAt = 0L
+    @Volatile private var lastFixDistanceM = -1.0
+
     override fun onCreate() {
         super.onCreate()
         try {
@@ -339,6 +365,9 @@ class ParkingForegroundService : Service() {
         try {
             if (preferred != 0) startForeground(NOTIFICATION_ID, notification, preferred)
             else startForeground(NOTIFICATION_ID, notification)
+            currentType = preferred
+            startedWithLocationType =
+                (preferred and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0
             return preferred
         } catch (e: Exception) {
             Log.w(TAG, "startForeground(type=$preferred) rejected — retrying without it", e)
@@ -356,6 +385,8 @@ class ParkingForegroundService : Service() {
         }
         if (fallback != 0) startForeground(NOTIFICATION_ID, notification, fallback)
         else startForeground(NOTIFICATION_ID, notification)
+        currentType = fallback
+        startedWithLocationType = false
         return fallback
     }
 
@@ -371,11 +402,59 @@ class ParkingForegroundService : Service() {
      */
     fun onBecameEligibleForLocationType() {
         if (!isParkingReasonActive()) return
+
+        // The real fix (v1.38.1). If this service entered the foreground state
+        // WITHOUT the location type — which is exactly what a boot/update
+        // restart produces, since ServiceRestartReceiver runs from a background
+        // broadcast — then it holds no while-in-use location capability, and
+        // refreshForegroundServiceType() alone cannot grant one. Android accepts
+        // the added type silently and still delivers nothing, which is why every
+        // signal read "location type active" through a whole drive that produced
+        // no fixes at all. The only way to obtain the capability is to enter the
+        // foreground state again, now, from a foreground app context.
+        if (!startedWithLocationType && !locationRestartAttempted && canStartLocationType() && locationPermitted()) {
+            locationRestartAttempted = true
+            NativeLogStore.add(
+                this, TAG, "SERVICE",
+                "restarting service from the foreground to obtain background-location capability " +
+                    "(it had entered foreground with type=$currentType, without the location bit)"
+            )
+            restartFromForeground()
+            return
+        }
+
         refreshForegroundServiceType()
         // The watch itself may never have started (or started under a type
         // Android was throttling) — restarting it under the now-correct type
         // is what actually resumes background GPS.
         updateLocationWatch(true)
+    }
+
+    private fun locationPermitted(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Stops this service and immediately starts it again from the current
+     * (foreground) context, so it re-enters the foreground state while the app
+     * genuinely holds while-in-use location — the only way to gain the
+     * background-location capability retroactively.
+     *
+     * Safe because `activeReasons` is rebuilt by restoreReasons() from the
+     * persisted mirror on the new instance, so nothing is lost by the bounce;
+     * guarded by locationRestartAttempted so it can only ever happen once per
+     * process.
+     */
+    private fun restartFromForeground() {
+        val ctx = applicationContext
+        try {
+            updateLocationWatch(false) // drop the watch that was never delivering
+            stopSelf()
+            ContextCompat.startForegroundService(ctx, Intent(ctx, ParkingForegroundService::class.java))
+        } catch (e: Exception) {
+            Log.w(TAG, "restartFromForeground failed (non-fatal)", e)
+            NativeLogStore.add(ctx, TAG, "SERVICE", "foreground restart for location capability FAILED (${e.message})")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -397,6 +476,33 @@ class ParkingForegroundService : Service() {
      * what happened. Wrapped because a status indicator must never be able to
      * break the machinery it reports on.
      */
+    /**
+     * The heartbeat line. Carries the GPS-delivery summary so a quiet stretch is
+     * never ambiguous between "the watch isn't running", "it's running but no
+     * fix ever arrives" (the OS withholding them) and "fixes arrive but no
+     * threshold was crossed" — three very different faults that looked
+     * identical in every previous report.
+     */
+    private fun heartbeatMessage(): String {
+        val sb = StringBuilder("heartbeat — foreground service alive (reasons=$activeReasons")
+        sb.append(", fgsType=").append(currentType)
+        sb.append(if (startedWithLocationType) "+loc@start" else " NO-loc@start")
+        if (locationListener != null) {
+            val n = gpsUpdatesSinceHeartbeat
+            gpsUpdatesSinceHeartbeat = 0
+            sb.append(", gpsFixes=").append(n)
+            if (lastFixAt > 0L) {
+                sb.append(", lastFix=").append((System.currentTimeMillis() - lastFixAt) / 1000).append("s ago")
+                if (lastFixDistanceM >= 0) sb.append(", dist=").append(lastFixDistanceM.toInt()).append("m")
+            } else {
+                sb.append(", lastFix=NEVER")
+            }
+        } else {
+            sb.append(", gpsWatch=off")
+        }
+        return sb.append(')').toString()
+    }
+
     private fun recordHeartbeatAt() {
         try {
             getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
@@ -423,7 +529,18 @@ class ParkingForegroundService : Service() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         try {
             val type = resolveForegroundServiceType()
-            if (type != 0) startForeground(NOTIFICATION_ID, buildNotification(), type)
+            if (type != 0) {
+                startForeground(NOTIFICATION_ID, buildNotification(), type)
+                if (type != currentType) {
+                    NativeLogStore.add(
+                        this, TAG, "SERVICE",
+                        "foreground-service type changed $currentType -> $type" +
+                            (if (!startedWithLocationType) " (NOTE: service entered foreground WITHOUT the location " +
+                                "type, so this alone does not grant background-location capability)" else "")
+                    )
+                }
+                currentType = type
+            }
         } catch (e: Exception) {
             Log.w(TAG, "refreshForegroundServiceType failed (non-fatal)", e)
             NativeLogStore.add(this, TAG, "SERVICE", "could not refresh foreground-service type (${e.message})")
@@ -482,11 +599,11 @@ class ParkingForegroundService : Service() {
     // implementation.
     private fun startHeartbeat() {
         stopHeartbeat() // idempotent — never double-register/double-schedule if called twice
-        NativeLogStore.add(this, TAG, "SERVICE", "heartbeat — foreground service alive (reasons=$activeReasons)")
+        NativeLogStore.add(this, TAG, "SERVICE", heartbeatMessage())
         recordHeartbeatAt()
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
-                NativeLogStore.add(ctx, TAG, "SERVICE", "heartbeat — foreground service alive (reasons=$activeReasons)")
+                NativeLogStore.add(ctx, TAG, "SERVICE", heartbeatMessage())
                 recordHeartbeatAt()
                 scheduleNextHeartbeat()
             }
@@ -708,6 +825,12 @@ class ParkingForegroundService : Service() {
 
     private fun onLocationShadow(location: Location) {
         try {
+            // Counted for the heartbeat's GPS summary. "GPS watch started" only
+            // ever proved the REQUEST was accepted; this proves fixes actually
+            // arrive — the single fact that was missing while three separate
+            // "no background GPS" reports were diagnosed.
+            gpsUpdatesSinceHeartbeat++
+            lastFixAt = System.currentTimeMillis()
             val prefs = getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
             val hasParking = prefs.getBoolean(WidgetDataPlugin.KEY_HAS_PARKING, false)
             val gpsEnabled = prefs.getBoolean(WidgetDataPlugin.KEY_GPS_AUTO_END_ENABLED, false)
@@ -724,6 +847,7 @@ class ParkingForegroundService : Service() {
             maybeRecordPendingGpsSuggestion(speedDecision)
 
             val distance = GpsMath.distanceMeters(location.latitude, location.longitude, parkLat, parkLng)
+            lastFixDistanceM = distance
             val (afterDistance, distanceDecision) = GpsDecisionEngine.checkDistance(
                 gpsShadowState, hasParking, gpsEnabled, distance, GPS_DISTANCE_THRESHOLD_M,
             )
