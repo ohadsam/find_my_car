@@ -12,6 +12,56 @@ import { DiagLog } from './diag-log.js';
 
 export class Notify {
   static #nextId = 1;
+  static #actionTypesRegistered = false;
+
+  // Action-type id for the two notifications that ask the user to CONFIRM
+  // something (GPS "the car seems to have moved", Bluetooth "you connected —
+  // end the parking?"). Both previously said "open the app to confirm", which
+  // is exactly the wrong thing to ask of someone who is driving: the decision
+  // is one tap, and the shade is where it belongs. The buttons route through
+  // the same performWidgetAction() the widgets use, so there is one headless
+  // action path, not two.
+  static CONFIRM_END = 'FMC_CONFIRM_END';
+
+  // Must run before any notification that uses CONFIRM_END is scheduled —
+  // Android silently drops actions for an unregistered type. Called once from
+  // js/app.js's #init(); no-op in the browser.
+  static async registerActionTypes() {
+    const LocalNotifications = window.Capacitor?.Plugins?.LocalNotifications;
+    if (!window.Capacitor?.isNativePlatform?.() || !LocalNotifications) return;
+    if (this.#actionTypesRegistered) return;
+    try {
+      await LocalNotifications.registerActionTypes({
+        types: [{
+          id: this.CONFIRM_END,
+          actions: [
+            { id: 'end',     title: 'סיים חניה' },
+            { id: 'dismiss', title: 'התעלם' },
+          ],
+        }],
+      });
+      this.#actionTypesRegistered = true;
+      DiagLog.log('NOTIFY', 'registered notification action types');
+    } catch (e) {
+      DiagLog.log('NOTIFY', `registerActionTypes failed — ${e?.message || e}`);
+    }
+  }
+
+  /**
+   * Fires `handler({ actionId, extra })` when a notification button (or the
+   * notification body, actionId 'tap') is used. No-op in the browser.
+   */
+  static async addActionListener(handler) {
+    const LocalNotifications = window.Capacitor?.Plugins?.LocalNotifications;
+    if (!window.Capacitor?.isNativePlatform?.() || !LocalNotifications) return;
+    try {
+      await LocalNotifications.addListener('localNotificationActionPerformed', (e) => {
+        handler({ actionId: e?.actionId ?? 'tap', extra: e?.notification?.extra ?? {} });
+      });
+    } catch (e) {
+      DiagLog.log('NOTIFY', `addActionListener failed — ${e?.message || e}`);
+    }
+  }
 
   // Public so app.js can prime the notification permission at first launch
   // (see #primeNativePermissions()) instead of only asking reactively the
@@ -55,7 +105,11 @@ export class Notify {
     return Notification.permission === 'granted';
   }
 
-  static async show(title, body) {
+  /**
+   * @param {object} [opts] `{ actionTypeId, extra }` — adds shade buttons on
+   *   native. Ignored in the browser, which has no equivalent here.
+   */
+  static async show(title, body, opts = {}) {
     try {
       const granted = await this.ensurePermission();
       if (!granted) {
@@ -65,10 +119,12 @@ export class Notify {
 
       const LocalNotifications = window.Capacitor?.Plugins?.LocalNotifications;
       if (window.Capacitor?.isNativePlatform?.() && LocalNotifications) {
-        await LocalNotifications.schedule({
-          notifications: [{ id: this.#nextId++, title, body }],
-        });
-        DiagLog.log('NOTIFY', `scheduled native notification: "${title}"`);
+        const n = { id: this.#nextId++, title, body };
+        if (opts.actionTypeId) n.actionTypeId = opts.actionTypeId;
+        if (opts.extra)        n.extra        = opts.extra;
+        await LocalNotifications.schedule({ notifications: [n] });
+        DiagLog.log('NOTIFY', `scheduled native notification: "${title}"` +
+          (opts.actionTypeId ? ` (with actions: ${opts.actionTypeId})` : ''));
         return;
       }
 

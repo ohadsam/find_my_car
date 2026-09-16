@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.38.1',
+  version: '1.39.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -46,6 +46,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.39.0',
+      date: '2026-09-16',
+      items: Object.freeze([
+        'להתראות שמבקשות אישור — "מזוהה נסיעה" ו"הגעת לרכב?" — נוספו כפתורים ישירות בתריס: "סיים חניה" ו"התעלם". קודם הן רק ביקשו "פתח את האפליקציה לאישור", וזו בדיוק הבקשה הלא נכונה ממישהו שנוהג',
+        'הכפתורים פועלים בלי לפתוח את האפליקציה, ואם היא סגורה לגמרי הפעולה מתבצעת בפתיחה הבאה — בדיוק כמו פעולות הווידג\'טים',
+        'לחיצה על כפתור בתריס סוגרת גם את החלון המקביל בתוך האפליקציה, כדי שלא תחזור לשאלה שכבר ענית עליה',
+      ]),
+    }),
     Object.freeze({
       version: '1.38.1',
       date: '2026-09-16',

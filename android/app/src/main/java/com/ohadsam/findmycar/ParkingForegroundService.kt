@@ -914,8 +914,17 @@ class ParkingForegroundService : Service() {
             val vehicleName = vehicles.find { it.id == activeVehicleId }?.name ?: ""
             PendingGpsSuggestionStore.set(this, PendingGpsSuggestion(activeVehicleId, vehicleName, System.currentTimeMillis()))
             Log.i(TAG, "recorded pending GPS suggestion (WebView unreachable) for vehicle=$vehicleName")
+            // Buttons, not "open the app": this fires while the user is
+            // driving, and ending the parking is a one-tap decision that
+            // belongs in the shade. Routed through WidgetActionReceiver, the
+            // same headless path the widgets use — including its
+            // PendingWidgetActionStore fallback if the WebView is gone.
             BackgroundAlertNotifier.show(
-                this, "🚗 מזוהה נסיעה", "ייתכן שהרכב זז ממקום החניה. פתח את האפליקציה לסיים את החניה."
+                this, "🚗 מזוהה נסיעה", "ייתכן שהרכב זז ממקום החניה.",
+                listOf(
+                    BackgroundAlertNotifier.Action("סיים חניה", "end", activeVehicleId),
+                    BackgroundAlertNotifier.Action("התעלם", WidgetActionReceiver.ACTION_DISMISS, null),
+                )
             )
         } catch (e: Exception) {
             Log.w(TAG, "maybeRecordPendingGpsSuggestion failed (non-fatal)", e)

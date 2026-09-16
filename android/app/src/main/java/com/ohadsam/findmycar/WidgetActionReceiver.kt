@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import android.widget.Toast
+import androidx.core.app.NotificationManagerCompat
 import com.ohadsam.findmycar.core.PendingWidgetAction
 import com.ohadsam.findmycar.widgets.QuickSaveWidgetProvider
 import org.json.JSONObject
@@ -29,6 +30,15 @@ import org.json.JSONObject
 class WidgetActionReceiver : BroadcastReceiver() {
     companion object {
         const val EXTRA_VEHICLE_ID = "vehicleId"
+        // Set when the trigger was a notification button rather than a widget
+        // tap, so the notification that asked the question can be cleared once
+        // it has been answered (see BackgroundAlertNotifier.Action).
+        const val EXTRA_NOTIFICATION_ID = "notificationId"
+        // Pseudo-action for a notification's "ignore" button: clears the
+        // notification and does nothing else. Deliberately handled here rather
+        // than in a second receiver, so every notification button goes through
+        // exactly one path.
+        const val ACTION_DISMISS = "dismiss"
         private const val TAG = "FMC-WidgetAction"
     }
 
@@ -36,6 +46,18 @@ class WidgetActionReceiver : BroadcastReceiver() {
         val action = intent.getStringExtra(QuickSaveWidgetProvider.EXTRA_ACTION)
         if (action.isNullOrBlank()) return
         val vehicleId = intent.getStringExtra(EXTRA_VEHICLE_ID)
+
+        // Answering from the shade must always clear the question, whichever
+        // button was used and whether or not the action itself succeeds.
+        val notifId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
+        if (notifId >= 0) {
+            try {
+                NotificationManagerCompat.from(context).cancel(notifId)
+            } catch (e: Exception) {
+                Log.w(TAG, "could not cancel notification $notifId (non-fatal)", e)
+            }
+        }
+        if (action == ACTION_DISMISS) return
 
         val webView = MainActivity.getActiveWebView()
         if (webView == null) {

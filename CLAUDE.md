@@ -1013,6 +1013,60 @@ solve OEM-specific background killers (Xiaomi's "autostart" permission, Huawei's
 developer option) — those have no public API to query or toggle from an app, and
 remain something only the user can find in their device's own settings.
 
+### Notification action buttons (confirmations answerable from the shade)
+
+The two notifications that ask the user to *decide* something — GPS "the car
+seems to have moved" and Bluetooth "you connected, end the parking?" — used to
+be purely informational, with body text that literally said "open the app to
+confirm". That is the wrong thing to ask of someone who is driving: it is a
+one-tap decision and it belongs in the shade. Both now carry **סיים חניה** and
+**התעלם** buttons.
+
+**One headless path, not two.** The buttons route through the same
+`performWidgetAction()` / `WidgetActionReceiver` the widgets already use, rather
+than a second notification-specific mechanism. That inherits, for free: silent
+switching to a non-active vehicle, the per-action guard when the parking was
+already ended, the result notification, and — critically — the
+`PendingWidgetActionStore` fallback, so a button pressed while the app is fully
+killed is replayed on the next resume exactly like a widget tap.
+
+**Two delivery mechanisms, because there are two real states:**
+
+- **App alive but backgrounded** (the common case while driving, since
+  `KeepRunning` + the foreground service keep the WebView's JS running):
+  `js/notify.js` schedules through `@capacitor/local-notifications` with
+  `actionTypeId: Notify.CONFIRM_END` and `extra.vehicleId`.
+  `Notify.registerActionTypes()` must run before any such notification is
+  scheduled — Android silently drops actions for an unregistered type — so
+  `#initNotificationActions()` registers it and the listener once from
+  `#init()`. The listener ignores `dismiss` and a plain `tap`; only `end` acts.
+- **App fully killed**: `BackgroundAlertNotifier.show(..., actions)` builds the
+  same two buttons as real `NotificationCompat` actions whose `PendingIntent`s
+  target `WidgetActionReceiver`. Each button's request code must be
+  `notifId + index` — a shared request code makes Android reuse one
+  `PendingIntent` for every button, so both would perform whichever was created
+  last.
+
+**`ACTION_DISMISS` lives in `WidgetActionReceiver`** rather than a second
+receiver, so every notification button goes through exactly one path; it cancels
+the notification and returns before any WebView work. Cancellation happens for
+*every* button (via `EXTRA_NOTIFICATION_ID`) before the action runs, so
+answering from the shade always clears the question even if the action itself
+then fails.
+
+**The in-app modal must close too**: `gpsEndModal`/`btParkingModal` are stale the
+moment the question is answered from the shade, so the action handler closes
+both — otherwise the user returns to the app and is asked something they already
+decided.
+
+**Why an in-app modal is still correct sometimes**: `#notifyIfBackground()`
+deliberately suppresses the notification when `document.visibilityState ===
+'visible'`. A report of "the suggestion appeared in the app, not the shade" is
+expected behavior *if* it fired while the app was open — which is exactly what a
+suggestion firing one second after app launch looks like. That is a different
+symptom from the notification never arriving during the drive at all, and the
+two must not be conflated when reading a log.
+
 ### Widget liveness dots (`widgets/WidgetStatus.kt` + `WidgetStatusRefresher.kt`)
 
 Three consecutive bugs — the service stopping when the app closed with no
@@ -1534,3 +1588,8 @@ round-trip, before the next stage builds on it.
 - [ ] **Android APK (v1.38.1): the heartbeat's GPS summary is the primary diagnostic now.** With a parking active, check any `SERVICE` heartbeat line — it must carry `fgsType=`, `+loc@start` or `NO-loc@start`, `gpsFixes=`, `lastFix=` and `dist=`. During an actual drive with the app closed, `gpsFixes` must be non-zero and `dist` must grow. `gpsFixes=0` across several heartbeats while parked-and-driving means the OS is withholding location entirely — report that line verbatim, it is the whole diagnosis
 - [ ] Android APK (v1.38.1): install over an existing build (`MY_PACKAGE_REPLACED`, a background start → `type=16`, `NO-loc@start`), then open the app with a parking active. The `SERVICE` log must show "restarting service from the foreground to obtain background-location capability", followed by a fresh "onCreate succeeded — type=24", and subsequent heartbeats must read `+loc@start`. If it still reads `NO-loc@start` after that, the restart didn't take and background GPS cannot work
 - [ ] Android APK (v1.38.1): confirm the foreground restart happens at most ONCE per app run — repeated "restarting service from the foreground" entries in a single session mean `locationRestartAttempted` isn't holding, which would be a restart loop
+- [ ] Android APK (v1.39.0, notification buttons): with the app BACKGROUNDED (not killed) and a parking active, cross the GPS distance threshold — the "🚗 מזוהה נסיעה" notification must carry **סיים חניה** and **התעלם** buttons. Tapping סיים חניה must end the parking without opening the app, post a confirmation notification, and clear the original notification; reopening the app must NOT show a stale `gpsEndModal`
+- [ ] Android APK (v1.39.0): same for the Bluetooth "🚗 הגעת לרכב?" notification (connect to a linked device that has `bluetoothAutoEnd` OFF and an active parking) — buttons present, סיים חניה ends that specific vehicle's parking even if it isn't the active one
+- [ ] Android APK (v1.39.0): force-kill the app, then trigger the GPS suggestion — the native notification must still show both buttons, and סיים חניה must show the "יבוצע כשהאפליקציה תיפתח מחדש" Toast and actually apply on next open (diagnostic log `WIDGET` category shows the replay)
+- [ ] Android APK (v1.39.0): התעלם must clear the notification and do nothing else — no parking ended, no pending action recorded
+- [ ] Android APK (v1.39.0): the diagnostic log's `NOTIFY` category shows "registered notification action types" once at startup, and "scheduled native notification: ... (with actions: FMC_CONFIRM_END)" for each confirmation notification — a notification scheduled WITHOUT that suffix means the action type wasn't registered in time and the buttons will be silently missing
