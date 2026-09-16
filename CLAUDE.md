@@ -834,6 +834,62 @@ calls `refreshForegroundServiceType()` first — re-invoking `startForeground()`
 freshly resolved type, the documented way to add a type to an already-running FGS —
 so the watch never starts under a stale type that would silently withhold updates.
 
+**Resolved: real, previously-shipped bug — the `location` type made the service fail
+to start at all from a background context, which is exactly where the boot/update
+restart runs.** The fix directly above and the one directly below shipped together in
+v1.36.3, and each broke the other. From the production log, twice — once after
+`MY_PACKAGE_REPLACED`, once after `BOOT_COMPLETED`:
+
+```
+SERVICE  received android.intent.action.BOOT_COMPLETED — checking whether to restart
+SERVICE  restarting foreground service after boot/update (reasons=[parking, bluetooth])
+SERVICE  onCreate FAILED — Starting FGS with type location ... targetSDK=34 requires
+         permissions: all of [FOREGROUND_SERVICE_LOCATION] any of
+         [ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION] **and the app must be in the
+         eligible state/exemptions to access the foreground only permission**
+```
+
+That final clause is the whole bug. Holding `ACCESS_FINE_LOCATION` is necessary but
+not sufficient: without `ACCESS_BACKGROUND_LOCATION` (which this app deliberately
+never declares), location is a **foreground-only** permission — the app only actually
+holds it while it has while-in-use capability. `ServiceRestartReceiver` starts the
+service from a background broadcast, so there is no while-in-use capability,
+`startForeground()` threw, and `onCreate()`'s single surrounding try/catch took down
+**the entire service** — BT receiver never registered, heartbeat never started,
+`stopSelf()`. From boot until the user next opened the app by hand: nothing.
+
+The restriction applies to **starting or updating** the service, not to keeping it
+running — a location-typed service started while the app is visible keeps delivering
+updates after it is backgrounded, which is what makes drive-away detection work at
+all. Only the start is gated.
+
+**Fix, in three parts** (one alone would leave a sharp edge):
+
+1. `canStartLocationType()` gates the `LOCATION` bit on `MainActivity.isForeground()`,
+   so a background start simply comes up without that type. That is far better than
+   not coming up: Bluetooth detection works immediately, and location joins later.
+2. `startForegroundResilient()` retries with `specialUse` (the one type with no
+   runtime prerequisite) when the preferred type is rejected, so a type Android
+   refuses costs that type and nothing else. This is the structural half: this
+   sandbox cannot compile or run Android, OEM builds enforce these rules with their
+   own variations, and a future mistake of this kind must degrade one capability
+   rather than produce another total outage.
+3. `onAppForegrounded()` (from `MainActivity.onResume()`) upgrades the type and
+   restarts the watch once the app is visible. Without it, a service started at boot
+   would run without the location type *forever*, since nothing else re-resolves the
+   type for an already-running service whose `"parking"` reason never transitions
+   again.
+
+The `SERVICE` log now also distinguishes "GPS watch started" from "started BUT the
+location foreground-service type is not active" — `requestLocationUpdates()`
+succeeding never meant updates would arrive, and logging bare success there is the
+same species of misleading signal that cost days of diagnosis before.
+
+**The wider lesson for this file**: two fixes that are each correct in isolation can
+be mutually exclusive in the one scenario that matters. Both v1.36.3 fixes were
+verified — separately. Nothing exercised "restart from boot *with* a parking active,"
+which is the only path where the location type and the background start collide.
+
 **Resolved: real, previously-shipped bug — the service's `activeReasons` never
 survived process death, and nothing ever restarted it after a reboot or an app
 update.** `activeReasons` is plain in-memory static state, and *every*
@@ -1356,3 +1412,5 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (setup guide): grant location as "approximate" only — the location step must still show "דורש טיפול" with the precise-location wording, since coarse-only silently degrades drive-away detection
 - [ ] Android APK (setup guide) on a Pixel/stock-Android device: the Autostart and OEM-battery steps are absent entirely (no such screens exist), and the guide shows only the verifiable steps plus the Recents-lock instruction — it must not list a step whose button could never work
 - [ ] PWA (setup guide): the "הגדרת זיהוי ברקע" section does NOT appear in Settings in the browser, and nothing throws — `OemSetup.isSupported()` is false without the native plugin
+- [ ] **Android APK (the boot/update regression fix, v1.37.1): with an active parking AND the Bluetooth master switch on, reboot the device. WITHOUT opening the app, check the notification shade — "FindMyCar פעיל ברקע" must appear on its own.** On next app open the `SERVICE` category must show "received android.intent.action.BOOT_COMPLETED", "restarting foreground service after boot/update", and then **"onCreate succeeded"** — NOT "onCreate FAILED". An `onCreate FAILED` mentioning `Starting FGS with type location` is this exact regression returning: the service claimed the location type from a background start, which Android 14 refuses without while-in-use location access (see CLAUDE.md). Repeat the same check after installing a build over an existing one (`MY_PACKAGE_REPLACED`) — the two paths fail identically and only one is usually tested
+- [ ] Android APK: after that boot, the `SERVICE` log's "GPS watch started" line should say the location type is NOT active (honest — the service came up in the background); then open the app and confirm a follow-up entry shows the type being upgraded, proving `MainActivity.onResume()` → `onAppForegrounded()` actually ran. Background GPS is only genuinely working from that point on
