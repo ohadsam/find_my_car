@@ -727,6 +727,32 @@ all five literally, every release:
   telltale signature of `GPS-SHADOW` entries appearing only ~1 second after each app
   open and never during an actual drive. Nothing fails to compile, and no unit test
   can reach it.
+- Confirm the `LOCATION` bit in `resolveForegroundServiceType()` is gated on
+  `canStartLocationType()` (i.e. `MainActivity.isForeground()`), NOT on the
+  location permission alone. A real, previously-shipped bug: Android 14 refuses
+  to start a `location`-typed FGS unless the app currently has while-in-use
+  capability, because without `ACCESS_BACKGROUND_LOCATION` location is a
+  foreground-only permission. `ServiceRestartReceiver` starts the service from a
+  background broadcast, so an ungated `LOCATION` bit made `startForeground()`
+  throw and — via `onCreate()`'s single try/catch — killed the whole service,
+  BT receiver included, on every reboot and every app update.
+- Confirm `onCreate()` starts the service via `startForegroundResilient()` (which
+  retries with `specialUse` when the preferred type is rejected) and never calls
+  `startForeground()` bare. A rejected type must cost that type only — never the
+  BT receiver, heartbeat, or reason bookkeeping that follow it. Native code
+  cannot be compiled or run in this sandbox and OEMs vary in how they enforce
+  these rules, so this backstop is what keeps the next type/permission mistake
+  from becoming another total outage.
+- Confirm `MainActivity.onResume()` calls `ParkingForegroundService
+  .onAppForegrounded()`. Without it, a service that correctly started without the
+  location type at boot keeps running without it indefinitely — nothing else
+  re-resolves the type for an already-running service whose `"parking"` reason
+  never transitions again, so background GPS stays dead until the parking ends
+  and a new one starts.
+- Confirm the "GPS watch started" `SERVICE` log line distinguishes the case where
+  the location foreground-service type is NOT active — `requestLocationUpdates()`
+  succeeding does not mean updates will arrive, and an unqualified "started" there
+  is the misleading-success signal that made this class of bug take days to find.
 - Confirm `ParkingForegroundService.resolveForegroundServiceType()` **OR-combines**
   the types it's actually allowed to use rather than picking exactly one: `location`
   only when a location permission is granted, `connectedDevice` only when

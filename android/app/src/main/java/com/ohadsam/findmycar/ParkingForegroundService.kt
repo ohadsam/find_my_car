@@ -153,6 +153,21 @@ class ParkingForegroundService : Service() {
         // app being opened first, so after a reboot (or an APK update, which
         // also kills the process) background BT/GPS detection stayed dead until
         // the user happened to launch the app. Called from ServiceRestartReceiver.
+        /**
+         * MainActivity.onResume() → the app is visible, so a location-typed
+         * foreground service may now be started where it wasn't before. No-op
+         * unless the service is actually running with an active parking.
+         * See onBecameEligibleForLocationType().
+         */
+        fun onAppForegrounded() {
+            try {
+                if (!isRunning) return
+                instanceRef?.get()?.onBecameEligibleForLocationType()
+            } catch (e: Exception) {
+                Log.w(TAG, "onAppForegrounded threw (non-fatal)", e)
+            }
+        }
+
         fun startIfNeeded(context: Context) {
             restoreReasons(context)
             val reasons = synchronized(this) { activeReasons.toSet() }
@@ -181,12 +196,9 @@ class ParkingForegroundService : Service() {
         super.onCreate()
         try {
             createChannel()
-            val type = resolveForegroundServiceType()
-            if (type != 0) {
-                startForeground(NOTIFICATION_ID, buildNotification(), type)
-            } else {
-                startForeground(NOTIFICATION_ID, buildNotification())
-            }
+            // Never a bare startForeground() — a rejected type must cost us
+            // that type, not the BT receiver and everything else below.
+            val type = startForegroundResilient()
             registerBtReceiver()
             instanceRef = WeakReference(this)
             // Rebuild any reason lost to a process restart before deciding
@@ -239,7 +251,9 @@ class ParkingForegroundService : Service() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
         var type = 0
-        if (locationGranted) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        if (locationGranted && canStartLocationType()) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        }
         if (btGranted) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         if (type != 0) return type
 
@@ -250,6 +264,112 @@ class ParkingForegroundService : Service() {
         } else {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE // pre-14: not runtime-permission-gated
         }
+    }
+
+    /**
+     * Whether a `location`-typed foreground service may be STARTED right now.
+     *
+     * Real, previously-shipped bug (v1.36.3, caught from a production log):
+     * having ACCESS_FINE/COARSE_LOCATION granted is necessary but NOT
+     * sufficient. Android 14 refused the start outright:
+     *
+     *   Starting FGS with type location ... requires permissions:
+     *   all of [FOREGROUND_SERVICE_LOCATION] any of [ACCESS_COARSE_LOCATION,
+     *   ACCESS_FINE_LOCATION] **and the app must be in the eligible state/
+     *   exemptions to access the foreground only permission**
+     *
+     * That last clause is the whole thing. Without ACCESS_BACKGROUND_LOCATION,
+     * location is a *foreground-only* permission: the app only actually holds
+     * it while it has while-in-use capability. Starting the service from a
+     * background context — which is exactly what ServiceRestartReceiver does on
+     * BOOT_COMPLETED/MY_PACKAGE_REPLACED — means no while-in-use capability, so
+     * startForeground() threw, onCreate()'s single try/catch caught it, and the
+     * ENTIRE service died: no BT receiver, no heartbeat, no detection at all
+     * until the user next opened the app by hand. The v1.36.3 fix for missing
+     * background GPS therefore broke the v1.36.3 fix for restarting after a
+     * reboot — each verified in isolation, never together.
+     *
+     * So: claim the location type only when the start would actually be
+     * eligible. Everything else still starts normally, and the type is upgraded
+     * later via onAppForegrounded() once the app is genuinely in the
+     * foreground. Note the restriction applies to STARTING/UPDATING the
+     * service, not to keeping it running — a location-typed service started
+     * while foreground keeps delivering updates after the app is backgrounded,
+     * which is the entire point.
+     */
+    private fun canStartLocationType(): Boolean {
+        // The eligibility rule arrived in Android 14; below that, a granted
+        // location permission is enough.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
+        // ACCESS_BACKGROUND_LOCATION would make the app permanently eligible,
+        // but this app deliberately never declares it (see CLAUDE.md) — so it
+        // is not checked here: an undeclared permission can never be granted,
+        // and checking for it would be dead code implying an option the user
+        // does not actually have. Eligibility therefore reduces to: is the
+        // Activity genuinely visible right now.
+        return MainActivity.isForeground()
+    }
+
+    /**
+     * Calls startForeground() so that it can never take the whole service down
+     * with it. A type Android rejects costs us that type — never the BT
+     * receiver, the heartbeat, or the reason bookkeeping that follow it in
+     * onCreate(). Returns the type actually in effect, for logging.
+     *
+     * This is the structural half of the bug above: the gate in
+     * canStartLocationType() encodes the rule as understood today, but this
+     * codebase cannot compile or run Android locally, and OEM builds enforce
+     * these rules with their own variations. A future type/permission rule we
+     * get wrong should degrade one capability, not produce another total
+     * outage.
+     */
+    private fun startForegroundResilient(): Int {
+        val notification = buildNotification()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification)
+            return 0
+        }
+        val preferred = resolveForegroundServiceType()
+        try {
+            if (preferred != 0) startForeground(NOTIFICATION_ID, notification, preferred)
+            else startForeground(NOTIFICATION_ID, notification)
+            return preferred
+        } catch (e: Exception) {
+            Log.w(TAG, "startForeground(type=$preferred) rejected — retrying without it", e)
+            NativeLogStore.add(
+                this, TAG, "SERVICE",
+                "foreground-service type $preferred rejected (${e.message}) — retrying with a safe type"
+            )
+        }
+        // Safe retry: specialUse has no runtime prerequisite at all, so it is
+        // the one type that cannot be refused for a permission reason.
+        val fallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        } else {
+            0
+        }
+        if (fallback != 0) startForeground(NOTIFICATION_ID, notification, fallback)
+        else startForeground(NOTIFICATION_ID, notification)
+        return fallback
+    }
+
+    /**
+     * The app just became visible, so a `location`-typed start is now eligible
+     * where it may not have been before (see canStartLocationType()). Called
+     * from MainActivity.onResume().
+     *
+     * Without this, a service started from BOOT_COMPLETED correctly comes up
+     * without the location type — and then keeps running without it forever,
+     * since nothing else re-resolves the type for an already-running service
+     * whose "parking" reason never transitions again.
+     */
+    fun onBecameEligibleForLocationType() {
+        if (!isParkingReasonActive()) return
+        refreshForegroundServiceType()
+        // The watch itself may never have started (or started under a type
+        // Android was throttling) — restarting it under the now-correct type
+        // is what actually resumes background GPS.
+        updateLocationWatch(true)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -509,7 +629,20 @@ class ParkingForegroundService : Service() {
                 locationManager = lm
                 locationListener = listener
                 Log.i(TAG, "GPS shadow watch started (provider=$provider)")
-                NativeLogStore.add(this, TAG, "SERVICE", "GPS watch started (provider=$provider)")
+                // requestLocationUpdates() succeeding does NOT mean updates will
+                // actually arrive: without the `location` foreground-service type
+                // in effect, Android silently withholds them the moment the app
+                // stops being visible. Logging a bare "started" there is exactly
+                // the kind of misleading success that cost days of diagnosis
+                // before — so say which of the two it is.
+                val locationTypeActive = canStartLocationType() &&
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                NativeLogStore.add(
+                    this, TAG, "SERVICE",
+                    if (locationTypeActive) "GPS watch started (provider=$provider)"
+                    else "GPS watch started (provider=$provider) BUT the location foreground-service type is not active " +
+                        "— Android will withhold updates while the app is not visible; it upgrades when the app is next opened"
+                )
             } else {
                 locationListener?.let { locationManager?.removeUpdates(it) }
                 locationListener = null
