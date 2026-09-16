@@ -159,6 +159,11 @@ class ParkingForegroundService : Service() {
          * unless the service is actually running with an active parking.
          * See onBecameEligibleForLocationType().
          */
+        // @JvmStatic because MainActivity is Java: a plain companion function
+        // compiles to ParkingForegroundService.Companion.onAppForegrounded(),
+        // which Java cannot call as a static. This is the only cross-language
+        // call into this companion — every other caller is Kotlin.
+        @JvmStatic
         fun onAppForegrounded() {
             try {
                 if (!isRunning) return

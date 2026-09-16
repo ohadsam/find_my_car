@@ -743,6 +743,12 @@ all five literally, every release:
   cannot be compiled or run in this sandbox and OEMs vary in how they enforce
   these rules, so this backstop is what keeps the next type/permission mistake
   from becoming another total outage.
+- Confirm any Kotlin companion function called from `MainActivity.java` (today
+  only `ParkingForegroundService.onAppForegrounded()`) carries `@JvmStatic`.
+  Without it Kotlin emits `Companion.foo()`, which Java cannot call as a static,
+  and the build fails with "cannot find symbol" — caught only in CI, since this
+  sandbox has no Android SDK. Grep `MainActivity.java` for calls into Kotlin
+  types and check each target's declaration.
 - Confirm `MainActivity.onResume()` calls `ParkingForegroundService
   .onAppForegrounded()`. Without it, a service that correctly started without the
   location type at boot keeps running without it indefinitely — nothing else
