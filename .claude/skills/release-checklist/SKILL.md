@@ -749,6 +749,29 @@ all five literally, every release:
   and the build fails with "cannot find symbol" — caught only in CI, since this
   sandbox has no Android SDK. Grep `MainActivity.java` for calls into Kotlin
   types and check each target's declaration.
+- Confirm `ParkingForegroundService` tracks `startedWithLocationType` (whether the
+  `LOCATION` bit was present when the service ENTERED the foreground state)
+  separately from `currentType` (what is declared now), and that
+  `onBecameEligibleForLocationType()` **restarts the service**
+  (`restartFromForeground()`) rather than only calling
+  `refreshForegroundServiceType()` when the two disagree. A real, previously-
+  shipped bug: an FGS's while-in-use location capability is bound to the moment
+  it entered foreground state, so a service started from a background broadcast
+  never holds it — and re-calling `startForeground()` with the bit added does not
+  grant it retroactively. Android accepts the type change with no error and keeps
+  withholding every location update, which is why a whole 1h40m drive produced
+  zero fixes while every signal read "location type active".
+- Confirm that restart is guarded by `locationRestartAttempted` (one attempt per
+  process). A restart loop would be considerably worse than the bug it fixes.
+- Confirm the `SERVICE` heartbeat line carries the GPS summary — `fgsType=`,
+  `+loc@start`/`NO-loc@start`, `gpsFixes=`, `lastFix=`, `dist=` — and that
+  `gpsUpdatesSinceHeartbeat` is incremented in `onLocationShadow()`. Without it,
+  "the watch isn't running", "it's running but the OS delivers nothing" and
+  "fixes arrive but no threshold was crossed" are three different faults that
+  look identical in the log; this is what makes them decidable. Confirm it stays
+  folded into the existing heartbeat rather than logged per location update —
+  per-update logging would blow `NativeLogStore`'s 200-entry cap during a single
+  drive, pushing out the lifecycle entries that matter most.
 - Confirm `MainActivity.onResume()` calls `ParkingForegroundService
   .onAppForegrounded()`. Without it, a service that correctly started without the
   location type at boot keeps running without it indefinitely — nothing else

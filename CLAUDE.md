@@ -885,6 +885,64 @@ location foreground-service type is not active" — `requestLocationUpdates()`
 succeeding never meant updates would arrive, and logging bare success there is the
 same species of misleading signal that cost days of diagnosis before.
 
+**Resolved: real, previously-shipped bug — adding the `location` type to an
+already-running service does NOT grant background-location capability.** The fix
+directly above (v1.37.1) made the service start successfully from a background
+context by dropping the `location` bit, and had `onAppForegrounded()` re-add it
+later via `refreshForegroundServiceType()`. `startForeground()` accepted the new
+type without error, `canStartLocationType()` returned true, and the log dutifully
+printed the plain "GPS watch started". **Not one location fix was ever
+delivered.** From the production log — a service alive continuously through 1h40m
+of driving:
+
+```
+16:18:12  restarting foreground service after boot/update   ← background context
+16:18:12  onCreate succeeded — foreground service running (type=16)
+16:35:48  GPS watch started (provider=gps)                  ← believed healthy
+16:36:30 … 18:16:30  heartbeat × 20 (reasons=[bluetooth, parking])
+18:17:01  [WEB] showing end-parking suggestion              ← 1s after app open
+```
+
+Zero `GPS-PENDING`, zero notifications, and the suggestion fired one second after
+the app was opened — i.e. from the live `watchPosition` path, never from the
+Service's own watch.
+
+**The rule**: an FGS's while-in-use location capability is bound to the moment it
+**entered** the foreground state. A service that entered from a background
+broadcast never holds it, and re-calling `startForeground()` with the `LOCATION`
+bit added does not grant it retroactively — Android accepts the type change
+silently and keeps withholding updates. So every signal the app had said
+"location type active" while the OS delivered nothing.
+
+**Fix**: `startedWithLocationType` records whether the `LOCATION` bit was present
+at start time (distinct from `currentType`, which is merely what is declared
+now). When the app comes to the foreground with a parking active and location
+granted, but the service entered foreground without that bit,
+`onBecameEligibleForLocationType()` **fully restarts the service**
+(`restartFromForeground()`) so it re-enters the foreground state from a
+foreground context and genuinely acquires the capability. Guarded by
+`locationRestartAttempted` — one attempt per process, since a restart loop would
+be worse than the bug. `restoreReasons()` rebuilds `activeReasons` on the new
+instance, so the bounce loses nothing.
+
+**The diagnostic gap this exposed matters as much as the bug.** "GPS watch
+started" only ever proved the *request* was accepted. Three visually identical
+log signatures had completely different causes: the watch not running, the watch
+running but the OS delivering nothing, and fixes arriving with no threshold
+crossed. The heartbeat now carries `fgsType=`, `+loc@start`/`NO-loc@start`,
+`gpsFixes=`, `lastFix=` and `dist=` — folded into the existing 5-minute entry, so
+it costs nothing against `NativeLogStore`'s 200-entry cap and makes the three
+cases decidable from a single line. **Prefer enriching an existing periodic log
+line over adding a new category** when the question is "is this actually
+working," precisely because per-event logging here would blow the cap during one
+drive.
+
+**If `gpsFixes=0` persists even with `+loc@start`**, the remaining lever is
+`ACCESS_BACKGROUND_LOCATION` (currently, deliberately, not declared — see the
+section above). That would make the capability unconditional and independent of
+how the service started. It is held back on purpose so that this fix can be
+judged on its own evidence rather than two speculative changes shipping together.
+
 **The wider lesson for this file**: two fixes that are each correct in isolation can
 be mutually exclusive in the one scenario that matters. Both v1.36.3 fixes were
 verified — separately. Nothing exercised "restart from boot *with* a parking active,"
@@ -1473,3 +1531,6 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (widget liveness dots): force-stop the app from app-info, then look at a widget — both dots RED (service genuinely not running). This is the one state that should alarm; confirm it never appears while everything is actually working
 - [ ] Android APK (widget liveness dots): remove every widget from the home screen, then check (via adb `dumpsys alarm | grep findmycar`) that the 2-minute refresh alarm is gone — it must not keep waking the device for widgets nobody has placed; re-adding a widget must re-arm it
 - [ ] Android APK (widget liveness dots): the dots never overlap or hide the "⋮" quick-actions button or the 🔁 cycle button on any of the three widgets, at both default and resized sizes
+- [ ] **Android APK (v1.38.1): the heartbeat's GPS summary is the primary diagnostic now.** With a parking active, check any `SERVICE` heartbeat line — it must carry `fgsType=`, `+loc@start` or `NO-loc@start`, `gpsFixes=`, `lastFix=` and `dist=`. During an actual drive with the app closed, `gpsFixes` must be non-zero and `dist` must grow. `gpsFixes=0` across several heartbeats while parked-and-driving means the OS is withholding location entirely — report that line verbatim, it is the whole diagnosis
+- [ ] Android APK (v1.38.1): install over an existing build (`MY_PACKAGE_REPLACED`, a background start → `type=16`, `NO-loc@start`), then open the app with a parking active. The `SERVICE` log must show "restarting service from the foreground to obtain background-location capability", followed by a fresh "onCreate succeeded — type=24", and subsequent heartbeats must read `+loc@start`. If it still reads `NO-loc@start` after that, the restart didn't take and background GPS cannot work
+- [ ] Android APK (v1.38.1): confirm the foreground restart happens at most ONCE per app run — repeated "restarting service from the foreground" entries in a single session mean `locationRestartAttempted` isn't holding, which would be a restart loop
