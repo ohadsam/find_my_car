@@ -425,7 +425,33 @@ already run while the app is backgrounded for Bluetooth/GPS auto-detection, just
 reachable from a widget tap too, so a regression here is easy to miss because the PWA
 (no widgets) and a foregrounded APK (WebView reachable) would both keep working fine.
 `QuickSaveWidgetProvider` broadcasts straight to `WidgetActionReceiver` (`PendingIntent
-.getBroadcast`, not `.getActivity`). Since Stage 8 of the native background-detection
+.getBroadcast`, not `.getActivity`).
+
+**A live WebView object does not mean a live page (real, previously-shipped
+bug, fixed in v1.42.0).** `WidgetActionReceiver` used to call
+`evaluateJavascript(script, null)` — no callback — against a script beginning
+`if (!window.app || !window.app.performWidgetAction) return;`. Whenever the
+WebView existed but the page had not finished initialising (cold start, a
+reload, a JS engine an OEM had frozen), the tap vanished completely: not
+performed, not queued, no Toast, and not one line in any log — a silent black
+hole, reported as "the widget takes ages to reach the app". The script now
+returns `FMC_ACCEPTED`/`FMC_NOT_READY` **synchronously** so
+`evaluateJavascript`'s own callback can tell acceptance from inability, and an
+action counts as delivered only once the page says so. Anything else — an
+explicit not-ready, or no answer within `ACK_TIMEOUT_MS` (2.5s) — falls back to
+the same `PendingWidgetActionStore` queue used when there is no WebView at all.
+`goAsync()` keeps the receiver alive across that wait, and an `AtomicBoolean`
+makes the live and queued paths mutually exclusive so an action is never both
+performed and queued (which would double-apply it). **Every branch that cannot
+deliver live must go through `queueForReplay()`** — that is what makes "a tap
+is never lost without a trace" a property of the code rather than a hope.
+
+**`performWidgetAction()` de-duplicates identical repeats** within
+`CFG.widgetActionDedupeMs` (3s), returning the first call's own result. A real
+log showed two identical `performWidgetAction('save')` calls in the same
+second saving two parkings and posting two notifications: they ran
+concurrently, so each read "no parking yet" before the other wrote, and the
+per-action guards could not catch it. Since Stage 8 of the native background-detection
 migration (see below), a tap while the WebView is fully unreachable no longer falls
 back to opening the app either — `WidgetActionReceiver` records the action to
 `PendingWidgetActionStore` and shows a `Toast` directly instead, and
@@ -1071,45 +1097,54 @@ in a different direction if changed:**
    be permanently unavailable. The guard lives in the engine; the baseline-advance
    policy lives with the caller's own state, in both languages.
 
-**Second round (v1.41.0) — the evidence had to be anchored to *this car*.**
-Requiring vehicle-speed evidence fixed walking, but the evidence itself still
-only proved "the phone moved fast at some point during this parking session".
-Two false positives survived, and the question that exposed them was "if I pass
-by the car again later and walk 300m away, will it fire again?":
+**Second round (v1.41.0) — evidence has to expire.** Once accumulated it
+stayed valid for the whole parking session, so one ride early on left the
+distance trigger armed for a plain walk hours later — the original bug
+returning by a different route. Evidence now expires after
+`gpsEvidenceTtlMs` (10 min) with no further above-threshold sample. At 25 km/h
+a real departure covers the 300m distance threshold in under a minute, so the
+TTL is enormously generous for the real case and tight for the false one.
 
-- **Travelling by something else.** Park, walk 200m to a station, take a train:
-  evidence accumulates on the train, the distance threshold passes, and the app
-  claims the *car* moved. Only the user moved.
-- **Evidence that never decayed.** Once accumulated, it stayed valid for the
-  whole session, so one ride early on left the distance trigger armed for a
-  plain walk hours later — the original bug returning by a different route.
+**Expiry is checked before the unknown-speed early return**, and that ordering
+is load-bearing: going stale is a function of elapsed time, not of whether this
+particular fix carried a usable speed. Moving it below that return would leave
+stale evidence alive indefinitely on a device that rarely reports speed.
 
-`checkSpeed` therefore takes the current distance from the parking spot and two
-more constants: vehicle speed only starts counting as a departure when it
-**begins within `gpsDepartureRadius` (150m) of the car**, and evidence
-**expires after `gpsEvidenceTtlMs` (10 min)** with no further above-threshold
-sample. Someone who gets in and drives off crosses 50 km/h metres from the
-spot; someone who accelerates at a bus stop is already outside the radius. Once
-a departure is recognised it keeps accruing at any distance, so a real drive is
-never cut off. 10 minutes is deliberately generous — at 50 km/h a real
-departure covers the 300m distance threshold in about 22 seconds.
+**Third round (v1.42.0) — the threshold was set from intuition, and it broke
+real detection. Read this before touching `gpsSpeedThreshold` again.**
+v1.40.0 raised the vehicle-speed bar to 13.9 m/s (50 km/h) because 50 km/h
+"obviously means driving". v1.41.0 then also required the first such sample to
+occur within 150m of the parked car, to tell "this car left" from "the user
+took a train". Both ideas are intuitive, and production diagnostic-log evidence
+from one real drive killed both:
 
-**Two subtleties in `checkSpeed` that are easy to "clean up" into bugs:**
+```
+18:06:30  dist=17m     gpsFixes=43  vehEvid=0s   ← got into the car
+18:11:30  dist=1031m   gpsFixes=74  vehEvid=0s   ← a full km driven, no evidence
+18:16:30  dist=1982m   gpsFixes=70  vehEvid=11s  ← only now, 2km out
+```
 
-1. **Expiry is checked before the unknown-speed early return.** Going stale is a
-   function of elapsed time, not of whether this particular fix carried a usable
-   speed. Moving the expiry below that return would leave stale evidence alive
-   indefinitely on a device that rarely reports speed.
-2. **`departureStarted` is deliberately NOT cleared on expiry.** The accumulator
-   is the gate the distance trigger actually reads, and walking can never refill
-   it, so keeping the flag costs nothing there — while clearing it would break
-   the real case of waiting in traffic within the departure radius for longer
-   than the TTL and then driving off, which would no longer be recognised as a
-   departure at all.
+1031m in five minutes is a 12 km/h average — ordinary city traffic, which
+barely touches 50 km/h. The distance trigger therefore stayed disarmed while
+the driver was already a kilometre away, and the suggestion finally fired ten
+minutes late; the user had given up and ended the parking by hand. The
+departure anchor would have made it permanent: the first 50 km/h sample
+happened well past 1km from the car, far outside any sane radius, so the
+trigger would never have armed at all.
+
+**The rule this leaves**: the speed bar's only job is to exclude walking
+(~1.4 m/s) and running (~3-5 m/s). It is back to 7 m/s (25 km/h) and must not
+be raised toward "a proper driving speed" — that is not what it is for, and a
+drive spends most of its time below it. The departure anchor is gone entirely:
+**a gate that can permanently disarm detection is the wrong trade for this
+app.** A missed real departure is the failure users actually report, over and
+over; the false positive the anchor guarded against is rarer and already
+limited by the TTL. Prefer a fix that degrades to "fires a bit more often than
+ideal" over one that can degrade to "never fires".
 
 **Two implementations, no shared source** — `GpsDecisionEngine.kt` (the native
 watch, which is what runs while the app is closed) and `js/app.js` (the live
-`watchPosition` path). The seven constants are duplicated between `js/config.js` and
+`watchPosition` path). The six constants are duplicated between `js/config.js` and
 `ParkingForegroundService.kt`, same as every other JS/Kotlin constant pair here;
 the release-checklist skill checks them against each other, because a drift is
 invisible — both sides keep working and just decide differently depending on
@@ -1637,8 +1672,10 @@ round-trip, before the next stage builds on it.
 - [ ] Bluetooth: unlink device from vehicle removes all auto-behavior
 - [ ] **GPS (v1.40.0): walking >300m away from a parked car must NOT show the end-parking suggestion** — this is the false positive the vehicle-evidence gate exists to stop. Driving >300m away still shows it (confirmation only, never auto-ends), and should do so within a minute or so of setting off, not only after the full 2-minute speed accumulation
 - [ ] GPS (v1.40.0): drive away, then check the diagnostic log's `GPS` category — a "vehicle-speed evidence reached" entry should appear before the suggestion. If the suggestion never fires on a real drive, that entry is the discriminator: absent means no sample ever crossed 50 km/h (a speed-reporting/derivation problem), present means the trigger is armed and the distance threshold simply wasn't crossed yet. The entry also prints how far from the car the evidence was credited — it should be a small number (tens of metres), since that is the departure anchor doing its job
-- [ ] **GPS (v1.41.0): park, walk to a bus/train stop, and ride away — the "מזוהה נסיעה" suggestion must NOT appear**, because the vehicle-speed movement began well outside the 150m departure radius. Driving off in the car itself must still suggest as before. The `GPS` log shows "vehicle-speed evidence reached" only in the second case
 - [ ] GPS (v1.41.0): with a parking active, ride somewhere and come back, then wait 10+ minutes and walk 300m away — no suggestion, and the `GPS` category shows "vehicle-speed evidence expired (stale)". Without the TTL, that earlier ride would leave the walk armed for the rest of the parking session
+- [ ] **GPS (v1.42.0 — the regression that mattered): drive away in ORDINARY CITY TRAFFIC, not on a highway.** The suggestion must appear within a minute or two of setting off. Check a `SERVICE` heartbeat during the drive: `vehEvid` must be growing while `dist` grows. `vehEvid=0s` at `dist=1000m` is the exact v1.40.0/v1.41.0 failure — it means the speed bar is above real traffic speed again, and the distance trigger is disarmed for the whole drive
+- [ ] **Android APK (v1.42.0): tap a widget action while the app is COLD (killed, or just launched and still loading).** It must either happen immediately or show "יבוצע כשהאפליקציה תיפתח מחדש" and then actually apply on the next open — never nothing at all. The diagnostic log's `WIDGET` category must contain either a `performWidgetAction(...)` line or a "queued widget action ... for replay" line for every single tap; a tap with no line either way is the silent black hole returning
+- [ ] Android APK (v1.42.0): tap a widget action once and confirm exactly ONE parking is saved and ONE notification posted — two of each means the dedupe guard regressed
 - [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
 - [ ] Android APK: installing a new build over an already-installed older build works without uninstalling first

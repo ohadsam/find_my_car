@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.41.0',
+  version: '1.42.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -25,13 +25,13 @@ export const CFG = Object.freeze({
   // for the reasoning behind each of these — in particular why the distance
   // trigger is no longer allowed to fire on its own (walking 300m from the car
   // used to produce a "your car seems to have moved" suggestion).
-  gpsSpeedThreshold:    13.9,   // m/s ≈ 50 km/h — well above any walking/cycling speed, so crossing it is real evidence of a vehicle
+  gpsSpeedThreshold:    7,      // m/s ≈ 25 km/h — above walking (~1.4) and running (~3-5), which is all it has to exclude. NOT a "real driving speed": city traffic averages well under that, and a higher bar disarmed detection for whole drives (see CLAUDE.md, v1.42.0)
   gpsSpeedDuration:     120000, // ms ACCUMULATED above the threshold before speed alone suggests end (not "continuously since" — red lights must not undo progress)
   gpsVehicleEvidenceMs: 10000,  // ms accumulated above the threshold before the distance trigger may fire at all — distance says how far, never how
   gpsSpeedSampleCapMs:  15000,  // ms ceiling on how much any single sample may add, so one fast fix after a long gap can't fill the accumulator at once
   gpsDerivedSpeedMinIntervalMs: 5000, // ms — shortest interval a speed may be DERIVED over when the device reports none; below this, GPS jitter (20m of error 1s apart reads as 20 m/s) would fabricate vehicle evidence
-  gpsDepartureRadius:   150,    // meters — vehicle-speed evidence only counts as THIS car departing if it starts within this radius of the parking spot (walking to a station and then riding a train is a commute, not the car leaving)
   gpsEvidenceTtlMs:     600000, // ms (10 min) — accumulated evidence expires after this long with no further above-threshold sample, so one ride early in a parking session can't leave the distance trigger armed for a plain walk hours later
+  widgetActionDedupeMs: 3000,   // ms — an identical widget/notification action repeated within this window is treated as one tap, not two (a duplicate broadcast saved two parkings and posted two notifications)
   gpsDistanceThreshold: 300,    // meters from the saved parking spot before suggesting end (catches movement the speed check would miss, e.g. stop-and-go traffic)
   // How often the WEB (js/app.js) and SERVICE (ParkingForegroundService.kt)
   // heartbeats log to DiagLog's SERVICE category, proving each is
@@ -55,6 +55,16 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.42.0',
+      date: '2026-09-18',
+      items: Object.freeze([
+        'תוקן שורש הבעיה שדיווחת עליה: סף המהירות של 50 קמ"ש (שנכנס ב-1.40.0) פשוט לא מושג בנסיעה עירונית. הלוג שלך מראה קילומטר שלם של נסיעה עם 0 שניות "עדות נסיעה" — ולכן ההצעה לסיום חניה לא הופיעה. הסף חזר ל-25 קמ"ש, שזה עדיין הרבה מעל הליכה (5 קמ"ש) וריצה (11-18 קמ"ש)',
+        'בוטלה גם הדרישה (מ-1.41.0) שהתנועה המהירה תתחיל ליד הרכב — באותה נסיעה הדגימה המהירה הראשונה הייתה כבר מעבר לקילומטר מהרכב, כך שההצעה לא הייתה מופיעה אף פעם. מנגנון שיכול להשבית זיהוי לצמיתות הוא מחיר גבוה מדי',
+        'תוקן באג שבו לחיצה על פעולת ווידג'ט נעלמה בשקט: אם האפליקציה הייתה חיה אבל הדף עוד לא הספיק להיטען, הפעולה לא בוצעה, לא נשמרה לביצוע מאוחר, ולא הופיעה בשום מקום. עכשיו כל לחיצה או מתבצעת מיד, או נשמרת ומבוצעת בפתיחה הבאה — עם הודעה בהתאם',
+        'תוקן: לחיצה אחת על פעולת ווידג'ט יכלה להישלח פעמיים ולשמור שתי חניות עם שתי התראות',
+      ]),
+    }),
     Object.freeze({
       version: '1.41.0',
       date: '2026-09-17',

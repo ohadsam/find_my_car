@@ -175,14 +175,17 @@ step broken or skipped:
   BOTH triggers would become permanently unable to fire without any test catching
   it (this logic lives in a `Service`, which the `core` package's unit tests can't
   reach).
-- Confirm the seven GPS constants are identical in both languages — `js/config.js`'s
+- Confirm the six GPS constants are identical in both languages — `js/config.js`'s
   `gpsSpeedThreshold`/`gpsSpeedDuration`/`gpsVehicleEvidenceMs`/
-  `gpsSpeedSampleCapMs`/`gpsDerivedSpeedMinIntervalMs`/`gpsDepartureRadius`/
-  `gpsEvidenceTtlMs` against
+  `gpsSpeedSampleCapMs`/`gpsDerivedSpeedMinIntervalMs`/`gpsEvidenceTtlMs`
+  against
   `ParkingForegroundService.kt`'s `GPS_SPEED_THRESHOLD_MPS`/`GPS_SPEED_DURATION_MS`/
   `GPS_VEHICLE_EVIDENCE_MS`/`GPS_SPEED_SAMPLE_CAP_MS`/
-  `GPS_DERIVED_SPEED_MIN_INTERVAL_MS`/`GPS_DEPARTURE_RADIUS_M`/
-  `GPS_EVIDENCE_TTL_MS`. There is no shared source between JS and
+  `GPS_DERIVED_SPEED_MIN_INTERVAL_MS`/`GPS_EVIDENCE_TTL_MS`.
+  **`gpsSpeedThreshold` must be 7 m/s and must not creep upward** — see
+  CLAUDE.md's v1.42.0 evidence: a 13.9 m/s bar disarmed the distance trigger
+  for an entire real drive, because city traffic averages well under it. There
+  is no shared source between JS and
   Kotlin, and a drift here is invisible: both sides keep working, they just decide
   differently depending on whether the app happened to be open — the hardest kind
   of report to diagnose, since it reproduces only in one of the two states.
@@ -195,26 +198,30 @@ step broken or skipped:
   out for a walk that their car has moved.
 - Confirm `js/app.js` resets GPS detection state ONLY through
   `#resetGpsDetection()` (grep for direct `gpsSpeedAccumMs`/`gpsLastSpeedSampleAt`/
-  `gpsPrevFix`/`gpsDepartureStarted`/`gpsLastAboveAt` assignments outside it and
+  `gpsPrevFix`/`gpsLastAboveAt` assignments outside it and
   `#checkGpsSpeed`/`#effectiveSpeed`) — the
-  six fields are only meaningful relative to one another, and a call site that
+  five fields are only meaningful relative to one another, and a call site that
   reset a subset would carry the previous session's evidence into a new parking,
   which is exactly what the distance trigger's gate relies on not happening.
 - Confirm `GpsDecisionEngine.checkSpeed()` (and `js/app.js`'s `#checkGpsSpeed()`)
-  still (a) check evidence expiry BEFORE the unknown-speed early return, and
-  (b) do NOT clear `departureStarted`/`gpsDepartureStarted` on expiry. Both are
-  deliberate and both look like tidy-ups (see CLAUDE.md "Vehicle-movement
-  detection"): moving the expiry below the early return leaves stale evidence
-  alive forever on a device that rarely reports speed, and clearing the
-  departure flag breaks waiting in traffic near the car for longer than the TTL
-  and then genuinely driving off. Neither regression fails a test that exists
-  today unless the ones added in v1.41.0 are kept.
-- Confirm `#checkGpsSpeed()` takes `lat`/`lng` and gates accumulation on
-  `#distanceFromParking()` vs `CFG.gpsDepartureRadius`, and that
-  `ParkingForegroundService.onLocationShadow()` computes `distance` BEFORE
-  calling `checkSpeed` and passes it in — a regression that drops the distance
-  argument reverts to counting any fast movement as this car departing, which
-  is the v1.41.0 train/bus false positive.
+  still check evidence expiry BEFORE the unknown-speed early return — deliberate,
+  and it looks like a tidy-up: moving it below that return leaves stale evidence
+  alive forever on a device that rarely reports speed.
+- Confirm neither `checkSpeed` implementation has regrown a distance/"departure
+  radius" gate on accumulation. v1.41.0 had one and v1.42.0 removed it after a
+  real drive proved it would have disarmed detection permanently (CLAUDE.md).
+  The general rule it left behind: prefer a detection fix that degrades to
+  "fires more often than ideal" over one that can degrade to "never fires".
+- Confirm `WidgetActionReceiver` never calls `evaluateJavascript(script, null)`
+  — it must pass a callback, and every path that cannot deliver live (no
+  WebView, `FMC_NOT_READY`, the `ACK_TIMEOUT_MS` timeout, a thrown
+  `evaluateJavascript`) must go through `queueForReplay()`. This was a real,
+  previously-shipped silent black hole: a widget tap that was neither performed
+  nor queued nor logged anywhere. Also confirm the live and queued paths are
+  mutually exclusive via the `AtomicBoolean`, or an action can be double-applied.
+- Confirm `performWidgetAction()` still has its `CFG.widgetActionDedupeMs`
+  guard and that it clears `#lastWidgetAction` in the catch branch — without
+  that clear, one failed action would suppress the user's retry for 3 seconds.
 - Confirm `js/widget-bridge.js`'s `syncVehicles()` call includes
   `gpsAutoEndEnabled` at the top level (not per-vehicle) — `GpsDecisionEngine`'s
   shadow evaluation reads it from `WidgetDataPlugin`'s `KEY_GPS_AUTO_END_ENABLED`;

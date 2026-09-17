@@ -55,17 +55,16 @@ class ParkingForegroundService : Service() {
 
         // GPS thresholds mirroring js/config.js's CFG.gpsSpeedThreshold/
         // gpsSpeedDuration/gpsVehicleEvidenceMs/gpsSpeedSampleCapMs/
-        // gpsDerivedSpeedMinIntervalMs/gpsDepartureRadius/gpsEvidenceTtlMs/
+        // gpsDerivedSpeedMinIntervalMs/gpsEvidenceTtlMs/
         // gpsDistanceThreshold — keep these in sync if those ever change
         // (there is no single shared source between JS and Kotlin for these
         // constants). See CLAUDE.md "Vehicle-movement detection" for why the
         // speed bar is set where it is and why distance now needs evidence.
-        private const val GPS_SPEED_THRESHOLD_MPS = 13.9
+        private const val GPS_SPEED_THRESHOLD_MPS = 7.0
         private const val GPS_SPEED_DURATION_MS = 120_000L
         private const val GPS_VEHICLE_EVIDENCE_MS = 10_000L
         private const val GPS_SPEED_SAMPLE_CAP_MS = 15_000L
         private const val GPS_DERIVED_SPEED_MIN_INTERVAL_MS = 5000L
-        private const val GPS_DEPARTURE_RADIUS_M = 150.0
         private const val GPS_EVIDENCE_TTL_MS = 600_000L
         private const val GPS_DISTANCE_THRESHOLD_M = 300.0
         private const val LOCATION_MIN_TIME_MS = 3000L
@@ -884,16 +883,13 @@ class ParkingForegroundService : Service() {
                 prevFixAt = now
             }
 
-            // Computed before checkSpeed, not after: since v1.41.0 the speed
-            // check needs it too, to decide whether vehicle speed counts as
-            // THIS car departing rather than the user riding something else.
             val distance = GpsMath.distanceMeters(location.latitude, location.longitude, parkLat, parkLng)
             lastFixDistanceM = distance
 
             val (afterSpeed, speedDecision) = GpsDecisionEngine.checkSpeed(
                 gpsShadowState, hasParking, gpsEnabled, speed,
                 GPS_SPEED_THRESHOLD_MPS, GPS_SPEED_DURATION_MS, GPS_SPEED_SAMPLE_CAP_MS,
-                distance, GPS_DEPARTURE_RADIUS_M, GPS_EVIDENCE_TTL_MS, now,
+                GPS_EVIDENCE_TTL_MS, now,
             )
             gpsShadowState = afterSpeed
             emitGpsShadowDecision("speed", speedDecision)

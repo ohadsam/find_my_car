@@ -36,7 +36,6 @@ class FindMyCarApp {
     gpsSpeedAccumMs:      0,     // ms ACCUMULATED at or above CFG.gpsSpeedThreshold this parking session
     gpsLastSpeedSampleAt: null,  // Date.now() of the previous speed sample, for the interval above
     gpsPrevFix:           null,  // {lat, lng, at} of the previous position fix, for deriving speed
-    gpsDepartureStarted:  false, // true once vehicle-speed movement began near the parked car — anchors the evidence to THIS car
     gpsLastAboveAt:       null,  // Date.now() of the last above-threshold sample, for CFG.gpsEvidenceTtlMs expiry
     gpsEndSuggested:      false, // true after GPS end suggestion shown this session
   };
@@ -50,6 +49,9 @@ class FindMyCarApp {
     ? new NativeBluetoothController()
     : new BluetoothController();
   #wakeLock  = null;
+  // Last widget/notification action performed, for performWidgetAction()'s
+  // duplicate-delivery guard: {key, at, message}.
+  #lastWidgetAction = null;
   #ui;
   #returnModal;
 
@@ -816,6 +818,21 @@ class FindMyCarApp {
   // the app isn't foregrounded) — just reachable from a widget tap too now.
   async performWidgetAction(action, vehicleId) {
     try {
+      // Duplicate-delivery guard. A real report showed two identical
+      // performWidgetAction('save') calls landing in the same second, saving
+      // two parkings and posting two notifications: the two ran concurrently,
+      // so each read "no parking yet" before the other wrote, and the
+      // per-action guards below could not catch it. Returning the first call's
+      // own result keeps the caller's Toast/notification truthful — the action
+      // really was performed, just once.
+      const key = `${action}:${vehicleId || ''}`;
+      const recent = this.#lastWidgetAction;
+      if (recent && recent.key === key && Date.now() - recent.at < CFG.widgetActionDedupeMs) {
+        DiagLog.log('WIDGET', `ignored duplicate performWidgetAction(${action}) within ${CFG.widgetActionDedupeMs}ms`);
+        return recent.message;
+      }
+      this.#lastWidgetAction = { key, at: Date.now(), message: 'מבצע…' };
+
       if (vehicleId && vehicleId !== this.#state.activeVehicleId &&
           this.#state.vehicles.some(v => v.id === vehicleId)) {
         this.#switchVehicle(vehicleId, { silent: true });
@@ -845,6 +862,7 @@ class FindMyCarApp {
       } else {
         message = 'פעולה לא מוכרת';
       }
+      this.#lastWidgetAction = { key, at: Date.now(), message };
       DiagLog.log('WIDGET', `performWidgetAction(${action}) → ${message}`, { vehicleName: v?.name, vehicleIcon: v?.icon });
       // Unconditional (not gated by document.visibilityState like
       // #notifyIfBackground) — a widget action, by definition, never has an
@@ -856,6 +874,8 @@ class FindMyCarApp {
       return message;
     } catch (e) {
       const errMsg = 'שגיאה בביצוע הפעולה';
+      // Clear the dedupe marker: a failed attempt must not suppress a retry.
+      this.#lastWidgetAction = null;
       DiagLog.log('WIDGET', `performWidgetAction(${action}) threw — ${e?.message || e}`);
       Notify.show('FindMyCar', errMsg);
       return errMsg;
@@ -1210,7 +1230,6 @@ class FindMyCarApp {
     this.#state.gpsSpeedAccumMs      = 0;
     this.#state.gpsLastSpeedSampleAt = null;
     this.#state.gpsPrevFix           = null;
-    this.#state.gpsDepartureStarted  = false;
     this.#state.gpsLastAboveAt       = null;
     this.#state.gpsEndSuggested      = false;
   }
@@ -1264,6 +1283,8 @@ class FindMyCarApp {
   // built up. Mirrors GpsDecisionEngine.checkSpeed(). Accumulated rather than
   // "sustained continuously since": a continuous timer resets at every red
   // light, which would make a 2-minute requirement unreachable in city driving.
+  // The threshold is deliberately only just above running, not at a "real
+  // driving speed" — see CLAUDE.md "Vehicle-movement detection" (v1.42.0).
   #checkGpsSpeed(speed, lat, lng) {
     if (!this.#state.current || this.#state.gpsEndSuggested) return;
     if (!this.#getGpsSettings().enabled) return;
@@ -1272,11 +1293,7 @@ class FindMyCarApp {
 
     // Expire stale evidence FIRST, before the unknown-speed return below:
     // going stale is a function of elapsed time, not of whether this
-    // particular fix happened to carry a usable speed. gpsDepartureStarted is
-    // deliberately NOT cleared — the accumulator is the gate the distance
-    // trigger reads and walking can never refill it, while clearing the flag
-    // would break sitting in traffic near the car for longer than the TTL and
-    // then driving off.
+    // particular fix happened to carry a usable speed.
     const lastAbove = this.#state.gpsLastAboveAt;
     if (lastAbove !== null && now - lastAbove >= CFG.gpsEvidenceTtlMs) {
       DiagLog.log('GPS', 'vehicle-speed evidence expired (stale) — the distance trigger is disarmed again');
@@ -1301,19 +1318,11 @@ class FindMyCarApp {
     // does not make the preceding driving un-happen.
     if (speed < CFG.gpsSpeedThreshold) return;
 
-    // Vehicle speed — but is it THIS car leaving? Only if the departure already
-    // began near the spot, or this sample itself is still near it. Walking to a
-    // station and then riding a train is a commute, not the car departing.
-    const fromCar = this.#distanceFromParking(lat, lng);
-    if (!this.#state.gpsDepartureStarted && fromCar !== null && fromCar > CFG.gpsDepartureRadius) {
-      return;
-    }
-
     const before = this.#state.gpsSpeedAccumMs;
-    this.#state.gpsSpeedAccumMs     = before + delta;
-    this.#state.gpsDepartureStarted = true;
-    this.#state.gpsLastAboveAt      = now;
+    this.#state.gpsSpeedAccumMs = before + delta;
+    this.#state.gpsLastAboveAt  = now;
     if (before < CFG.gpsVehicleEvidenceMs && this.#state.gpsSpeedAccumMs >= CFG.gpsVehicleEvidenceMs) {
+      const fromCar = this.#distanceFromParking(lat, lng);
       DiagLog.log('GPS', `vehicle-speed evidence reached (${speed.toFixed(1)} m/s, ${Math.round(fromCar ?? -1)}m from the car) — the distance trigger is now armed`);
     }
     if (this.#state.gpsSpeedAccumMs >= CFG.gpsSpeedDuration) this.#suggestGpsEnd();

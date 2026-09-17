@@ -13,15 +13,13 @@ package com.ohadsam.findmycar.core
  * means a genuine drive keeps making progress toward the threshold while a
  * walk — which never produces a single sample above it — makes none.
  *
- * [departureStarted] and [lastAboveThresholdAt] anchor that evidence to *this
- * car*. Accumulated vehicle speed on its own only ever proved "the phone moved
- * fast" — it never proved the phone was in the parked car when it started. See
- * the engine's own docs below for the two false positives that closes.
+ * [lastAboveThresholdAt] is what lets that evidence expire: without it, one
+ * ride early in a parking session leaves the distance trigger armed for the
+ * rest of it, so a plain walk hours later fires the suggestion.
  */
 data class GpsDecisionState(
     val speedAccumMs: Long = 0L,
     val lastSampleAt: Long? = null,
-    val departureStarted: Boolean = false,
     val lastAboveThresholdAt: Long? = null,
     val endSuggested: Boolean = false,
 )
@@ -49,16 +47,37 @@ sealed class GpsDecision {
  * unreliable `coords.speed` — but "no speed condition" also means "on foot
  * counts". Both halves are fixed below.
  *
- * **Second round (v1.41.0)**: requiring vehicle-speed evidence fixed walking,
- * but the evidence itself was still only "the phone moved fast at some point
- * during this parking session" — never "this car drove away". Two false
- * positives survived: (1) park, walk to a station, take a train — evidence
- * accumulates on the train and the distance threshold passes, so the app says
- * the *car* seems to have moved; (2) evidence accumulated once never decayed,
- * so a ride earlier in the session left the distance trigger armed for a plain
- * walk hours later. [checkSpeed] therefore only counts vehicle speed as a
- * departure when it **begins near the parked car** (departureRadiusMeters), and
- * expires evidence that has gone stale (evidenceTtlMs).
+ * **Second round (v1.41.0)**: evidence accumulated once never decayed, so a
+ * ride earlier in the parking session left the distance trigger armed for a
+ * plain walk hours later. [checkSpeed] therefore expires evidence that has
+ * gone stale (evidenceTtlMs).
+ *
+ * **Third round (v1.42.0) — the threshold was set from intuition, not data,
+ * and it broke real detection.** v1.40.0 raised the vehicle-speed bar to
+ * 13.9 m/s (50 km/h), and v1.41.0 additionally required the first such sample
+ * to occur near the parked car. Production diagnostic-log evidence from a real
+ * drive killed both ideas:
+ *
+ * ```
+ * 18:06:30  dist=17m     gpsFixes=43  vehEvid=0s   ← got into the car
+ * 18:11:30  dist=1031m   gpsFixes=74  vehEvid=0s   ← a full km driven, no evidence
+ * 18:16:30  dist=1982m   gpsFixes=70  vehEvid=11s  ← only now, 2km out
+ * ```
+ *
+ * 1031m in five minutes is a 12 km/h average — ordinary city traffic, where
+ * 50 km/h is barely touched. So the distance trigger stayed disarmed while the
+ * driver was already a kilometre away, and the suggestion finally fired ten
+ * minutes late. The v1.41.0 departure anchor would have made it *permanent*:
+ * the first 50 km/h sample happened well past 1km from the car, far outside any
+ * sane radius, so the trigger would never have armed at all.
+ *
+ * The bar is therefore back to 7 m/s (25 km/h) — comfortably above walking
+ * (~1.4 m/s) and running (~3-5 m/s), which is all it ever had to exclude — and
+ * the departure anchor is gone. **A gate that can permanently disarm detection
+ * is the wrong trade for this app**: a missed real departure is the failure
+ * users actually report, repeatedly, while the false positive it guarded
+ * against (commuting by train from a parked car) is rarer and self-limiting
+ * thanks to the TTL.
  */
 object GpsDecisionEngine {
     /**
@@ -95,22 +114,16 @@ object GpsDecisionEngine {
 
     /**
      * @param speedThreshold m/s at or above which travel is taken to be
-     *   vehicular. Set well above any plausible walking/cycling speed, so a
-     *   single sample crossing it is real evidence of a vehicle.
+     *   vehicular. Set above walking and running — which is all it has to
+     *   exclude — and NOT at a "proper driving speed": city traffic spends most
+     *   of its time well below that, and a bar set there disarms the distance
+     *   trigger for an entire drive (see the class doc's v1.42.0 evidence).
      * @param requiredAccumMs total accumulated time above [speedThreshold]
      *   before suggesting on speed alone.
      * @param sampleCapMs ceiling on how much time a single sample may
      *   contribute. Without it, a long gap between fixes (app suspended, no
      *   updates while parked) followed by one fast sample would dump the whole
      *   gap into the accumulator and fire immediately.
-     * @param distanceFromParkingMeters current straight-line distance from the
-     *   saved parking spot — the caller owns the geo math, exactly as for
-     *   [checkDistance].
-     * @param departureRadiusMeters how close to the parked car a vehicle-speed
-     *   sample must occur for it to start counting as *this car* departing.
-     *   Someone who gets in and drives off crosses the speed threshold within
-     *   metres of the spot; someone who walks to a bus stop and then accelerates
-     *   is already well outside it, and that is a commute, not this car leaving.
      * @param evidenceTtlMs how long accumulated evidence stays valid with no
      *   further above-threshold sample. Without expiry, one ride early in a
      *   parking session leaves the distance trigger armed for the rest of it —
@@ -127,8 +140,6 @@ object GpsDecisionEngine {
         speedThreshold: Double,
         requiredAccumMs: Long,
         sampleCapMs: Long,
-        distanceFromParkingMeters: Double,
-        departureRadiusMeters: Double,
         evidenceTtlMs: Long,
         now: Long,
     ): Pair<GpsDecisionState, GpsDecision?> {
@@ -139,11 +150,6 @@ object GpsDecisionEngine {
         // this particular fix happened to carry a usable speed.
         val lastAbove = state.lastAboveThresholdAt
         val fresh = if (lastAbove != null && now - lastAbove >= evidenceTtlMs) {
-            // departureStarted is deliberately NOT cleared: the accumulator is
-            // the gate the distance trigger reads, and walking can never refill
-            // it, so keeping the flag costs nothing there — while clearing it
-            // would break the real case of sitting in traffic within the
-            // departure radius for longer than the TTL and then driving off.
             state.copy(speedAccumMs = 0L, lastAboveThresholdAt = null)
         } else state
 
@@ -165,17 +171,10 @@ object GpsDecisionEngine {
         // at a traffic light does not make the preceding driving un-happen.
         if (speed < speedThreshold) return fresh.copy(lastSampleAt = now) to null
 
-        // Vehicle speed — but is it THIS car leaving? Only if the departure
-        // already began near the spot, or this sample itself is still near it.
-        if (!fresh.departureStarted && distanceFromParkingMeters > departureRadiusMeters) {
-            return fresh.copy(lastSampleAt = now) to null
-        }
-
         val accum = fresh.speedAccumMs + delta
         val advanced = fresh.copy(
             speedAccumMs = accum,
             lastSampleAt = now,
-            departureStarted = true,
             lastAboveThresholdAt = now,
         )
 
