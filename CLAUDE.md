@@ -1071,9 +1071,45 @@ in a different direction if changed:**
    be permanently unavailable. The guard lives in the engine; the baseline-advance
    policy lives with the caller's own state, in both languages.
 
+**Second round (v1.41.0) — the evidence had to be anchored to *this car*.**
+Requiring vehicle-speed evidence fixed walking, but the evidence itself still
+only proved "the phone moved fast at some point during this parking session".
+Two false positives survived, and the question that exposed them was "if I pass
+by the car again later and walk 300m away, will it fire again?":
+
+- **Travelling by something else.** Park, walk 200m to a station, take a train:
+  evidence accumulates on the train, the distance threshold passes, and the app
+  claims the *car* moved. Only the user moved.
+- **Evidence that never decayed.** Once accumulated, it stayed valid for the
+  whole session, so one ride early on left the distance trigger armed for a
+  plain walk hours later — the original bug returning by a different route.
+
+`checkSpeed` therefore takes the current distance from the parking spot and two
+more constants: vehicle speed only starts counting as a departure when it
+**begins within `gpsDepartureRadius` (150m) of the car**, and evidence
+**expires after `gpsEvidenceTtlMs` (10 min)** with no further above-threshold
+sample. Someone who gets in and drives off crosses 50 km/h metres from the
+spot; someone who accelerates at a bus stop is already outside the radius. Once
+a departure is recognised it keeps accruing at any distance, so a real drive is
+never cut off. 10 minutes is deliberately generous — at 50 km/h a real
+departure covers the 300m distance threshold in about 22 seconds.
+
+**Two subtleties in `checkSpeed` that are easy to "clean up" into bugs:**
+
+1. **Expiry is checked before the unknown-speed early return.** Going stale is a
+   function of elapsed time, not of whether this particular fix carried a usable
+   speed. Moving the expiry below that return would leave stale evidence alive
+   indefinitely on a device that rarely reports speed.
+2. **`departureStarted` is deliberately NOT cleared on expiry.** The accumulator
+   is the gate the distance trigger actually reads, and walking can never refill
+   it, so keeping the flag costs nothing there — while clearing it would break
+   the real case of waiting in traffic within the departure radius for longer
+   than the TTL and then driving off, which would no longer be recognised as a
+   departure at all.
+
 **Two implementations, no shared source** — `GpsDecisionEngine.kt` (the native
 watch, which is what runs while the app is closed) and `js/app.js` (the live
-`watchPosition` path). The five constants are duplicated between `js/config.js` and
+`watchPosition` path). The seven constants are duplicated between `js/config.js` and
 `ParkingForegroundService.kt`, same as every other JS/Kotlin constant pair here;
 the release-checklist skill checks them against each other, because a drift is
 invisible — both sides keep working and just decide differently depending on
@@ -1600,7 +1636,9 @@ round-trip, before the next stage builds on it.
 - [ ] Bluetooth: per-vehicle toggles in BT settings screen work independently
 - [ ] Bluetooth: unlink device from vehicle removes all auto-behavior
 - [ ] **GPS (v1.40.0): walking >300m away from a parked car must NOT show the end-parking suggestion** — this is the false positive the vehicle-evidence gate exists to stop. Driving >300m away still shows it (confirmation only, never auto-ends), and should do so within a minute or so of setting off, not only after the full 2-minute speed accumulation
-- [ ] GPS (v1.40.0): drive away, then check the diagnostic log's `GPS` category — a "vehicle-speed evidence reached" entry should appear before the suggestion. If the suggestion never fires on a real drive, that entry is the discriminator: absent means no sample ever crossed 50 km/h (a speed-reporting/derivation problem), present means the trigger is armed and the distance threshold simply wasn't crossed yet
+- [ ] GPS (v1.40.0): drive away, then check the diagnostic log's `GPS` category — a "vehicle-speed evidence reached" entry should appear before the suggestion. If the suggestion never fires on a real drive, that entry is the discriminator: absent means no sample ever crossed 50 km/h (a speed-reporting/derivation problem), present means the trigger is armed and the distance threshold simply wasn't crossed yet. The entry also prints how far from the car the evidence was credited — it should be a small number (tens of metres), since that is the departure anchor doing its job
+- [ ] **GPS (v1.41.0): park, walk to a bus/train stop, and ride away — the "מזוהה נסיעה" suggestion must NOT appear**, because the vehicle-speed movement began well outside the 150m departure radius. Driving off in the car itself must still suggest as before. The `GPS` log shows "vehicle-speed evidence reached" only in the second case
+- [ ] GPS (v1.41.0): with a parking active, ride somewhere and come back, then wait 10+ minutes and walk 300m away — no suggestion, and the `GPS` category shows "vehicle-speed evidence expired (stale)". Without the TTL, that earlier ride would leave the walk armed for the rest of the parking session
 - [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
 - [ ] Android APK: installing a new build over an already-installed older build works without uninstalling first

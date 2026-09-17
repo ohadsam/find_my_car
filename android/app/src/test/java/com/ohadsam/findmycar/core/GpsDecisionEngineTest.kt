@@ -1,6 +1,7 @@
 package com.ohadsam.findmycar.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,15 +23,21 @@ class GpsDecisionEngineTest {
     private fun effective(reported: Double?, moved: Double?, elapsed: Long?) =
         GpsDecisionEngine.effectiveSpeed(reported, moved, elapsed, minInterval)
 
+    private val departureRadius = 150.0 // matches CFG.gpsDepartureRadius
+    private val evidenceTtl = 600_000L  // matches CFG.gpsEvidenceTtlMs
+
+    /** Default distance is inside the departure radius — i.e. "just left the car". */
     private fun speed(
         state: GpsDecisionState,
         speed: Double?,
         now: Long,
         hasCurrentParking: Boolean = true,
         gpsAutoEndEnabled: Boolean = true,
+        distanceFromParking: Double = 10.0,
     ) = GpsDecisionEngine.checkSpeed(
         state, hasCurrentParking, gpsAutoEndEnabled,
-        speed, threshold, duration, sampleCap, now,
+        speed, threshold, duration, sampleCap,
+        distanceFromParking, departureRadius, evidenceTtl, now,
     )
 
     private fun distance(
@@ -193,11 +200,139 @@ class GpsDecisionEngineTest {
     @Test
     fun `a single sample cannot contribute more than the sample cap`() {
         // A long gap with no fixes (app suspended while parked) followed by one
-        // fast sample must not dump the whole gap into the accumulator.
+        // fast sample must not dump the whole gap into the accumulator. Kept
+        // under evidenceTtl so this isolates the cap from the expiry rule.
         val (s1, _) = speed(GpsDecisionState(), 20.0, now = 0L)
-        val (s2, decision) = speed(s1, 20.0, now = 10 * 60 * 1000L)
+        val (s2, decision) = speed(s1, 20.0, now = 60_000L)
         assertEquals(sampleCap, s2.speedAccumMs)
         assertNull(decision)
+    }
+
+    // ── departure anchoring (v1.41.0) ────────────────────────────
+
+    @Test
+    fun `vehicle speed starting far from the car is not this car departing`() {
+        // Walk to a station, then ride a train: real vehicle speed, but the
+        // departure never began near the parked car, so it is a commute.
+        var state = GpsDecisionState()
+        var now = 0L
+        repeat(30) {
+            val (next, decision) = speed(state, 30.0, now, distanceFromParking = 400.0)
+            assertNull(decision)
+            state = next
+            now += 10_000L
+        }
+        assertEquals(0L, state.speedAccumMs)
+        assertFalse(state.departureStarted)
+    }
+
+    @Test
+    fun `a commute that never counted leaves the distance trigger disarmed`() {
+        // The end-to-end shape of the false positive: train ride far from the
+        // car, then 500m away on foot — still nothing, because no evidence
+        // was ever credited.
+        val (afterRide, _) = speed(GpsDecisionState(), 30.0, now = 0L, distanceFromParking = 400.0)
+        val (afterRide2, _) = speed(afterRide, 30.0, now = 20_000L, distanceFromParking = 900.0)
+        assertEquals(0L, afterRide2.speedAccumMs)
+        val (_, decision) = distance(afterRide2, 900.0)
+        assertNull(decision)
+    }
+
+    @Test
+    fun `vehicle speed starting at the car counts and keeps counting once away`() {
+        // Getting in and driving off: the first fast sample is metres from the
+        // spot, and the rest of the drive keeps accruing well beyond the radius.
+        val (s1, _) = speed(GpsDecisionState(), 20.0, now = 0L, distanceFromParking = 20.0)
+        assertTrue(s1.departureStarted)
+        val (s2, _) = speed(s1, 20.0, now = 10_000L, distanceFromParking = 250.0)
+        assertEquals(10_000L, s2.speedAccumMs)
+        val (s3, _) = speed(s2, 20.0, now = 20_000L, distanceFromParking = 900.0)
+        assertEquals(20_000L, s3.speedAccumMs)
+    }
+
+    @Test
+    fun `a sample exactly at the departure radius still counts`() {
+        val (s1, _) = speed(GpsDecisionState(), 20.0, now = 0L, distanceFromParking = departureRadius)
+        assertTrue(s1.departureStarted)
+    }
+
+    // ── evidence expiry (v1.41.0) ────────────────────────────────
+
+    @Test
+    fun `evidence expires after the TTL with no further above-threshold sample`() {
+        val (s1, _) = speed(GpsDecisionState(), 20.0, now = 0L)
+        val (s2, _) = speed(s1, 20.0, now = 12_000L)
+        assertEquals(12_000L, s2.speedAccumMs)
+
+        // Much later, a walking sample: the ride has gone stale.
+        val (s3, decision) = speed(s2, 1.4, now = 12_000L + evidenceTtl)
+        assertEquals(0L, s3.speedAccumMs)
+        assertNull(s3.lastAboveThresholdAt)
+        assertNull(decision)
+    }
+
+    @Test
+    fun `expired evidence disarms the distance trigger for a later walk`() {
+        // THE regression test for the v1.41.0 half of the fix: a ride earlier
+        // in the parking session must not leave 300m-on-foot armed forever.
+        val (s1, _) = speed(GpsDecisionState(), 20.0, now = 0L)
+        val (s2, _) = speed(s1, 20.0, now = 12_000L)
+        assertEquals(GpsDecision.SuggestEnd, distance(s2, 500.0).second) // armed right now
+
+        val (s3, _) = speed(s2, 1.4, now = 12_000L + evidenceTtl)
+        val (_, decision) = distance(s3, 500.0)
+        assertNull(decision)
+    }
+
+    @Test
+    fun `an unknown-speed sample still expires stale evidence`() {
+        // Expiry is a function of elapsed time, not of whether this particular
+        // fix happened to carry a usable speed.
+        val (s1, _) = speed(GpsDecisionState(), 20.0, now = 0L)
+        val (s2, _) = speed(s1, 20.0, now = 12_000L)
+        val (s3, _) = speed(s2, null, now = 12_000L + evidenceTtl)
+        assertEquals(0L, s3.speedAccumMs)
+    }
+
+    @Test
+    fun `a drive longer than the TTL never expires its own evidence`() {
+        // Each sample is well inside the TTL, so a drive whose TOTAL span far
+        // exceeds it still never self-expires — expiry measures the gap since
+        // the last above-threshold sample, not how long the drive has run.
+        var state = GpsDecisionState()
+        var now = 0L
+        var decision: GpsDecision? = null
+        repeat(20) {
+            val (next, d) = speed(state, 20.0, now)
+            state = next
+            if (d != null && decision == null) decision = d
+            now += 60_000L
+        }
+        assertTrue(now > evidenceTtl) // the drive outlasted the TTL
+        assertEquals(GpsDecision.SuggestEnd, decision)
+    }
+
+    @Test
+    fun `evidence surviving a stop shorter than the TTL keeps the trigger armed`() {
+        val (s1, _) = speed(GpsDecisionState(), 20.0, now = 0L)
+        val (s2, _) = speed(s1, 20.0, now = 12_000L)
+        // Stationary in traffic for half the TTL, then still armed.
+        val (s3, _) = speed(s2, 0.0, now = 12_000L + evidenceTtl / 2)
+        assertEquals(12_000L, s3.speedAccumMs)
+        assertEquals(GpsDecision.SuggestEnd, distance(s3, 500.0).second)
+    }
+
+    @Test
+    fun `departureStarted survives expiry so a real departure is never blocked`() {
+        // Stuck at a light within the radius for longer than the TTL, then
+        // driving off: the accumulator restarts, but the departure is still
+        // recognised as this car's even once past the radius.
+        val (s1, _) = speed(GpsDecisionState(), 20.0, now = 0L, distanceFromParking = 20.0)
+        val (s2, _) = speed(s1, 0.0, now = evidenceTtl + 1000L, distanceFromParking = 30.0)
+        assertEquals(0L, s2.speedAccumMs)
+        assertTrue(s2.departureStarted)
+        val (s3, _) = speed(s2, 20.0, now = evidenceTtl + 20_000L, distanceFromParking = 800.0)
+        assertTrue(s3.speedAccumMs > 0L)
     }
 
     @Test

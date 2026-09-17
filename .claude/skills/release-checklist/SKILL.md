@@ -175,12 +175,14 @@ step broken or skipped:
   BOTH triggers would become permanently unable to fire without any test catching
   it (this logic lives in a `Service`, which the `core` package's unit tests can't
   reach).
-- Confirm the five GPS constants are identical in both languages — `js/config.js`'s
+- Confirm the seven GPS constants are identical in both languages — `js/config.js`'s
   `gpsSpeedThreshold`/`gpsSpeedDuration`/`gpsVehicleEvidenceMs`/
-  `gpsSpeedSampleCapMs`/`gpsDerivedSpeedMinIntervalMs` against
+  `gpsSpeedSampleCapMs`/`gpsDerivedSpeedMinIntervalMs`/`gpsDepartureRadius`/
+  `gpsEvidenceTtlMs` against
   `ParkingForegroundService.kt`'s `GPS_SPEED_THRESHOLD_MPS`/`GPS_SPEED_DURATION_MS`/
   `GPS_VEHICLE_EVIDENCE_MS`/`GPS_SPEED_SAMPLE_CAP_MS`/
-  `GPS_DERIVED_SPEED_MIN_INTERVAL_MS`. There is no shared source between JS and
+  `GPS_DERIVED_SPEED_MIN_INTERVAL_MS`/`GPS_DEPARTURE_RADIUS_M`/
+  `GPS_EVIDENCE_TTL_MS`. There is no shared source between JS and
   Kotlin, and a drift here is invisible: both sides keep working, they just decide
   differently depending on whether the app happened to be open — the hardest kind
   of report to diagnose, since it reproduces only in one of the two states.
@@ -193,10 +195,26 @@ step broken or skipped:
   out for a walk that their car has moved.
 - Confirm `js/app.js` resets GPS detection state ONLY through
   `#resetGpsDetection()` (grep for direct `gpsSpeedAccumMs`/`gpsLastSpeedSampleAt`/
-  `gpsPrevFix` assignments outside it and `#checkGpsSpeed`/`#effectiveSpeed`) — the
-  four fields are only meaningful relative to one another, and a call site that
+  `gpsPrevFix`/`gpsDepartureStarted`/`gpsLastAboveAt` assignments outside it and
+  `#checkGpsSpeed`/`#effectiveSpeed`) — the
+  six fields are only meaningful relative to one another, and a call site that
   reset a subset would carry the previous session's evidence into a new parking,
   which is exactly what the distance trigger's gate relies on not happening.
+- Confirm `GpsDecisionEngine.checkSpeed()` (and `js/app.js`'s `#checkGpsSpeed()`)
+  still (a) check evidence expiry BEFORE the unknown-speed early return, and
+  (b) do NOT clear `departureStarted`/`gpsDepartureStarted` on expiry. Both are
+  deliberate and both look like tidy-ups (see CLAUDE.md "Vehicle-movement
+  detection"): moving the expiry below the early return leaves stale evidence
+  alive forever on a device that rarely reports speed, and clearing the
+  departure flag breaks waiting in traffic near the car for longer than the TTL
+  and then genuinely driving off. Neither regression fails a test that exists
+  today unless the ones added in v1.41.0 are kept.
+- Confirm `#checkGpsSpeed()` takes `lat`/`lng` and gates accumulation on
+  `#distanceFromParking()` vs `CFG.gpsDepartureRadius`, and that
+  `ParkingForegroundService.onLocationShadow()` computes `distance` BEFORE
+  calling `checkSpeed` and passes it in — a regression that drops the distance
+  argument reverts to counting any fast movement as this car departing, which
+  is the v1.41.0 train/bus false positive.
 - Confirm `js/widget-bridge.js`'s `syncVehicles()` call includes
   `gpsAutoEndEnabled` at the top level (not per-vehicle) — `GpsDecisionEngine`'s
   shadow evaluation reads it from `WidgetDataPlugin`'s `KEY_GPS_AUTO_END_ENABLED`;
