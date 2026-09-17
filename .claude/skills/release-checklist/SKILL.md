@@ -168,10 +168,60 @@ step broken or skipped:
   transition in `setReasonActive()` (`parkingWasActive != parkingIsActive`), not on
   every call — `WidgetDataPlugin.update()` fires on every parking-state sync (photo
   added, description edited, etc.), not just session start; a regression back to
-  "reset on every active=true call" would silently wipe the sustained-speed timer
-  before it ever reaches `CFG.gpsSpeedDuration`, making the speed check permanently
-  unable to fire without any test catching it (this logic lives in a `Service`,
-  which the `core` package's unit tests can't reach).
+  "reset on every active=true call" would silently wipe the accumulated
+  vehicle-speed evidence (`GpsDecisionState.speedAccumMs`) before it ever reaches
+  `CFG.gpsSpeedDuration` — and, worse since v1.40.0, before it reaches
+  `CFG.gpsVehicleEvidenceMs`, which the distance trigger now also depends on, so
+  BOTH triggers would become permanently unable to fire without any test catching
+  it (this logic lives in a `Service`, which the `core` package's unit tests can't
+  reach).
+- Confirm the six GPS constants are identical in both languages — `js/config.js`'s
+  `gpsSpeedThreshold`/`gpsSpeedDuration`/`gpsVehicleEvidenceMs`/
+  `gpsSpeedSampleCapMs`/`gpsDerivedSpeedMinIntervalMs`/`gpsEvidenceTtlMs`
+  against
+  `ParkingForegroundService.kt`'s `GPS_SPEED_THRESHOLD_MPS`/`GPS_SPEED_DURATION_MS`/
+  `GPS_VEHICLE_EVIDENCE_MS`/`GPS_SPEED_SAMPLE_CAP_MS`/
+  `GPS_DERIVED_SPEED_MIN_INTERVAL_MS`/`GPS_EVIDENCE_TTL_MS`.
+  **`gpsSpeedThreshold` must be 7 m/s and must not creep upward** — see
+  CLAUDE.md's v1.42.0 evidence: a 13.9 m/s bar disarmed the distance trigger
+  for an entire real drive, because city traffic averages well under it. There
+  is no shared source between JS and
+  Kotlin, and a drift here is invisible: both sides keep working, they just decide
+  differently depending on whether the app happened to be open — the hardest kind
+  of report to diagnose, since it reproduces only in one of the two states.
+- Confirm `js/app.js`'s `#checkGpsDistance()` still gates on
+  `this.#state.gpsSpeedAccumMs >= CFG.gpsVehicleEvidenceMs`, and
+  `GpsDecisionEngine.checkDistance()` on its `vehicleEvidenceMs` parameter. This is
+  the v1.40.0 walking-false-positive fix (see CLAUDE.md "Vehicle-movement
+  detection") — distance alone says how far, never how. A regression removes no
+  functionality and breaks no test on either side; it just starts telling people
+  out for a walk that their car has moved.
+- Confirm `js/app.js` resets GPS detection state ONLY through
+  `#resetGpsDetection()` (grep for direct `gpsSpeedAccumMs`/`gpsLastSpeedSampleAt`/
+  `gpsPrevFix`/`gpsLastAboveAt` assignments outside it and
+  `#checkGpsSpeed`/`#effectiveSpeed`) — the
+  five fields are only meaningful relative to one another, and a call site that
+  reset a subset would carry the previous session's evidence into a new parking,
+  which is exactly what the distance trigger's gate relies on not happening.
+- Confirm `GpsDecisionEngine.checkSpeed()` (and `js/app.js`'s `#checkGpsSpeed()`)
+  still check evidence expiry BEFORE the unknown-speed early return — deliberate,
+  and it looks like a tidy-up: moving it below that return leaves stale evidence
+  alive forever on a device that rarely reports speed.
+- Confirm neither `checkSpeed` implementation has regrown a distance/"departure
+  radius" gate on accumulation. v1.41.0 had one and v1.42.0 removed it after a
+  real drive proved it would have disarmed detection permanently (CLAUDE.md).
+  The general rule it left behind: prefer a detection fix that degrades to
+  "fires more often than ideal" over one that can degrade to "never fires".
+- Confirm `WidgetActionReceiver` never calls `evaluateJavascript(script, null)`
+  — it must pass a callback, and every path that cannot deliver live (no
+  WebView, `FMC_NOT_READY`, the `ACK_TIMEOUT_MS` timeout, a thrown
+  `evaluateJavascript`) must go through `queueForReplay()`. This was a real,
+  previously-shipped silent black hole: a widget tap that was neither performed
+  nor queued nor logged anywhere. Also confirm the live and queued paths are
+  mutually exclusive via the `AtomicBoolean`, or an action can be double-applied.
+- Confirm `performWidgetAction()` still has its `CFG.widgetActionDedupeMs`
+  guard and that it clears `#lastWidgetAction` in the catch branch — without
+  that clear, one failed action would suppress the user's retry for 3 seconds.
 - Confirm `js/widget-bridge.js`'s `syncVehicles()` call includes
   `gpsAutoEndEnabled` at the top level (not per-vehicle) — `GpsDecisionEngine`'s
   shadow evaluation reads it from `WidgetDataPlugin`'s `KEY_GPS_AUTO_END_ENABLED`;
@@ -181,16 +231,35 @@ step broken or skipped:
   `js/widget-bridge.js`'s `initShadowListener()` is called once from `js/app.js`'s
   `#init()` — losing this wiring has no other symptom (shadow mode has no real
   effect), so nothing else would catch it.
-- Confirm `BluetoothClassicPlugin.maybeRecordPendingAction()` (Stage 5) still gates
-  on `MainActivity.getActiveWebView() != null` and returns immediately when the
-  WebView IS reachable — this is what prevents a real BT event from producing BOTH
-  the normal live JS-handled action AND a recorded pending action, which would
-  otherwise double-apply the same auto-end/auto-start once a later stage starts
-  replaying pending actions. This is a correctness bug with no test coverage
-  (`BluetoothClassicPlugin.kt` needs a live `Bridge`/`Activity`, same precedent as
-  its other wiring) — verify by reading the code, not just grepping for the guard's
-  existence.
-- Confirm `maybeRecordPendingAction`/`recordPendingAction` (native side) never call
+- Confirm `BtPendingActionRecorder.maybeRecord()` (Stage 5; moved out of
+  `BluetoothClassicPlugin` — see CLAUDE.md "Resolved: real, previously-shipped bug")
+  still gates on `MainActivity.getActiveWebView() != null` and returns immediately
+  when the WebView IS reachable — this is what prevents a real BT event from
+  producing BOTH the normal live JS-handled action AND a recorded pending action,
+  which would otherwise double-apply the same auto-end/auto-start once a later stage
+  starts replaying pending actions. This is a correctness bug with no test coverage
+  (needs a live `Context` with real `SharedPreferences`, same precedent as the rest
+  of this migration's Service/Plugin wiring) — verify by reading the code, not just
+  grepping for the guard's existence.
+- Confirm `ParkingForegroundService`'s BT receiver calls
+  `BtPendingActionRecorder.maybeRecord(context, label, connected)` directly and
+  unconditionally, alongside (not instead of) `BtEventBus.emitConnected/
+  emitDisconnected()` — NOT gated behind whether a `BtEventBus` listener currently
+  exists. A regression back to only calling it from `BluetoothClassicPlugin.onConnected/
+  onDisconnected` (i.e. only when a live Activity-bound Plugin instance happens to be
+  registered) would silently reintroduce the exact bug this fix resolved: that
+  listener is torn down precisely when the Activity is destroyed, which is the one
+  scenario Stage 5 exists to handle — so recording would again only ever succeed
+  while the WebView IS reachable, when it's needed least.
+- Confirm `BluetoothClassicPlugin.handleOnDestroy()` calls `BtEventBus.removeListener(this)`
+  but does **NOT** call `ParkingForegroundService.setReasonActive(context, "bluetooth",
+  false)` — a real, previously-shipped bug: clearing the "bluetooth" reason here fires
+  on every routine Activity destruction (not just when the user disables BT), which
+  — whenever no parking was also active — stopped the ENTIRE foreground service
+  (receiver included) until the app was next reopened, producing a total background-
+  detection outage. The reason must only ever be cleared by an explicit `stopWatch()`
+  call (the user turning off the BT master switch in Settings).
+- Confirm `maybeRecord`/`record` (in `BtPendingActionRecorder`) never call
   `WidgetDataPlugin.update`/`.clear`, open any modal, or otherwise touch real parking
   state directly — only `PendingBtActionStore.add(...)` and a plain
   `NotificationCompat`/`NotificationManagerCompat` notification. The *native*
@@ -687,6 +756,304 @@ because it only manifests roughly once every 24 hours:
   release shipped `BT-PENDING` without adding it to this dropdown — caught and fixed
   when `GPS-PENDING` was added; check every new category explicitly rather than
   assuming past coverage was complete).
+
+## 6. Background-service survivability (the v1.36.3 audit)
+
+Everything in sections 4-5 assumes `ParkingForegroundService` is actually running and
+actually permitted to do its job. Five separate, independently-shipped gaps meant it
+often wasn't — each invisible to every build step and every test, and each producing
+exactly the same user-visible symptom ("nothing happens in the background"). Verify
+all five literally, every release:
+
+- Confirm `AndroidManifest.xml`'s `<service android:name=".ParkingForegroundService">`
+  declares `android:foregroundServiceType="connectedDevice|specialUse|location"` —
+  **including `location`** — and that
+  `android.permission.FOREGROUND_SERVICE_LOCATION` is declared alongside the other
+  `FOREGROUND_SERVICE_*` permissions. This was a real, previously-shipped bug: from
+  Android 10, a background process only keeps receiving `LocationManager` updates if
+  it holds `ACCESS_BACKGROUND_LOCATION` **or** runs a `location`-typed foreground
+  service. Without the type, the Service's GPS watch silently stopped delivering the
+  moment the app was backgrounded — the exact scenario Stage 4/7 exist for — with the
+  telltale signature of `GPS-SHADOW` entries appearing only ~1 second after each app
+  open and never during an actual drive. Nothing fails to compile, and no unit test
+  can reach it.
+- Confirm the `LOCATION` bit in `resolveForegroundServiceType()` is gated on
+  `canStartLocationType()` (i.e. `MainActivity.isForeground()`), NOT on the
+  location permission alone. A real, previously-shipped bug: Android 14 refuses
+  to start a `location`-typed FGS unless the app currently has while-in-use
+  capability, because without `ACCESS_BACKGROUND_LOCATION` location is a
+  foreground-only permission. `ServiceRestartReceiver` starts the service from a
+  background broadcast, so an ungated `LOCATION` bit made `startForeground()`
+  throw and — via `onCreate()`'s single try/catch — killed the whole service,
+  BT receiver included, on every reboot and every app update.
+- Confirm `onCreate()` starts the service via `startForegroundResilient()` (which
+  retries with `specialUse` when the preferred type is rejected) and never calls
+  `startForeground()` bare. A rejected type must cost that type only — never the
+  BT receiver, heartbeat, or reason bookkeeping that follow it. Native code
+  cannot be compiled or run in this sandbox and OEMs vary in how they enforce
+  these rules, so this backstop is what keeps the next type/permission mistake
+  from becoming another total outage.
+- Confirm any Kotlin companion function called from `MainActivity.java` (today
+  only `ParkingForegroundService.onAppForegrounded()`) carries `@JvmStatic`.
+  Without it Kotlin emits `Companion.foo()`, which Java cannot call as a static,
+  and the build fails with "cannot find symbol" — caught only in CI, since this
+  sandbox has no Android SDK. Grep `MainActivity.java` for calls into Kotlin
+  types and check each target's declaration.
+- Confirm `ParkingForegroundService` tracks `startedWithLocationType` (whether the
+  `LOCATION` bit was present when the service ENTERED the foreground state)
+  separately from `currentType` (what is declared now), and that
+  `onBecameEligibleForLocationType()` **restarts the service**
+  (`restartFromForeground()`) rather than only calling
+  `refreshForegroundServiceType()` when the two disagree. A real, previously-
+  shipped bug: an FGS's while-in-use location capability is bound to the moment
+  it entered foreground state, so a service started from a background broadcast
+  never holds it — and re-calling `startForeground()` with the bit added does not
+  grant it retroactively. Android accepts the type change with no error and keeps
+  withholding every location update, which is why a whole 1h40m drive produced
+  zero fixes while every signal read "location type active".
+- Confirm that restart is guarded by `locationRestartAttempted` (one attempt per
+  process). A restart loop would be considerably worse than the bug it fixes.
+- Confirm the `SERVICE` heartbeat line carries the GPS summary — `fgsType=`,
+  `+loc@start`/`NO-loc@start`, `gpsFixes=`, `lastFix=`, `dist=` — and that
+  `gpsUpdatesSinceHeartbeat` is incremented in `onLocationShadow()`. Without it,
+  "the watch isn't running", "it's running but the OS delivers nothing" and
+  "fixes arrive but no threshold was crossed" are three different faults that
+  look identical in the log; this is what makes them decidable. Confirm it stays
+  folded into the existing heartbeat rather than logged per location update —
+  per-update logging would blow `NativeLogStore`'s 200-entry cap during a single
+  drive, pushing out the lifecycle entries that matter most.
+- Confirm `MainActivity.onResume()` calls `ParkingForegroundService
+  .onAppForegrounded()`. Without it, a service that correctly started without the
+  location type at boot keeps running without it indefinitely — nothing else
+  re-resolves the type for an already-running service whose `"parking"` reason
+  never transitions again, so background GPS stays dead until the parking ends
+  and a new one starts.
+- Confirm the "GPS watch started" `SERVICE` log line distinguishes the case where
+  the location foreground-service type is NOT active — `requestLocationUpdates()`
+  succeeding does not mean updates will arrive, and an unqualified "started" there
+  is the misleading-success signal that made this class of bug take days to find.
+- Confirm `ParkingForegroundService.resolveForegroundServiceType()` **OR-combines**
+  the types it's actually allowed to use rather than picking exactly one: `location`
+  only when a location permission is granted, `connectedDevice` only when
+  `BLUETOOTH_CONNECT` is granted, falling back to `specialUse` (API 34+) when neither
+  is. Android 14+ throws from `startForeground()` if a declared type's runtime
+  prerequisite isn't granted, so a version that unconditionally declares `location`
+  would crash on a fresh install (location is requested lazily), and a version that
+  picks only one type would lose background location whenever Bluetooth happened to
+  be granted first.
+- Confirm `refreshForegroundServiceType()` exists and is called from
+  `updateLocationWatch(true)` — the Service frequently starts for the `"bluetooth"`
+  reason alone (no `location` type needed or permitted yet) and only later gains a
+  parking session. Re-calling `startForeground()` with the newly-resolved type is the
+  documented way to add a type to an already-running FGS; without this call, a GPS
+  watch started mid-session runs under a non-`location` type and is throttled exactly
+  as if the type were missing entirely.
+- Confirm `restoreReasons(context)` exists, is called from **both** `onCreate()` and
+  `onStartCommand()`, and is **additive** (it may only add reasons derived from the
+  persisted mirror — `KEY_HAS_PARKING` → `"parking"`, `KEY_BT_ENABLED` →
+  `"bluetooth"` — never clear reasons already set in memory). `activeReasons` is
+  in-memory static state: a process death (OEM kill, `START_STICKY` restart, reboot)
+  wipes it, and every `setReasonActive()` caller is a Capacitor `@PluginMethod`
+  reachable only from live JS — so without this, a restarted Service came back with
+  an empty reason set and immediately stopped itself, or ran with no GPS watch.
+- Confirm `ServiceRestartReceiver` is registered in `AndroidManifest.xml` with an
+  `<intent-filter>` covering **both** `android.intent.action.BOOT_COMPLETED` and
+  `android.intent.action.MY_PACKAGE_REPLACED`, and that its `onReceive()` calls
+  `ParkingForegroundService.startIfNeeded(context)` inside a try/catch. Both are
+  protected system broadcasts (so `exported="false"` is correct) and both are exempt
+  from Android 12+'s background-FGS-start restriction. Without this, a reboot or an
+  APK update left background detection dead until the user next opened the app by
+  hand — with nothing in the diagnostic log to explain the silence, since a
+  non-running service can't log.
+- Confirm `startIfNeeded()` calls `restoreReasons()` first and only starts the
+  service when at least one reason is derivable — it must never start a foreground
+  service (and its persistent notification) for a user who has no parking and
+  Bluetooth turned off.
+- Confirm `WidgetDataPlugin` defines `KEY_BT_ENABLED` and `syncVehicles()` reads
+  `bluetoothEnabled` from the call and persists it, and that `js/widget-bridge.js`'s
+  `sync()` sends `bluetoothEnabled` (read fresh from `CFG.keys.bluetoothSettings`,
+  defaulting to `true` to match `js/app.js`'s own `#getBtSettings()` default). This
+  is the only input `restoreReasons()` has for the `"bluetooth"` reason — an
+  unmirrored master switch means a post-reboot restart never re-enables BT detection
+  no matter what the user's actual setting is.
+- Confirm **every** settings mutation that the native side mirrors calls
+  `this.#syncUI()` afterwards — specifically the GPS auto-end toggle and all three BT
+  settings callbacks (`onToggleEnabled`, `onToggleVehicle`, `onSetAll`) in
+  `js/app.js`. `#syncUI()` is the only thing that ever calls `WidgetBridge.sync()`;
+  a settings write without it leaves the native mirror stale until some unrelated
+  parking-state change happens to sync, so a user could turn Bluetooth on and have
+  the native decision engines keep reading `false` indefinitely. Grep every
+  `Store.set(CFG.keys.` call site in `js/app.js` and check each one that writes a
+  setting native reads.
+
+## 7. OEM background-restriction setup guide
+
+The guide's whole value is that a user who has been chasing an invisible
+background problem can *trust what it tells them*. Every check here protects
+that, not a feature:
+
+- Confirm `OemSetupPlugin.status()` returns `autostartAvailable`/
+  `oemBatteryAvailable` for the OEM steps and NEVER a field named `granted`
+  (or any equivalent) for them — there is no Android API that can read MIUI's
+  Autostart or an OEM's per-app battery policy, so any code path that reports
+  those as verified is reporting a guess as a fact. Correspondingly, confirm
+  `js/oem-setup.js`'s `buildSteps()` gives every `kind: 'manual'` step the
+  state `'unknown'` unless the USER's own stored confirmation
+  (`CFG.keys.oemSetup`) says otherwise — a manual step must never derive
+  `'ok'` from anything the app observed itself.
+- Confirm the verifiable steps are re-read live on every `buildSteps()` call
+  (it `await`s `status()` each time) rather than cached — revoking a
+  permission in system settings and reopening the guide must flip that step
+  back to `'todo'`.
+- Confirm `status()` version-gates `POST_NOTIFICATIONS` (API 33+) and
+  `BLUETOOTH_CONNECT` (API 31+) and reports `true` below those levels —
+  minSdk here is 22, and an ungated `checkSelfPermission` on a permission that
+  doesn't exist yet reports "denied" forever, which would show a permanently
+  unfixable red step on older devices.
+- Confirm the location step requires `ACCESS_FINE_LOCATION` specifically (not
+  just "some location permission") — coarse-only silently degrades drive-away
+  detection without any other symptom, so a guide that passes it is actively
+  misleading.
+- Confirm every launcher in `OemSettingsIntents` returns one of
+  `RESULT_OPENED`/`RESULT_FALLBACK`/`RESULT_FAILED` and that `js/app.js`'s
+  setup-modal handler surfaces `fallback` and `failed` as a toast. A vendor
+  screen that doesn't exist on a given ROM silently opening the generic
+  app-info page instead — with no explanation — is the exact
+  indistinguishable-from-a-bug dead end this feature exists to remove.
+- Confirm `OemSettingsIntents.launch()` catches `Exception` (not just
+  `ActivityNotFoundException`) around `startActivity` — several OEMs guard
+  these Activities with a `SecurityException` instead, and an uncaught one
+  crashes the app from a settings button.
+- Confirm `AndroidManifest.xml` has the `<queries>` block listing the OEM
+  settings packages, and that it does NOT use `QUERY_ALL_PACKAGES`. Without
+  `<queries>`, Android 11+ package-visibility filtering makes
+  `resolveActivity()` blind to those packages, so `autostartAvailable()`
+  returns false and a Xiaomi user is told their device has no Autostart
+  screen — the single most important step silently vanishing from the list,
+  with nothing failing to build or throwing.
+- Confirm `BluetoothClassicPlugin`'s `openAppSettingsInternal()` and
+  `requestIgnoreBatteryOptimizations()` both delegate to `OemSettingsIntents`
+  rather than building their intents inline — two copies of the
+  launch/fallback logic would drift (same precedent as
+  `BackgroundAlertNotifier`).
+- Confirm `OemSetupPlugin` is registered in `MainActivity.onCreate()`'s
+  `registerPlugin(...)` list alongside the other two — a Capacitor plugin that
+  isn't registered simply resolves to `undefined` in JS, so the guide would
+  quietly report "not supported" on native and hide itself, exactly as it
+  correctly does in the browser.
+- Confirm `OemSetupPlugin` does NOT redeclare a `context` property — the other
+  two plugins use `Plugin`'s inherited `getContext()` via Kotlin's synthetic
+  property, and shadowing it risks an accidental-override compile error that
+  this sandbox (no Android SDK) cannot catch locally.
+- Confirm `OemSetup.shouldAutoShow()` returns false once every step is `'ok'`,
+  and that `#init()` calls it fire-and-forget on a timer (never `await`ed) —
+  a guide that reappears when there is nothing left to do trains users to
+  dismiss it reflexively, and blocking init on a plugin call would stall the
+  loading screen.
+- Confirm `js/oem-setup.js` is in `sw.js`'s `STATIC_ASSETS` and has a
+  `<link rel="modulepreload">` (covered generically by section 2, but named
+  here since a miss breaks the whole feature rather than something cosmetic).
+- Confirm `#oemSetupSection` in `index.html` starts `style="display:none;"`
+  and is only revealed when `OemSetup.isSupported()` — the PWA has no native
+  plugin and no device settings to open, so the entry point must not appear
+  there at all.
+- Confirm every string interpolated into the modal's `innerHTML` goes through
+  `Utils.escHtml()` — the step list includes `Build.MANUFACTURER`, which comes
+  from the device, not from this codebase.
+
+## 8. Widget liveness dots
+
+The dots exist so three consecutive silent-failure bugs become visible from the
+home screen. Every check here protects their trustworthiness, which is the only
+thing that makes them worth having:
+
+- Confirm `WidgetStatus.render()` produces **four** states and that `GRAY` (not
+  `RED`) is what a deliberately-disabled setting or an absent parking maps to —
+  specifically `!gpsEnabled || !hasParking` → gray, and `!btEnabled` → gray. A
+  red dot for something the user turned off themselves is a false alarm that
+  teaches them to ignore the indicator, exactly what the OEM guide's "cannot
+  verify" badge exists to avoid.
+- Confirm the `AMBER` branch exists and is reached when the GPS watch is active
+  but `KEY_GPS_LOCATION_TYPE_ACTIVE` is false — this is the v1.37.1 post-reboot
+  state, invisible in every other way (service alive, watch reports started),
+  and collapsing it into green or red would hide the exact condition the dots
+  were added for.
+- Confirm `ParkingForegroundService` writes `KEY_GPS_WATCH_ACTIVE`,
+  `KEY_GPS_LOCATION_TYPE_ACTIVE` and `KEY_BT_RECEIVER_ACTIVE` **alongside** (not
+  instead of) its existing `NativeLogStore` entries at the same points, and
+  clears all three in `onDestroy()`. A flag left `true` after teardown would
+  show green for a service that is gone — worse than no indicator at all.
+- Confirm `WidgetStatus` reads `ParkingForegroundService.isRunning` directly
+  rather than inferring liveness from a persisted timestamp alone: a running
+  foreground service keeps this process alive, so the static is precise here,
+  while a staleness heuristic would lag by whatever the Doze-throttled refresh
+  interval happens to be.
+- Confirm `WidgetStatusRefresher.scheduleOrCancel()` counts placed widgets
+  across **all three** providers and cancels when the total is zero, and that
+  every provider calls it from `onUpdate`/`onEnabled`/`onDisabled`. Removing the
+  last widget must stop the alarm — a 2-minute CPU wake for a widget nobody has
+  placed is pure battery cost, and a per-provider `onDisabled` that cancelled
+  unconditionally would kill the refresh for the other two types.
+- Confirm `WidgetDataPlugin.syncVehicles()` calls
+  `WidgetStatusRefresher.refreshAll()`. `refreshWidgets()` covers only the two
+  data-driven providers and only runs from `update()`/`clear()`, so without this
+  a settings toggle would leave the dots showing the previous setting until an
+  unrelated parking event — the native counterpart of the "every settings toggle
+  must call `#syncUI()`" rule.
+- Confirm all three widget layouts declare `widget_status_gps` and
+  `widget_status_bt`, and that on `widget_quick_save.xml` / `widget_mini_map.xml`
+  the status row is positioned so it cannot overlap the `⋮` quick-actions button
+  (top|end) or the 🔁 cycle button (top|start).
+- Confirm `ic_status_gps.xml`/`ic_status_bt.xml` are white-sourced vectors —
+  `RemoteViews.setInt(id, "setColorFilter", …)` blends with the source color, so
+  a colored drawable would render the wrong hue with no error.
+- Confirm `WidgetStatusRefreshReceiver` is registered in `AndroidManifest.xml`
+  with `exported="false"` — without registration the alarm fires into nothing and
+  the dots silently stop refreshing on a timer (they would still update on real
+  parking events, which makes the regression easy to miss).
+- Confirm `WidgetStatus`/`WidgetStatusRefresher` never call
+  `WidgetDataPlugin.update`/`.clear`, `setReasonActive`, or anything with a real
+  side effect on parking state. A status indicator must only read — it must never
+  be able to break the machinery it reports on, which is also why every entry
+  point here is wrapped in try/catch.
+
+## 9. Notification action buttons
+
+The two confirmation notifications (GPS "car moved", BT "you arrived") are
+answerable from the shade. Every check protects the property that makes them
+worth having — that they work without opening the app:
+
+- Confirm both buttons route through `performWidgetAction()` /
+  `WidgetActionReceiver` rather than a notification-specific action path. That
+  reuse is what gives them silent vehicle switching, the already-ended guard,
+  the result notification, and the `PendingWidgetActionStore` fallback; a
+  parallel implementation would have to re-earn all four and would drift.
+- Confirm `Notify.registerActionTypes()` is called (from
+  `#initNotificationActions()`, once, from `#init()`) BEFORE any notification
+  using `Notify.CONFIRM_END` can be scheduled — Android silently drops actions
+  for an unregistered type, so the failure mode is buttons just not appearing,
+  with no error anywhere.
+- Confirm `#notifyIfBackground()` forwards its third `opts` argument to
+  `Notify.show()`, and that both confirmation call sites (`#suggestGpsEnd()` and
+  the BT connect-confirm branch) pass `actionTypeId` **and** an
+  `extra.vehicleId` — without the vehicle id the action would act on whichever
+  vehicle happens to be active when the button is pressed, not the one the
+  notification was about.
+- Confirm the action handler ignores `dismiss` and a bare `tap`, acting only on
+  `end` — `tap` fires for the notification body, which should just open the app.
+- Confirm the handler closes BOTH `gpsEndModal` and `btParkingModal` before
+  acting: answering in the shade makes the in-app modal stale, and returning to
+  a question you already answered is its own bug.
+- Confirm `BackgroundAlertNotifier.show()` gives each action a request code of
+  `notifId + index`. A shared request code makes Android reuse one
+  `PendingIntent` across buttons, so every button performs whichever was built
+  last — a silent, easily-missed wrong-action bug.
+- Confirm `WidgetActionReceiver` cancels `EXTRA_NOTIFICATION_ID` for *every*
+  button before running the action (not only on success), and that
+  `ACTION_DISMISS` returns immediately after cancelling without touching the
+  WebView or recording a pending action.
+- Confirm `ACTION_DISMISS` is handled inside `WidgetActionReceiver` rather than
+  by a second receiver — one path for every notification button.
 
 ## Output format
 

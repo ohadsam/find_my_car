@@ -41,6 +41,14 @@
             android:name=".widgets.WidgetCycleVehicleReceiver"
             android:exported="false" />
 
+        <!-- Repaints the widgets' background-detection status dots on a timer
+             (own explicit PendingIntent, no intent-filter needed). The alarm
+             only exists while at least one widget is placed — see
+             WidgetStatusRefresher.scheduleOrCancel(). -->
+        <receiver
+            android:name=".widgets.WidgetStatusRefreshReceiver"
+            android:exported="false" />
+
         <!-- Handles the once-daily status-notification alarm (own explicit
              PendingIntent, no intent-filter match needed for that) AND
              BOOT_COMPLETED (a protected system broadcast — safe to declare
@@ -53,6 +61,21 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Restarts ParkingForegroundService after the two events that kill the
+             process with no user action (reboot, APK update). Without this,
+             background BT/GPS detection stayed dead until the app was next
+             opened by hand — every setReasonActive() caller is a @PluginMethod,
+             reachable only from live JS. Both actions are protected system
+             broadcasts, so exported="false" is correct. -->
+        <receiver
+            android:name=".ServiceRestartReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
@@ -69,7 +92,7 @@
         <service
             android:name=".ParkingForegroundService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|specialUse">
+            android:foregroundServiceType="connectedDevice|specialUse|location">
             <!-- Android 14+ requires BLUETOOTH_CONNECT to already be GRANTED
                  (not just declared) before starting a connectedDevice-typed
                  foreground service. That permission is only requested lazily
@@ -136,7 +159,43 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Required on Android 14+ for the service's `location` foreground-service
+         type, which is itself what allows ParkingForegroundService's
+         LocationManager watch to keep receiving updates while the app is
+         backgrounded (Android 10+ blocks background location otherwise — see
+         CLAUDE.md "Background location needs a location-typed foreground
+         service"). Without this the GPS drive-away detection only ever worked
+         while the app was actually on screen. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Package visibility (Android 11+): without these, packageManager
+         .resolveActivity() cannot SEE these OEM settings apps at all, so
+         OemSettingsIntents.autostartAvailable()/oemBatteryAvailable() would
+         always report false and the setup guide would wrongly tell the user
+         their device has no Autostart screen. Launching still works via
+         try/catch regardless — this is purely so the guide can tell the truth
+         about what's available BEFORE the user taps. Deliberately an explicit
+         list rather than QUERY_ALL_PACKAGES, which is a restricted permission
+         requiring Play Store justification and is wildly disproportionate for
+         this. -->
+    <queries>
+        <!-- Xiaomi / Redmi / POCO (MIUI + HyperOS) -->
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.powerkeeper" />
+        <!-- Huawei / Honor -->
+        <package android:name="com.huawei.systemmanager" />
+        <!-- Oppo / Realme (ColorOS) -->
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.coloros.oppoguardelf" />
+        <!-- Vivo -->
+        <package android:name="com.vivo.permissionmanager" />
+        <!-- Samsung -->
+        <package android:name="com.samsung.android.lool" />
+        <!-- Letv / Asus -->
+        <package android:name="com.letv.android.letvsafe" />
+        <package android:name="com.asus.mobilemanager" />
+    </queries>
 </manifest>

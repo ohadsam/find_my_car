@@ -30,6 +30,7 @@ Since v1.11.0 the same web app also ships as a **native Android APK** (Capacitor
 | `js/bluetooth.js` | `BluetoothController` — device watch via `enumerateDevices` + `devicechange`; connect/disconnect callbacks; `checkNow()` for on-demand re-scan |
 | `js/bluetooth-native.js` | `NativeBluetoothController` — same interface as `BluetoothController`, backed by the native `BluetoothClassic` Capacitor plugin (real ACL connect/disconnect). Selected instead of `BluetoothController` in `js/app.js` when `NativeBluetoothController.isSupported()` |
 | `js/widget-bridge.js` | `WidgetBridge` — pushes the active-parking snapshot to the native `WidgetData` plugin so Android home-screen widgets stay current; no-op in the browser |
+| `js/oem-setup.js` | `OemSetup` — builds the "הגדרת זיהוי ברקע" guide's step list and runs each step's action via the native `OemSetup` plugin; no-op in the browser. See "OEM background-restriction setup guide" below |
 | `js/notify.js` | `Notify` — one-off system notifications for background BT/GPS events; native uses `@capacitor/local-notifications`, browser uses `ServiceWorkerRegistration.showNotification()` |
 | `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing, Bluetooth |
 | `sw.js` | Service Worker — cache strategies for app shell, tiles, Leaflet CDN |
@@ -324,7 +325,9 @@ never loses its own execution context the same way.
 | `android/.../BluetoothClassicPlugin.kt` | `BluetoothClassic` | `startWatch`/`stopWatch`/`checkNow`/`getBondedDevices`/`requestBtPermission`/`permissionStatus`/`openAppSettings`/`isForegroundServiceRunning`/`batteryOptimizationStatus`/`requestIgnoreBatteryOptimizations`/`getPendingActions`/`clearPendingActions` (the last two Stage 5 of the native migration — see below); emits `connected`/`disconnected` events with `{label}`, and (Stage 2 of the native migration, shadow mode only — see below) a `btShadowDecision` event with `{direction, label, decisions}` |
 | `android/.../WidgetDataPlugin.kt` | `WidgetData` | `update(snapshot)`/`clear()` — mirrors parking state into `SharedPreferences` for the widgets (a separate process; can't read WebView localStorage), triggers an `AppWidgetManager` refresh, and (Stage 9) posts/cancels the persistent "active parking" notification directly via `NotificationCompat`. `syncVehicles({vehicles, activeVehicleId, gpsAutoEndEnabled, dailyStatusNotificationEnabled})` additionally mirrors the vehicle list (BT fields + `hasParking` + `dailyStatusEnabled`), the global GPS auto-end setting, and the global daily-status-notification setting, so `WidgetQuickActionsActivity` can show a vehicle picker natively, the native decision engines have real settings to read, and `DailyStatusReceiver` (see "Once-daily status notification" below) knows what to report — also (re-)arms/cancels `DailyStatusScheduler`'s alarm on every call. `getPendingGpsSuggestion`/`clearPendingGpsSuggestion` (Stage 7) and `getPendingWidgetActions`/`clearPendingWidgetActions` (Stage 8) let JS read/clear what was recorded while unreachable. `getNativeLog`/`clearNativeLog` let JS read/clear `NativeLogStore`'s native-only lifecycle log (see "Native background service log" below) — unlike the `getPending*` pair, these aren't actionable decisions to replay, purely informational. Also relays `GpsShadowEventBus` (Stage 4 of the native migration, shadow mode only) as a `gpsShadowDecision` event with `{trigger, decision}` |
 | `android/.../ParkingForegroundService.kt` | *(no JS-facing methods)* | Foreground service with a low-priority persistent notification; keeps the app process alive (screen off / backgrounded) so BT broadcasts and the JS GPS-speed watch keep running. Reference-counted by reason (`"bluetooth"` from `BluetoothClassicPlugin.startWatch/stopWatch`, `"parking"` from `WidgetDataPlugin.update/clear`) — active while either reason is set. Manifest declares `foregroundServiceType="connectedDevice\|specialUse"`; `onCreate()` picks `connectedDevice` only if `BLUETOOTH_CONNECT` is already granted, else `specialUse` (Android 14 requires that permission to already be *granted*, not just declared, before a `connectedDevice`-typed service can start — otherwise `startForeground()` throws and crashes the app, since this service starts on **every** parking save, not just Bluetooth-linked ones, and BT permission is normally granted much later). Both `onCreate()` and `setReasonActive()` wrap their work in try/catch as a hard backstop — starting/stopping this service must never crash the app. Since Stage 4 of the native migration (shadow mode only), also runs a plain `LocationManager` watch (`updateLocationWatch()`/`onLocationShadow()`) precisely while the `"parking"` reason is active, feeding `GpsDecisionEngine` — wrapped in its own independent try/catch backstop. Since Stage 7, `maybeRecordPendingGpsSuggestion()` runs alongside (not inside) that shadow logging — its own independent try/catch, same `MainActivity.getActiveWebView() != null` no-op gate as `BluetoothClassicPlugin`'s Stage 5 — to record a real `PendingGpsSuggestion` when the WebView is unreachable |
-| `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin |
+| `android/.../BtEventBus.kt` | *(internal)* | In-process bridge from the service's `BroadcastReceiver` to the plugin — delivers to a live `BluetoothClassicPlugin` listener only while the Activity is alive; see `BtPendingActionRecorder.kt` for the Activity-independent path |
+| `android/.../ServiceRestartReceiver.kt` | *(no JS-facing methods — receives, not called from JS)* | Restarts `ParkingForegroundService` on `BOOT_COMPLETED`/`MY_PACKAGE_REPLACED` via `startIfNeeded()` — the two events that kill the process with no user action. Without it, background detection stayed dead after a reboot or an app update until the app was next opened by hand, since every `setReasonActive()` caller is a `@PluginMethod` reachable only from live JS |
+| `android/.../BtPendingActionRecorder.kt` | *(internal)* | Stage 5's actual pending-action recording (`maybeRecord(context, label, connected)`), extracted out of `BluetoothClassicPlugin` and called directly from `ParkingForegroundService`'s own BT receiver instead of via `BtEventBus` — see "Resolved: real, previously-shipped bug" below for why: `BtEventBus`'s listener is torn down exactly when the Activity is destroyed, which is the one scenario this recording exists for |
 | `android/.../widgets/*WidgetProvider.kt` | *(no JS-facing methods)* | `AppWidgetProvider`s for the 3 home-screen widgets; read from the `WidgetData` `SharedPreferences` |
 | `android/.../widgets/WidgetQuickActionsActivity.kt` | *(no JS-facing methods)* | Small floating dialog (not a plugin) opened from the "⋮" button on every widget — real `AppWidgetProvider`s can't intercept long-press (the launcher reserves that gesture for move/resize/remove), so this tap-to-open popup is the practical equivalent of a widget context menu. Shows a vehicle picker (`Spinner`, populated from `WidgetData`'s synced vehicle list, defaulting to the active vehicle) plus שמור/החלף/סיים buttons that broadcast to `WidgetActionReceiver` — headless, never launches `MainActivity`. Only "ניהול רכבים" still opens the app, since adding/editing a vehicle needs real UI. Declared with `android:taskAffinity=""` in the manifest — without it, this activity defaults to the *same* task affinity as `MainActivity` (neither declares one, so both fall back to the app's package name), and since it's launched with `FLAG_ACTIVITY_NEW_TASK`, Android would reuse/foreground any existing `MainActivity` task instead of creating a truly isolated one; finishing the dialog would then reveal `MainActivity` underneath — looking exactly like the widget action "opened the app," even though this class never calls `startActivity(MainActivity)` for those actions. This was a real, previously-shipped bug (reproduces only once a `MainActivity` task already exists in recents, i.e. any time after the user has opened the app once) — `taskAffinity=""` forces a genuinely isolated task every time, so finishing always returns to whatever was truly in the foreground before (the home screen, another app) |
 | `android/.../WidgetActionReceiver.kt` | *(no JS-facing methods — receives, not called from JS)* | Runs a widget action (`save`/`swap`/`end`) headlessly: grabs `MainActivity`'s already-running `WebView` (via a static `WeakReference` set in `onCreate`/cleared in `onDestroy`) and calls `window.app.performWidgetAction(action, vehicleId)` through `evaluateJavascript()` — the app's JS keeps running in the background already (see `KeepRunning` below), so this normally reaches a live page without ever bringing the Activity forward. Falls back to actually launching `MainActivity` with the old `?action=` deep link only if the WebView isn't alive (app fully killed) |
@@ -334,6 +337,8 @@ never loses its own execution context the same way.
 | *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification, which since Stage 9 of the native migration is posted/cancelled directly by `WidgetDataPlugin.update()`/`.clear()` (plain `NotificationCompat`, not this plugin) on native; `#showParkingNotification`/`#cancelParkingNotification` (js/app.js) now skip themselves on native and keep using the browser-safe `ServiceWorkerRegistration.showNotification()` path only on the PWA, which has no native equivalent to delegate to |
 | `android/.../DailyStatusReceiver.kt` | *(no JS-facing methods — receives, not called from JS)* | Manifest-registered `BroadcastReceiver` (see "Once-daily status notification" below) that fires once a day, posts the status notification (per-vehicle parked/not-parked + address, filtered to vehicles with `dailyStatusEnabled`), and reschedules itself for tomorrow — also handles `BOOT_COMPLETED` to re-arm the alarm across reboots (`AlarmManager` alarms don't survive a restart) |
 | `android/.../DailyStatusScheduler.kt` | *(internal)* | `scheduleOrCancel`/`scheduleNext`/`cancel` — owns the `AlarmManager.setExactAndAllowWhileIdle` scheduling math (next occurrence of a fixed target hour) for `DailyStatusReceiver`; called from `WidgetDataPlugin.syncVehicles()` on every sync (idempotent) and from `DailyStatusReceiver` itself after each fire/boot |
+| `android/.../OemSetupPlugin.kt` | `OemSetup` | `status()`/`openAutostart()`/`openOemBattery()`/`openAppSettings()`/`requestIgnoreBatteryOptimizations()` — backs the in-app setup guide (see "OEM background-restriction setup guide" below) |
+| `android/.../OemSettingsIntents.kt` | *(internal)* | The actual intent launching + per-OEM component tables, shared by `OemSetupPlugin` and `BluetoothClassicPlugin` (whose `openAppSettings`/battery-exemption entry points now delegate here rather than building the intents inline — same anti-drift reasoning as `BackgroundAlertNotifier`) |
 | `android/.../DailyStatusVehicles.kt` | *(internal)* | Minimal parser of the `vehicles_json` `SharedPreferences` mirror, independent of `VehicleJsonParser`/`ParkedVehicles` (same "multiple independent readers" precedent as `ParkedVehicles.kt`) — reads only what `DailyStatusReceiver` needs: name/icon/hasParking/address, filtered to `dailyStatusEnabled` |
 
 **Widget data flow**: `js/app.js`'s `#syncUI()` (the single choke point every parking
@@ -420,7 +425,33 @@ already run while the app is backgrounded for Bluetooth/GPS auto-detection, just
 reachable from a widget tap too, so a regression here is easy to miss because the PWA
 (no widgets) and a foregrounded APK (WebView reachable) would both keep working fine.
 `QuickSaveWidgetProvider` broadcasts straight to `WidgetActionReceiver` (`PendingIntent
-.getBroadcast`, not `.getActivity`). Since Stage 8 of the native background-detection
+.getBroadcast`, not `.getActivity`).
+
+**A live WebView object does not mean a live page (real, previously-shipped
+bug, fixed in v1.42.0).** `WidgetActionReceiver` used to call
+`evaluateJavascript(script, null)` — no callback — against a script beginning
+`if (!window.app || !window.app.performWidgetAction) return;`. Whenever the
+WebView existed but the page had not finished initialising (cold start, a
+reload, a JS engine an OEM had frozen), the tap vanished completely: not
+performed, not queued, no Toast, and not one line in any log — a silent black
+hole, reported as "the widget takes ages to reach the app". The script now
+returns `FMC_ACCEPTED`/`FMC_NOT_READY` **synchronously** so
+`evaluateJavascript`'s own callback can tell acceptance from inability, and an
+action counts as delivered only once the page says so. Anything else — an
+explicit not-ready, or no answer within `ACK_TIMEOUT_MS` (2.5s) — falls back to
+the same `PendingWidgetActionStore` queue used when there is no WebView at all.
+`goAsync()` keeps the receiver alive across that wait, and an `AtomicBoolean`
+makes the live and queued paths mutually exclusive so an action is never both
+performed and queued (which would double-apply it). **Every branch that cannot
+deliver live must go through `queueForReplay()`** — that is what makes "a tap
+is never lost without a trace" a property of the code rather than a hope.
+
+**`performWidgetAction()` de-duplicates identical repeats** within
+`CFG.widgetActionDedupeMs` (3s), returning the first call's own result. A real
+log showed two identical `performWidgetAction('save')` calls in the same
+second saving two parkings and posting two notifications: they ran
+concurrently, so each read "no parking yet" before the other wrote, and the
+per-action guards could not catch it. Since Stage 8 of the native background-detection
 migration (see below), a tap while the WebView is fully unreachable no longer falls
 back to opening the app either — `WidgetActionReceiver` records the action to
 `PendingWidgetActionStore` and shows a `Toast` directly instead, and
@@ -719,44 +750,271 @@ require re-implementing the parking business logic (vehicle matching, history wr
 geocoding) natively against WebView storage — out of scope; the existing JS logic
 stays the single implementation.
 
-**Open investigation: zero ACL broadcasts ever received on a real device, despite
-real BT connect/disconnect and driving.** A user reported connecting/disconnecting
-Bluetooth to their car (and driving) twice with no end/start-parking notification at
-all. Diagnostic-log analysis across two separate reports (hours apart) found: the
-`ParkingForegroundService`'s BT `BroadcastReceiver` (registered once in `onCreate()`,
-confirmed alive continuously for the entire multi-hour window — only one
-"onCreate succeeded" `SERVICE` entry the whole time, meaning it was never torn down
-and re-registered) logs `"ACL broadcast: ..."` to `NativeLogStore` **unconditionally**
-on every raw `ACTION_ACL_CONNECTED`/`ACTION_ACL_DISCONNECTED` it receives — before any
-downstream vehicle-matching or WebView-reachability check. That line never appeared
-even once across either report. Since the receiver's own registration and aliveness
-are both confirmed from the log, this means the OS itself never delivered a single ACL
-broadcast to the process during either window — the gap is upstream of all of this
-app's own BT decision logic (`BtEventBus`, `BtDecisionEngine`, the JS handlers),
-not inside it. The `"bluetooth"` reason flapping on/off in the heartbeat's
-`reasons=[...]` set (visible in the same logs) is a separate, expected side effect —
-`MainActivity`/`BluetoothClassicPlugin` getting recreated on each app reopen resets
-the plugin's own `watching` flag and toggles the `"bluetooth"` service-keepalive
-reason — and does **not** affect the Service's own BT receiver, which is independent
-and was confirmed alive throughout.
+**Resolved: real, previously-shipped bug — `handleOnDestroy()` stopped the ENTIRE
+foreground service (not just the Activity) whenever the app closed with no active
+parking, killing Bluetooth background detection until the app was reopened.** A user
+reported connecting/disconnecting Bluetooth to their car (and driving) with zero
+end/start-parking notifications, across multiple reports spanning days. The first
+report's diagnostic-log evidence (`ParkingForegroundService`'s BT `BroadcastReceiver`
+alive for hours, zero `"ACL broadcast: ..."` entries ever) proved broadcasts weren't
+reaching the app at all, but didn't yet explain why. A diagnostic-only addition
+(`BluetoothAdapter.ACTION_STATE_CHANGED` logging, added specifically to narrow this
+down) and a third, more complete report finally exposed the actual mechanism:
 
-Diagnostic-only addition made to help narrow this down on the next report (not a
-fix — there isn't enough evidence yet to know what to fix): `registerBtReceiver()`'s
-`IntentFilter` now also includes `BluetoothAdapter.ACTION_STATE_CHANGED` (the radio's
-own on/off/connecting/disconnecting state, distinct from a specific device's ACL
-state), logged under the same `SERVICE` category with a message that says explicitly
-it's diagnostic-only. On the next report: if adapter-state-changed entries appear but
-ACL entries still don't, that proves Bluetooth broadcasts in general DO reach the
-app and the gap is specific to ACL/device-level events (pointing at the device
-connection never actually completing at the classic-BT layer, or this
-phone/car's BT stack not emitting ACL for that link) — if **neither** kind ever
-appears, that points at broadcasts being blocked entirely before reaching the app
-(OS-level permission enforcement for protected broadcasts, or an OEM-specific
-restriction beyond the battery-optimization one already documented below). Ruled
-out already: the BT master switch (`fmc_bluetooth_v1`) is confirmed on every session
-(`"app init: starting Bluetooth watch (master switch is on)"` logs each time), and
-`BLUETOOTH_CONNECT` is reported granted on every session
-(`"Bluetooth permission request result: granted"`).
+```
+16:33:15 SERVICE  starting foreground service (reason=parking)   — app opened, parking active
+16:33:15 SERVICE  heartbeat — foreground service alive (reasons=[parking, bluetooth])
+16:33:23 BRIDGE   ← JS: clear() called                            — parking ended (GPS suggestion confirmed)
+16:35:34 SERVICE  onDestroy — foreground service stopped (last reason=bluetooth cleared)
+```
+
+`BluetoothClassicPlugin.handleOnDestroy()` used to also clear the `"bluetooth"`
+keep-alive reason: `if (watching) ParkingForegroundService.setReasonActive(context,
+"bluetooth", false)`. But this Plugin instance is tied to the Activity/Bridge
+lifecycle — `handleOnDestroy()` fires every time the Activity is destroyed, which is
+**routine** (app closed/backgrounded long enough), not exceptional. The entire point
+of the `"bluetooth"` reason is to keep `ParkingForegroundService` (and its BT
+receiver) alive **precisely while there's no live Activity to rely on** — clearing it
+on Activity death defeated that purpose completely: the log above shows exactly this
+— parking ended, `"bluetooth"` was the only reason left, the Activity was destroyed
+shortly after (app closed), and the entire foreground service — receiver included —
+stopped just 2 minutes after the app had been opened. From that point until the user
+next opened the app, there was no foreground service, no BT receiver, nothing — a
+100% background-detection outage, matching precisely "days of driving, connecting,
+disconnecting — zero detection until I opened the app."
+
+**Fix, part 1**: `handleOnDestroy()` no longer clears the `"bluetooth"` reason at
+all — only `stopWatch()` (the user explicitly disabling BT detection in Settings)
+does. The reason now tracks the actual master-switch setting, not this Plugin
+instance's own lifecycle: once set, it persists across every Activity destroy/recreate
+cycle, exactly like a real background BT watcher should.
+
+**Fix, part 2 — a second, related structural gap this also exposed**: even with the
+service+receiver now staying alive, `BluetoothClassicPlugin.onConnected`/
+`onDisconnected` (the `BtEventBus.Listener` methods that used to call
+`maybeRecordPendingAction()`, Stage 5's actual pending-action recording) only ever
+fire while a live Plugin instance is registered with `BtEventBus` — and that
+registration is *also* torn down in `handleOnDestroy()` (correctly — `BtEventBus`
+holds a growing list of listeners, so a dead instance must unregister itself or leak).
+Since `handleOnDestroy()` fires at essentially the same moment `MainActivity`'s own
+`getActiveWebView()` becomes `null`, this meant Stage 5's WebView-unreachable
+recording path could **never actually run in the one scenario it exists for** — by
+the time the WebView is genuinely unreachable, the very listener meant to record a
+pending action for it is already gone. Fixed by extracting that logic into a new
+`BtPendingActionRecorder` object (`maybeRecord(context, label, connected)`,
+`core`-touching purity not required since it already needs `Context`/
+`SharedPreferences`/`LocationManager`) and calling it **directly and
+unconditionally** from `ParkingForegroundService`'s own BT receiver — the thing
+that's genuinely alive independent of Activity/Plugin lifecycle — right alongside the
+existing `BtEventBus.emitConnected/emitDisconnected()` call. Its own
+`MainActivity.getActiveWebView() != null` guard (unchanged) is what still correctly
+no-ops it when the live JS path is the one handling the event, so this never
+double-acts — `BluetoothClassicPlugin.onConnected/onDisconnected` now only do
+`emitAndTrack()` (live JS delivery) and `runShadowDecision()` (diagnostic-only
+shadow logging), both of which are genuinely fine to lose during an Activity-dead
+window (the live path has nothing to deliver to anyway; shadow logging is purely
+informational and the raw `"ACL broadcast: ..."` `SERVICE` entry already proves the
+receiver saw the event).
+
+Ruled out earlier in the investigation, still true: the BT master switch
+(`fmc_bluetooth_v1`) is confirmed on every session (`"app init: starting Bluetooth
+watch (master switch is on)"` logs each time), and `BLUETOOTH_CONNECT` is reported
+granted on every session. The `BluetoothAdapter.ACTION_STATE_CHANGED` diagnostic
+logging added mid-investigation stays in place — it's cheap, harmless, and remains
+useful for distinguishing a future "broadcasts blocked entirely" report from this
+now-fixed "service died" one.
+
+**Resolved: real, previously-shipped bug — background location needs a
+`location`-typed foreground service, which this service never declared.** The single
+root cause of "GPS drive-away detection never fires while the app is closed, only the
+instant I reopen it." From Android 10 (API 29) onward, an app may only receive
+location updates while it is not in the foreground if **either** it holds
+`ACCESS_BACKGROUND_LOCATION`, **or** the updates come from a foreground service
+declared with the `location` foreground-service type. `ParkingForegroundService` had
+neither: the manifest declared `foregroundServiceType="connectedDevice|specialUse"`
+and `resolveForegroundServiceType()` never returned a `LOCATION` bit. So
+`updateLocationWatch()`'s `LocationManager.requestLocationUpdates()` call succeeded,
+logged `"GPS watch started (provider=gps)"`, and then silently stopped delivering the
+moment the Activity left the foreground — which is precisely the window the whole
+feature exists for. The diagnostic log matches exactly: across every report, a
+`GPS-SHADOW` decision only ever appeared within a second or two of the app being
+opened, and never once during an actual drive with the app closed.
+
+**Fix**: the manifest now declares `foregroundServiceType="connectedDevice|specialUse|location"`
+plus the `FOREGROUND_SERVICE_LOCATION` permission (required on Android 14+ for that
+type), and `resolveForegroundServiceType()` OR-combines the types instead of picking
+one — `LOCATION` when fine/coarse location is granted, `CONNECTED_DEVICE` when
+`BLUETOOTH_CONNECT` is, falling back to `SPECIAL_USE` only when neither is (the one
+type with no runtime prerequisite). Each bit must be gated on its own permission
+check: Android 14+ throws from `startForeground()` if a declared type's prerequisite
+isn't granted, and this service starts on **every** parking save, so an unguarded
+type would crash the app rather than degrade. `ACCESS_BACKGROUND_LOCATION` is
+deliberately **not** requested — a `location`-typed foreground service is the
+documented way to do exactly this, without the "Allow all the time" prompt and the
+Play Store policy scrutiny that permission carries.
+
+Because the service starts on every parking save while the location permission is
+normally granted slightly later during app init, `onCreate()`'s `startForeground()`
+often picks a type *without* the location bit. `updateLocationWatch(true)` therefore
+calls `refreshForegroundServiceType()` first — re-invoking `startForeground()` with a
+freshly resolved type, the documented way to add a type to an already-running FGS —
+so the watch never starts under a stale type that would silently withhold updates.
+
+**Resolved: real, previously-shipped bug — the `location` type made the service fail
+to start at all from a background context, which is exactly where the boot/update
+restart runs.** The fix directly above and the one directly below shipped together in
+v1.36.3, and each broke the other. From the production log, twice — once after
+`MY_PACKAGE_REPLACED`, once after `BOOT_COMPLETED`:
+
+```
+SERVICE  received android.intent.action.BOOT_COMPLETED — checking whether to restart
+SERVICE  restarting foreground service after boot/update (reasons=[parking, bluetooth])
+SERVICE  onCreate FAILED — Starting FGS with type location ... targetSDK=34 requires
+         permissions: all of [FOREGROUND_SERVICE_LOCATION] any of
+         [ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION] **and the app must be in the
+         eligible state/exemptions to access the foreground only permission**
+```
+
+That final clause is the whole bug. Holding `ACCESS_FINE_LOCATION` is necessary but
+not sufficient: without `ACCESS_BACKGROUND_LOCATION` (which this app deliberately
+never declares), location is a **foreground-only** permission — the app only actually
+holds it while it has while-in-use capability. `ServiceRestartReceiver` starts the
+service from a background broadcast, so there is no while-in-use capability,
+`startForeground()` threw, and `onCreate()`'s single surrounding try/catch took down
+**the entire service** — BT receiver never registered, heartbeat never started,
+`stopSelf()`. From boot until the user next opened the app by hand: nothing.
+
+The restriction applies to **starting or updating** the service, not to keeping it
+running — a location-typed service started while the app is visible keeps delivering
+updates after it is backgrounded, which is what makes drive-away detection work at
+all. Only the start is gated.
+
+**Fix, in three parts** (one alone would leave a sharp edge):
+
+1. `canStartLocationType()` gates the `LOCATION` bit on `MainActivity.isForeground()`,
+   so a background start simply comes up without that type. That is far better than
+   not coming up: Bluetooth detection works immediately, and location joins later.
+2. `startForegroundResilient()` retries with `specialUse` (the one type with no
+   runtime prerequisite) when the preferred type is rejected, so a type Android
+   refuses costs that type and nothing else. This is the structural half: this
+   sandbox cannot compile or run Android, OEM builds enforce these rules with their
+   own variations, and a future mistake of this kind must degrade one capability
+   rather than produce another total outage.
+3. `onAppForegrounded()` (from `MainActivity.onResume()`) upgrades the type and
+   restarts the watch once the app is visible. Without it, a service started at boot
+   would run without the location type *forever*, since nothing else re-resolves the
+   type for an already-running service whose `"parking"` reason never transitions
+   again.
+
+The `SERVICE` log now also distinguishes "GPS watch started" from "started BUT the
+location foreground-service type is not active" — `requestLocationUpdates()`
+succeeding never meant updates would arrive, and logging bare success there is the
+same species of misleading signal that cost days of diagnosis before.
+
+**Resolved: real, previously-shipped bug — adding the `location` type to an
+already-running service does NOT grant background-location capability.** The fix
+directly above (v1.37.1) made the service start successfully from a background
+context by dropping the `location` bit, and had `onAppForegrounded()` re-add it
+later via `refreshForegroundServiceType()`. `startForeground()` accepted the new
+type without error, `canStartLocationType()` returned true, and the log dutifully
+printed the plain "GPS watch started". **Not one location fix was ever
+delivered.** From the production log — a service alive continuously through 1h40m
+of driving:
+
+```
+16:18:12  restarting foreground service after boot/update   ← background context
+16:18:12  onCreate succeeded — foreground service running (type=16)
+16:35:48  GPS watch started (provider=gps)                  ← believed healthy
+16:36:30 … 18:16:30  heartbeat × 20 (reasons=[bluetooth, parking])
+18:17:01  [WEB] showing end-parking suggestion              ← 1s after app open
+```
+
+Zero `GPS-PENDING`, zero notifications, and the suggestion fired one second after
+the app was opened — i.e. from the live `watchPosition` path, never from the
+Service's own watch.
+
+**The rule**: an FGS's while-in-use location capability is bound to the moment it
+**entered** the foreground state. A service that entered from a background
+broadcast never holds it, and re-calling `startForeground()` with the `LOCATION`
+bit added does not grant it retroactively — Android accepts the type change
+silently and keeps withholding updates. So every signal the app had said
+"location type active" while the OS delivered nothing.
+
+**Fix**: `startedWithLocationType` records whether the `LOCATION` bit was present
+at start time (distinct from `currentType`, which is merely what is declared
+now). When the app comes to the foreground with a parking active and location
+granted, but the service entered foreground without that bit,
+`onBecameEligibleForLocationType()` **fully restarts the service**
+(`restartFromForeground()`) so it re-enters the foreground state from a
+foreground context and genuinely acquires the capability. Guarded by
+`locationRestartAttempted` — one attempt per process, since a restart loop would
+be worse than the bug. `restoreReasons()` rebuilds `activeReasons` on the new
+instance, so the bounce loses nothing.
+
+**The diagnostic gap this exposed matters as much as the bug.** "GPS watch
+started" only ever proved the *request* was accepted. Three visually identical
+log signatures had completely different causes: the watch not running, the watch
+running but the OS delivering nothing, and fixes arriving with no threshold
+crossed. The heartbeat now carries `fgsType=`, `+loc@start`/`NO-loc@start`,
+`gpsFixes=`, `lastFix=` and `dist=` — folded into the existing 5-minute entry, so
+it costs nothing against `NativeLogStore`'s 200-entry cap and makes the three
+cases decidable from a single line. **Prefer enriching an existing periodic log
+line over adding a new category** when the question is "is this actually
+working," precisely because per-event logging here would blow the cap during one
+drive.
+
+**If `gpsFixes=0` persists even with `+loc@start`**, the remaining lever is
+`ACCESS_BACKGROUND_LOCATION` (currently, deliberately, not declared — see the
+section above). That would make the capability unconditional and independent of
+how the service started. It is held back on purpose so that this fix can be
+judged on its own evidence rather than two speculative changes shipping together.
+
+**The wider lesson for this file**: two fixes that are each correct in isolation can
+be mutually exclusive in the one scenario that matters. Both v1.36.3 fixes were
+verified — separately. Nothing exercised "restart from boot *with* a parking active,"
+which is the only path where the location type and the background start collide.
+
+**Resolved: real, previously-shipped bug — the service's `activeReasons` never
+survived process death, and nothing ever restarted it after a reboot or an app
+update.** `activeReasons` is plain in-memory static state, and *every*
+`setReasonActive()` caller is a Capacitor `@PluginMethod` — i.e. reachable only while
+the app is actually open. So after any process restart (an OEM background killer, an
+OOM kill, a reboot, an APK update) the set came back empty, and nothing short of the
+user reopening the app could repopulate it. Two concrete failures followed: (1) a
+`START_STICKY` restart brought the service back with its BT receiver registered but
+its GPS watch never started — `onCreate()` asked `isParkingReasonActive()`, which read
+the now-empty set — despite a parking being genuinely active in storage; (2) after a
+reboot or an app update, nothing started the service at all, so background detection
+stayed completely dead, with nothing in the diagnostic log to explain the silence
+(the service wasn't running, so it couldn't log its own absence either).
+
+**Fix**: `restoreReasons(context)` re-derives both reasons from the persisted mirror
+the widgets and native decision engines already read — `"parking"` from
+`KEY_HAS_PARKING`, `"bluetooth"` from the new `KEY_BT_ENABLED` — and is called from
+both `onCreate()` and `onStartCommand()` (which `START_STICKY` re-invokes on restart).
+It is additive on purpose: it only fills in what a process restart lost, never clears
+a reason a live JS call has since set. A new `ServiceRestartReceiver` handles
+`BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`, calling
+`ParkingForegroundService.startIfNeeded()` — which restores the reasons and starts the
+service only if there's genuinely something to run for. Starting a foreground service
+from those two broadcasts is explicitly exempt from Android 12+'s
+background-FGS-start restriction. **The BT master switch had to start being mirrored
+for any of this to work**: `KEY_BT_ENABLED` is new — `syncVehicles()` previously sent
+`gpsAutoEndEnabled` and `dailyStatusNotificationEnabled` but never the Bluetooth
+master switch, so native had no way to answer "should BT detection be running?"
+without the app being open.
+
+**Every settings toggle must call `#syncUI()`, for the same reason every parking
+mutation must.** A third instance of the same class of bug: the Bluetooth master
+switch, the per-vehicle BT toggles, the "apply to all vehicles" action, and the GPS
+auto-end toggle all wrote to `localStorage` and re-rendered their own modal, but
+never re-synced. Since the native decision engines (`BtDecisionEngine` via the
+`vehicles_json` mirror, `GpsDecisionEngine` via `KEY_GPS_AUTO_END_ENABLED`) read
+*only* that mirror when the app is closed, a setting the user had just changed was
+not the one acting on their next real background event — the mirror stayed stale
+until some unrelated parking-state change happened to sync it. All four call sites
+now call `this.#syncUI()` immediately after the `Store.set`/`VehicleController`
+write, matching what the daily-status toggle already did.
 
 **Battery optimization can silently disable everything, without a force-kill.** A
 foreground service keeps the *process* alive, but does not by itself guarantee
@@ -780,6 +1038,296 @@ solve OEM-specific background killers (Xiaomi's "autostart" permission, Huawei's
 "protected apps," Samsung's "put app to sleep," etc., and the "Don't keep activities"
 developer option) — those have no public API to query or toggle from an app, and
 remain something only the user can find in their device's own settings.
+
+### Vehicle-movement detection (`GpsDecisionEngine` + `#checkGpsSpeed`/`#checkGpsDistance`)
+
+**Real, previously-shipped false positive (v1.40.0)**: walking produced the
+"🚗 מזוהה נסיעה" suggestion. Everything above this section is about making
+detection *fire*; this is the first bug about it firing when it shouldn't.
+
+**The culprit is not the one the symptom points at.** GPS end-suggestion has two
+independent triggers, and the speed one was never involved — walking is ~1.4 m/s
+against a 7 m/s threshold. `#checkGpsDistance` had **no speed condition at all**:
+being 300m from the parked car was sufficient, however you got there. It was
+written that way deliberately, to catch movement the speed check misses on devices
+with unreliable `coords.speed` — but "no speed condition" also means "on foot
+counts". Raising the speed bar alone would have left the reported bug exactly
+where it was, so the fix does both halves:
+
+- **Speed threshold 13.9 m/s (50 km/h)**, well past any walking or cycling speed,
+  so a single sample crossing it is real evidence of a vehicle.
+- **Distance requires corroborating evidence** — `CFG.gpsVehicleEvidenceMs` (10s)
+  accumulated above that threshold — before it may fire at all. Seconds, not
+  minutes, so it still fires promptly on a real drive (it remains the trigger that
+  catches most real departures, long before the speed trigger's own duration is
+  reached) while staying unreachable on foot. A short accumulation rather than
+  "any one sample above threshold" also tolerates a single spurious GPS spike.
+- **Accumulated, not continuous.** `speedAccumMs`/`#state.gpsSpeedAccumMs` is total
+  time observed at vehicle speed, not a "sustained since" timestamp. A continuous
+  timer resets at every red light, which would make the 2-minute speed requirement
+  nearly unreachable in city driving. A below-threshold sample therefore never
+  clears the accumulator — a stop at a light does not make the preceding driving
+  un-happen.
+- **Speed is derived when the platform reports none.** `GpsDecisionEngine
+  .effectiveSpeed()` / `#effectiveSpeed()` fall back to Δdistance/Δtime between
+  consecutive fixes. This is what makes requiring speed evidence safe: the original
+  justification for leaving distance unconditional was precisely that
+  `coords.speed`/`Location.hasSpeed()` is absent or a hard 0 on many real devices.
+
+**Three details that are load-bearing, each of which silently breaks the feature
+in a different direction if changed:**
+
+1. **An unknown speed is ignored entirely — the sample clock included.** Unknown is
+   not evidence of having been stationary, and advancing `lastSampleAt` on an
+   unknown sample would shrink the interval credited to the next *known* one. Since
+   a derived speed represents the time since the last known reading (not since the
+   last fix of any kind), doing that would under-count accumulated evidence by
+   roughly the fix rate — a drive would accumulate at a fraction of real time and
+   the 2-minute threshold would take far longer than 2 minutes of driving.
+2. **`sampleCapMs` (15s) caps any single sample's contribution.** Without it a long
+   gap with no fixes (app suspended while parked) followed by one fast sample dumps
+   the entire gap into the accumulator and fires immediately.
+3. **`gpsDerivedSpeedMinIntervalMs` (5s) is the minimum interval a speed may be
+   *derived* over, and the caller must hold its previous-fix baseline until the
+   interval reaches it.** Consecutive fixes a second apart are dominated by GPS
+   jitter — 20m of error over 1s reads as 20 m/s, past the vehicle threshold — so
+   deriving over a short interval fabricates exactly the vehicle evidence this
+   whole change exists to require. And if the caller advanced the baseline on every
+   fix instead, every interval would stay at the update period and derivation would
+   be permanently unavailable. The guard lives in the engine; the baseline-advance
+   policy lives with the caller's own state, in both languages.
+
+**Second round (v1.41.0) — evidence has to expire.** Once accumulated it
+stayed valid for the whole parking session, so one ride early on left the
+distance trigger armed for a plain walk hours later — the original bug
+returning by a different route. Evidence now expires after
+`gpsEvidenceTtlMs` (10 min) with no further above-threshold sample. At 25 km/h
+a real departure covers the 300m distance threshold in under a minute, so the
+TTL is enormously generous for the real case and tight for the false one.
+
+**Expiry is checked before the unknown-speed early return**, and that ordering
+is load-bearing: going stale is a function of elapsed time, not of whether this
+particular fix carried a usable speed. Moving it below that return would leave
+stale evidence alive indefinitely on a device that rarely reports speed.
+
+**Third round (v1.42.0) — the threshold was set from intuition, and it broke
+real detection. Read this before touching `gpsSpeedThreshold` again.**
+v1.40.0 raised the vehicle-speed bar to 13.9 m/s (50 km/h) because 50 km/h
+"obviously means driving". v1.41.0 then also required the first such sample to
+occur within 150m of the parked car, to tell "this car left" from "the user
+took a train". Both ideas are intuitive, and production diagnostic-log evidence
+from one real drive killed both:
+
+```
+18:06:30  dist=17m     gpsFixes=43  vehEvid=0s   ← got into the car
+18:11:30  dist=1031m   gpsFixes=74  vehEvid=0s   ← a full km driven, no evidence
+18:16:30  dist=1982m   gpsFixes=70  vehEvid=11s  ← only now, 2km out
+```
+
+1031m in five minutes is a 12 km/h average — ordinary city traffic, which
+barely touches 50 km/h. The distance trigger therefore stayed disarmed while
+the driver was already a kilometre away, and the suggestion finally fired ten
+minutes late; the user had given up and ended the parking by hand. The
+departure anchor would have made it permanent: the first 50 km/h sample
+happened well past 1km from the car, far outside any sane radius, so the
+trigger would never have armed at all.
+
+**The rule this leaves**: the speed bar's only job is to exclude walking
+(~1.4 m/s) and running (~3-5 m/s). It is back to 7 m/s (25 km/h) and must not
+be raised toward "a proper driving speed" — that is not what it is for, and a
+drive spends most of its time below it. The departure anchor is gone entirely:
+**a gate that can permanently disarm detection is the wrong trade for this
+app.** A missed real departure is the failure users actually report, over and
+over; the false positive the anchor guarded against is rarer and already
+limited by the TTL. Prefer a fix that degrades to "fires a bit more often than
+ideal" over one that can degrade to "never fires".
+
+**Two implementations, no shared source** — `GpsDecisionEngine.kt` (the native
+watch, which is what runs while the app is closed) and `js/app.js` (the live
+`watchPosition` path). The six constants are duplicated between `js/config.js` and
+`ParkingForegroundService.kt`, same as every other JS/Kotlin constant pair here;
+the release-checklist skill checks them against each other, because a drift is
+invisible — both sides keep working and just decide differently depending on
+whether the app happened to be open.
+
+The heartbeat line carries `vehEvid=` (accumulated evidence, in seconds) alongside
+the existing `gpsFixes=`/`dist=`, so "fixes arrive, distance is large, nothing was
+suggested" is decidable from one line rather than being the new ambiguous silence.
+
+**Unchanged**: the suggestion still always requires confirmation and never ends a
+parking by itself, and the 300m distance threshold is the same as before.
+
+### Notification action buttons (confirmations answerable from the shade)
+
+The two notifications that ask the user to *decide* something — GPS "the car
+seems to have moved" and Bluetooth "you connected, end the parking?" — used to
+be purely informational, with body text that literally said "open the app to
+confirm". That is the wrong thing to ask of someone who is driving: it is a
+one-tap decision and it belongs in the shade. Both now carry **סיים חניה** and
+**התעלם** buttons.
+
+**One headless path, not two.** The buttons route through the same
+`performWidgetAction()` / `WidgetActionReceiver` the widgets already use, rather
+than a second notification-specific mechanism. That inherits, for free: silent
+switching to a non-active vehicle, the per-action guard when the parking was
+already ended, the result notification, and — critically — the
+`PendingWidgetActionStore` fallback, so a button pressed while the app is fully
+killed is replayed on the next resume exactly like a widget tap.
+
+**Two delivery mechanisms, because there are two real states:**
+
+- **App alive but backgrounded** (the common case while driving, since
+  `KeepRunning` + the foreground service keep the WebView's JS running):
+  `js/notify.js` schedules through `@capacitor/local-notifications` with
+  `actionTypeId: Notify.CONFIRM_END` and `extra.vehicleId`.
+  `Notify.registerActionTypes()` must run before any such notification is
+  scheduled — Android silently drops actions for an unregistered type — so
+  `#initNotificationActions()` registers it and the listener once from
+  `#init()`. The listener ignores `dismiss` and a plain `tap`; only `end` acts.
+- **App fully killed**: `BackgroundAlertNotifier.show(..., actions)` builds the
+  same two buttons as real `NotificationCompat` actions whose `PendingIntent`s
+  target `WidgetActionReceiver`. Each button's request code must be
+  `notifId + index` — a shared request code makes Android reuse one
+  `PendingIntent` for every button, so both would perform whichever was created
+  last.
+
+**`ACTION_DISMISS` lives in `WidgetActionReceiver`** rather than a second
+receiver, so every notification button goes through exactly one path; it cancels
+the notification and returns before any WebView work. Cancellation happens for
+*every* button (via `EXTRA_NOTIFICATION_ID`) before the action runs, so
+answering from the shade always clears the question even if the action itself
+then fails.
+
+**The in-app modal must close too**: `gpsEndModal`/`btParkingModal` are stale the
+moment the question is answered from the shade, so the action handler closes
+both — otherwise the user returns to the app and is asked something they already
+decided.
+
+**Why an in-app modal is still correct sometimes**: `#notifyIfBackground()`
+deliberately suppresses the notification when `document.visibilityState ===
+'visible'`. A report of "the suggestion appeared in the app, not the shade" is
+expected behavior *if* it fired while the app was open — which is exactly what a
+suggestion firing one second after app launch looks like. That is a different
+symptom from the notification never arriving during the drive at all, and the
+two must not be conflated when reading a log.
+
+### Widget liveness dots (`widgets/WidgetStatus.kt` + `WidgetStatusRefresher.kt`)
+
+Three consecutive bugs — the service stopping when the app closed with no
+parking; background location silently withheld without a `location`-typed FGS;
+that same type then killing the service outright on a boot restart — all
+produced the *identical*, completely silent symptom: nothing happens. Each was
+only diagnosable by exporting the diagnostic log and reading it line by line.
+Every widget now carries two small tinted icons (GPS, Bluetooth) that make that
+state visible from the home screen.
+
+**Four states, not two — this is the load-bearing decision.** A red dot for
+something the user deliberately turned off would be a lie, and would teach them
+to ignore the dot entirely, costing exactly the users who later need it. Same
+discipline as the setup guide's "cannot verify" badge:
+
+- **GREEN** working as intended.
+- **AMBER** running but degraded in a way that matters — specifically the GPS
+  watch is active while the `location` FGS type is NOT, so Android withholds
+  every update whenever the app isn't visible. That is the v1.37.1 post-reboot
+  state, and it is invisible in every other way: the service looks alive and the
+  watch reports "started."
+- **RED** should be running and isn't. The only state meaning something is wrong.
+- **GRAY** deliberately off, or nothing to do right now (no active parking).
+  Never a fault.
+
+**Where the truth comes from**: `ParkingForegroundService` writes
+`KEY_GPS_WATCH_ACTIVE` / `KEY_GPS_LOCATION_TYPE_ACTIVE` / `KEY_BT_RECEIVER_ACTIVE`
+/ `KEY_SVC_HEARTBEAT_AT` at the same points it already logs to `NativeLogStore`
+— alongside, never instead of — so the diagnostic log and the dots cannot
+disagree about what happened. Service liveness itself is read directly from
+`ParkingForegroundService.isRunning`, a static in the same process: a running
+foreground service keeps that process alive, so a genuine `true` has no
+staleness, and if the process had to be started just to render the widget,
+`false` is the correct answer rather than a stale one.
+
+**Refresh cadence, honestly**: `updatePeriodMillis` is floored at 30 minutes by
+Android, so this uses `AlarmManager`. The scheduled interval is 2 minutes, but
+`setExactAndAllowWhileIdle` is granted roughly once per 9-15 minutes per app in
+Doze — so on a pocketed phone the real cadence degrades to that, and nothing
+here claims otherwise. That is acceptable by construction: the dots describe a
+condition that changes on the scale of app launches and reboots, not seconds.
+The alarm exists only while at least one widget is placed
+(`WidgetStatusRefresher.scheduleOrCancel()` re-counts across all three providers
+on every `onUpdate`/`onEnabled`/`onDisabled`), because waking the CPU every two
+minutes for a widget nobody has placed is pure battery cost.
+
+**`syncVehicles()` must repaint too**: `WidgetDataPlugin.refreshWidgets()` only
+targets the two data-driven providers and only runs from `update()`/`clear()`,
+so a settings change alone would leave the dots showing the previous setting
+until an unrelated parking event. `syncVehicles()` therefore calls
+`WidgetStatusRefresher.refreshAll()` directly — the native counterpart of the
+rule that every settings toggle must call `#syncUI()`.
+
+### OEM background-restriction setup guide (`js/oem-setup.js` + `OemSetupPlugin.kt`)
+
+Everything above fixes what this app controls. The battery-optimization section
+directly above names what it doesn't: OEM-specific background killers with no
+public API. This feature is the practical answer to "then where do I turn those
+on?" — a step list in Settings ("הגדרת זיהוי ברקע") that opens each device
+screen directly instead of leaving the user to hunt for a toggle whose name
+changes between ROM versions.
+
+**The load-bearing distinction — verifiable vs. openable.** Conflating these
+would make the guide actively harmful, since its entire value is that a user
+who has been chasing an invisible problem for days can believe what it says:
+
+- **Verifiable** (`OemSetupPlugin.status()` reports these truthfully, re-read
+  every time the guide opens): the standard battery-optimization exemption
+  (`PowerManager.isIgnoringBatteryOptimizations`), location (including whether
+  it's `ACCESS_FINE_LOCATION` specifically — coarse-only silently degrades
+  drive-away detection), `POST_NOTIFICATIONS` (API 33+), `BLUETOOTH_CONNECT`
+  (API 31+). Both version-gated ones report `true` below their API level,
+  which is correct there, not a lie.
+- **Openable but never verifiable**: MIUI's "Autostart" permission and the
+  OEM's own per-app battery policy. **No API exists to read either.**
+  `status()` therefore reports `autostartAvailable`/`oemBatteryAvailable`
+  ("can we open that screen at all?") and deliberately never anything named
+  `granted`. The JS side stores the user's own "I did this" confirmation in
+  `CFG.keys.oemSetup` and renders it as exactly that — their word, badge
+  "לא ניתן לבדוק", not a verified fact.
+- **Neither**: locking the app in Recents is a launcher gesture with no API
+  and no launchable screen, so it has no method in the plugin at all — only an
+  instruction in the guide.
+
+**Why the OEM screens open at all**: each vendor ships a settings Activity
+(`com.miui.securitycenter/...AutoStartManagementActivity` and friends) that can
+be launched directly. These component names are unofficial and version-specific
+by nature, so `OemSettingsIntents` resolves first, wraps `startActivity` in
+try/catch anyway, and **always falls back** to the app's own system settings
+page — which always exists. Every launch returns `opened`/`fallback`/`failed`
+and `js/app.js` surfaces `fallback` as a toast, because a screen that silently
+doesn't appear is indistinguishable from a bug, which is the exact failure mode
+this feature exists to eliminate. MIUI additionally gets a second chance via the
+action-based `miui.intent.action.APP_PERM_EDITOR`, which survives Activity
+renames across MIUI versions.
+
+**`<queries>` in the manifest is required, not optional**: under Android 11+
+package-visibility filtering, `resolveActivity()` cannot see those OEM packages
+without an explicit `<queries>` entry, so `autostartAvailable()` would always
+return false and the guide would wrongly tell a Xiaomi user their device has no
+Autostart screen. Launching still works via try/catch either way — the
+`<queries>` block exists purely so the guide can tell the truth *before* the
+user taps. Deliberately an explicit package list rather than
+`QUERY_ALL_PACKAGES`, a restricted permission needing Play Store justification
+and wildly disproportionate here.
+
+**Auto-show discipline**: `shouldAutoShow()` returns true only while something
+is genuinely outstanding *and* the user hasn't dismissed it. A guide that
+reappears after everything is handled trains people to dismiss it reflexively,
+which costs exactly the users who most need it later. It opens on a timer after
+the loading screen fades (it's a modal over the main UI, not part of startup)
+and is never awaited during `#init()`.
+
+**No-op in the browser by construction**: `OemSetup.isSupported()` is false
+without the plugin, so the Settings entry point stays hidden on the PWA rather
+than opening a modal with nothing in it — consistent with every other
+native-only capability here.
 
 ### Native background detection (`core` package) — in-progress migration
 
@@ -867,8 +1415,10 @@ small, independently-tested, non-breaking stages:
    verified manually/via the diagnostic log on a real device. The speed/distance/
    duration threshold constants are duplicated as Kotlin constants in
    `ParkingForegroundService` (there is no single shared source between JS and
-   Kotlin) — keep them in sync with `js/config.js`'s `CFG.gpsSpeedThreshold`/
-   `gpsSpeedDuration`/`gpsDistanceThreshold` if those ever change.
+   Kotlin) — keep all five in sync with `js/config.js`'s `CFG.gpsSpeedThreshold`/
+   `gpsSpeedDuration`/`gpsVehicleEvidenceMs`/`gpsSpeedSampleCapMs`/
+   `gpsDerivedSpeedMinIntervalMs`/`gpsDistanceThreshold` if those ever change
+   (see "Vehicle-movement detection" above).
 5. **✅ Done**: `BluetoothClassicPlugin.maybeRecordPendingAction()` — the first half of
    flipping Bluetooth to live, split out the same way Bluetooth's engine (step 1) and
    GPS's engine (step 3) preceded their own wiring steps. On every real
@@ -1120,7 +1670,12 @@ round-trip, before the next stage builds on it.
 - [ ] Bluetooth: global toggles in BT settings screen apply to all linked vehicles
 - [ ] Bluetooth: per-vehicle toggles in BT settings screen work independently
 - [ ] Bluetooth: unlink device from vehicle removes all auto-behavior
-- [ ] GPS: walking >300m away from a parked car with GPS auto-end enabled shows the end-parking suggestion (confirmation only, does not auto-end)
+- [ ] **GPS (v1.40.0): walking >300m away from a parked car must NOT show the end-parking suggestion** — this is the false positive the vehicle-evidence gate exists to stop. Driving >300m away still shows it (confirmation only, never auto-ends), and should do so within a minute or so of setting off, not only after the full 2-minute speed accumulation
+- [ ] GPS (v1.40.0): drive away, then check the diagnostic log's `GPS` category — a "vehicle-speed evidence reached" entry should appear before the suggestion. If the suggestion never fires on a real drive, that entry is the discriminator: absent means no sample ever crossed 50 km/h (a speed-reporting/derivation problem), present means the trigger is armed and the distance threshold simply wasn't crossed yet. The entry also prints how far from the car the evidence was credited — it should be a small number (tens of metres), since that is the departure anchor doing its job
+- [ ] GPS (v1.41.0): with a parking active, ride somewhere and come back, then wait 10+ minutes and walk 300m away — no suggestion, and the `GPS` category shows "vehicle-speed evidence expired (stale)". Without the TTL, that earlier ride would leave the walk armed for the rest of the parking session
+- [ ] **GPS (v1.42.0 — the regression that mattered): drive away in ORDINARY CITY TRAFFIC, not on a highway.** The suggestion must appear within a minute or two of setting off. Check a `SERVICE` heartbeat during the drive: `vehEvid` must be growing while `dist` grows. `vehEvid=0s` at `dist=1000m` is the exact v1.40.0/v1.41.0 failure — it means the speed bar is above real traffic speed again, and the distance trigger is disarmed for the whole drive
+- [ ] **Android APK (v1.42.0): tap a widget action while the app is COLD (killed, or just launched and still loading).** It must either happen immediately or show "יבוצע כשהאפליקציה תיפתח מחדש" and then actually apply on the next open — never nothing at all. The diagnostic log's `WIDGET` category must contain either a `performWidgetAction(...)` line or a "queued widget action ... for replay" line for every single tap; a tap with no line either way is the silent black hole returning
+- [ ] Android APK (v1.42.0): tap a widget action once and confirm exactly ONE parking is saved and ONE notification posted — two of each means the dedupe guard regressed
 - [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
 - [ ] Android APK: installing a new build over an already-installed older build works without uninstalling first
@@ -1159,4 +1714,33 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK: to verify without waiting a full day — `adb shell am broadcast -a com.ohadsam.findmycar.ACTION_DAILY_STATUS -n com.ohadsam.findmycar/.DailyStatusReceiver` fires the notification immediately and reschedules for tomorrow's target hour; check the diagnostic log's `DAILY` category for the matching "shown"/"skipped" entry
 - [ ] Android APK: reboot the device with the global toggle ON, then check (after boot, without opening the app) that the diagnostic log's `DAILY` category — once merged in on next app open — shows a "boot: rescheduling" entry, confirming the alarm survives a restart instead of silently going dead until the app is reopened
 - [ ] Android APK: the "FindMyCar — סטטוס יומי" notification is visible directly in the shade with a sound/heads-up on arrival (DEFAULT importance, not silent like the persistent parking/background notifications) — since the whole point is for the user to notice it landed
-- [ ] Android APK: connect/disconnect a real Bluetooth device (ideally the one linked to a vehicle) while the app is backgrounded — the diagnostic log's `SERVICE` category should show an "ACL broadcast: ..." entry for each; if it shows "Bluetooth adapter state changed: ..." entries but no ACL entries at all, that's the open investigation above (broadcasts reach the app in general, but not ACL/device-level ones) — report both kinds of entries (or their absence) if this still doesn't produce a notification
+- [ ] Android APK: connect/disconnect a real Bluetooth device (ideally the one linked to a vehicle) while the app is backgrounded — the diagnostic log's `SERVICE` category should show an "ACL broadcast: ..." entry for each; if it ever shows "Bluetooth adapter state changed: ..." entries but no ACL entries at all, broadcasts reach the app in general but not ACL/device-level ones specifically — report that pattern if seen
+- [ ] Android APK: with NO active parking, enable the Bluetooth master switch in Settings, then fully close the app (swipe from Recents) for several minutes — reopen it and check the diagnostic log's `SERVICE` category: it should show continuous heartbeats the whole time (no "onDestroy — foreground service stopped" / fresh "onCreate succeeded" pair in the middle), proving the foreground service and its BT receiver stayed alive the entire time the app was closed, independent of whether any parking was active — this is the real, previously-shipped bug ("Resolved" in CLAUDE.md): the service used to fully stop the moment the app closed with no active parking, killing all background BT detection until reopened
+- [ ] Android APK: with NO active parking and the app fully closed (as above), connect/disconnect the linked Bluetooth device — a native notification ("🚗 חניה הסתיימה אוטומטית" or "🅿️ חניה חדשה תישמר בפתיחה הבאה") should appear even though no Activity/WebView was alive to handle it live; reopening the app should then actually apply the action (new parking saved, or existing one ended) — the diagnostic log's `BT-PENDING` category should show the recorded+replayed entry
+- [ ] **Android APK (the GPS background fix): with an active parking and GPS auto-end ON, close the app fully and drive/walk past the 300m threshold. A "🚗 מזוהה נסיעה" notification must arrive WHILE STILL AWAY — not only on reopening the app.** On reopening, the `SERVICE` category should show `GPS watch started (provider=...)` from before the drive, `GPS-SHADOW` entries with timestamps from DURING it, and `GPS-PENDING` showing the recorded+replayed suggestion. If `GPS-SHADOW` entries only ever appear within a second or two of an app open and never during the drive itself, that is the location-typed-foreground-service regression (see CLAUDE.md "background location needs a `location`-typed foreground service"), not a GPS-hardware or threshold problem
+- [ ] Android APK: reboot the device (with either an active parking or the Bluetooth master switch on), and WITHOUT opening the app, check the notification shade — "FindMyCar פעיל ברקע" should reappear on its own within a minute or so of boot; on next app open the `SERVICE` category should show a "received android.intent.action.BOOT_COMPLETED" entry followed by "restarting foreground service after boot/update". On Xiaomi/MIUI this specifically requires the app's "הפעלה אוטומטית" (Autostart) setting to be enabled — the receiver is otherwise blocked by the OEM before Android ever delivers the broadcast
+- [ ] Android APK: install a new build over an existing one and, WITHOUT opening the app, confirm the same thing happens via `MY_PACKAGE_REPLACED` (the app update kills the process, so without this the service would stay dead until first launch — which is exactly what made every previous "I updated and it still didn't detect anything for days" report start from a dead service)
+- [ ] Android APK: change a Bluetooth setting (master switch, a per-vehicle toggle, or "apply to all") or the GPS auto-end toggle, then immediately close the app and trigger the corresponding real event — the setting you just changed must be the one that takes effect, not the previous value (all four toggles re-sync the native mirror immediately; a regression here is invisible in-app and only shows up in background behavior)
+- [ ] Android APK (setup guide): on a device with outstanding settings, the "הגדרת זיהוי ברקע" modal opens by itself a couple of seconds after launch; once every step is either verified-OK or manually confirmed, it stops opening by itself but stays reachable from Settings
+- [ ] Android APK (setup guide) on a Xiaomi/MIUI device: the "הפעלה אוטומטית (Autostart)" step is present, and its button opens MIUI's real Autostart list — NOT the generic app-info page. If it opens app-info instead, a `fallback` toast appears saying so (never a silent wrong screen), which means the component name changed in this MIUI version and `OemSettingsIntents.AUTOSTART_COMPONENTS` needs a new entry
+- [ ] Android APK (setup guide): the Autostart and OEM-battery steps show the badge "לא ניתן לבדוק" with a self-confirm checkbox — never "תקין" on their own. Toggling a checkbox flips that step to "תקין" and survives reopening the guide; nothing about them ever claims to have been verified by the app
+- [ ] Android APK (setup guide): revoke the notification (or Bluetooth) permission from system settings, reopen the guide, and confirm that step flips back to "דורש טיפול" on its own — the verifiable steps must re-read live state on every open, not cache a past result
+- [ ] Android APK (setup guide): grant location as "approximate" only — the location step must still show "דורש טיפול" with the precise-location wording, since coarse-only silently degrades drive-away detection
+- [ ] Android APK (setup guide) on a Pixel/stock-Android device: the Autostart and OEM-battery steps are absent entirely (no such screens exist), and the guide shows only the verifiable steps plus the Recents-lock instruction — it must not list a step whose button could never work
+- [ ] PWA (setup guide): the "הגדרת זיהוי ברקע" section does NOT appear in Settings in the browser, and nothing throws — `OemSetup.isSupported()` is false without the native plugin
+- [ ] **Android APK (the boot/update regression fix, v1.37.1): with an active parking AND the Bluetooth master switch on, reboot the device. WITHOUT opening the app, check the notification shade — "FindMyCar פעיל ברקע" must appear on its own.** On next app open the `SERVICE` category must show "received android.intent.action.BOOT_COMPLETED", "restarting foreground service after boot/update", and then **"onCreate succeeded"** — NOT "onCreate FAILED". An `onCreate FAILED` mentioning `Starting FGS with type location` is this exact regression returning: the service claimed the location type from a background start, which Android 14 refuses without while-in-use location access (see CLAUDE.md). Repeat the same check after installing a build over an existing one (`MY_PACKAGE_REPLACED`) — the two paths fail identically and only one is usually tested
+- [ ] Android APK: after that boot, the `SERVICE` log's "GPS watch started" line should say the location type is NOT active (honest — the service came up in the background); then open the app and confirm a follow-up entry shows the type being upgraded, proving `MainActivity.onResume()` → `onAppForegrounded()` actually ran. Background GPS is only genuinely working from that point on
+- [ ] Android APK (widget liveness dots): with GPS auto-end ON, Bluetooth ON and a parking active, both dots on all three widgets are GREEN. Turn the Bluetooth master switch off in Settings — the Bluetooth dot must turn GRAY (not red: the user chose this) on the very next repaint, without waiting for a parking event
+- [ ] Android APK (widget liveness dots): end the parking — the GPS dot turns GRAY (nothing to watch), not red. With no parking AND GPS auto-end off, gray is the only correct color for it
+- [ ] Android APK (widget liveness dots): reboot the device and, WITHOUT opening the app, look at a widget — the GPS dot should be AMBER (service came up in the background, so the `location` FGS type could not be claimed; see CLAUDE.md). Open the app once and it must go GREEN. An amber dot that never resolves after opening the app means `onAppForegrounded()` isn't upgrading the type
+- [ ] Android APK (widget liveness dots): force-stop the app from app-info, then look at a widget — both dots RED (service genuinely not running). This is the one state that should alarm; confirm it never appears while everything is actually working
+- [ ] Android APK (widget liveness dots): remove every widget from the home screen, then check (via adb `dumpsys alarm | grep findmycar`) that the 2-minute refresh alarm is gone — it must not keep waking the device for widgets nobody has placed; re-adding a widget must re-arm it
+- [ ] Android APK (widget liveness dots): the dots never overlap or hide the "⋮" quick-actions button or the 🔁 cycle button on any of the three widgets, at both default and resized sizes
+- [ ] **Android APK (v1.38.1): the heartbeat's GPS summary is the primary diagnostic now.** With a parking active, check any `SERVICE` heartbeat line — it must carry `fgsType=`, `+loc@start` or `NO-loc@start`, `gpsFixes=`, `lastFix=` and `dist=`. During an actual drive with the app closed, `gpsFixes` must be non-zero and `dist` must grow. `gpsFixes=0` across several heartbeats while parked-and-driving means the OS is withholding location entirely — report that line verbatim, it is the whole diagnosis
+- [ ] Android APK (v1.38.1): install over an existing build (`MY_PACKAGE_REPLACED`, a background start → `type=16`, `NO-loc@start`), then open the app with a parking active. The `SERVICE` log must show "restarting service from the foreground to obtain background-location capability", followed by a fresh "onCreate succeeded — type=24", and subsequent heartbeats must read `+loc@start`. If it still reads `NO-loc@start` after that, the restart didn't take and background GPS cannot work
+- [ ] Android APK (v1.38.1): confirm the foreground restart happens at most ONCE per app run — repeated "restarting service from the foreground" entries in a single session mean `locationRestartAttempted` isn't holding, which would be a restart loop
+- [ ] Android APK (v1.39.0, notification buttons): with the app BACKGROUNDED (not killed) and a parking active, cross the GPS distance threshold — the "🚗 מזוהה נסיעה" notification must carry **סיים חניה** and **התעלם** buttons. Tapping סיים חניה must end the parking without opening the app, post a confirmation notification, and clear the original notification; reopening the app must NOT show a stale `gpsEndModal`
+- [ ] Android APK (v1.39.0): same for the Bluetooth "🚗 הגעת לרכב?" notification (connect to a linked device that has `bluetoothAutoEnd` OFF and an active parking) — buttons present, סיים חניה ends that specific vehicle's parking even if it isn't the active one
+- [ ] Android APK (v1.39.0): force-kill the app, then trigger the GPS suggestion — the native notification must still show both buttons, and סיים חניה must show the "יבוצע כשהאפליקציה תיפתח מחדש" Toast and actually apply on next open (diagnostic log `WIDGET` category shows the replay)
+- [ ] Android APK (v1.39.0): התעלם must clear the notification and do nothing else — no parking ended, no pending action recorded
+- [ ] Android APK (v1.39.0): the diagnostic log's `NOTIFY` category shows "registered notification action types" once at startup, and "scheduled native notification: ... (with actions: FMC_CONFIRM_END)" for each confirmation notification — a notification scheduled WITHOUT that suffix means the action type wasn't registered in time and the buttons will be silently missing

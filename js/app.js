@@ -13,6 +13,7 @@ import { NativeBluetoothController } from './bluetooth-native.js';
 import { WidgetBridge } from './widget-bridge.js';
 import { Notify } from './notify.js';
 import { DiagLog } from './diag-log.js';
+import { OemSetup } from './oem-setup.js';
 
 class FindMyCarApp {
   #state = {
@@ -32,7 +33,10 @@ class FindMyCarApp {
     vehicleDeleteId:      null,
     btPendingVehicleId:   null,  // vehicle awaiting end-parking confirmation
     btPendingLabel:       null,  // BT device label that triggered the confirm modal
-    gpsSpeedSince:        null,  // Date.now() when speed first exceeded threshold
+    gpsSpeedAccumMs:      0,     // ms ACCUMULATED at or above CFG.gpsSpeedThreshold this parking session
+    gpsLastSpeedSampleAt: null,  // Date.now() of the previous speed sample, for the interval above
+    gpsPrevFix:           null,  // {lat, lng, at} of the previous position fix, for deriving speed
+    gpsLastAboveAt:       null,  // Date.now() of the last above-threshold sample, for CFG.gpsEvidenceTtlMs expiry
     gpsEndSuggested:      false, // true after GPS end suggestion shown this session
   };
 
@@ -45,6 +49,9 @@ class FindMyCarApp {
     ? new NativeBluetoothController()
     : new BluetoothController();
   #wakeLock  = null;
+  // Last widget/notification action performed, for performWidgetAction()'s
+  // duplicate-delivery guard: {key, at, message}.
+  #lastWidgetAction = null;
   #ui;
   #returnModal;
 
@@ -125,6 +132,10 @@ class FindMyCarApp {
     // diagnostic log alongside the real BT-SHADOW entries — no-op in the
     // browser/PWA.
     WidgetBridge.initShadowListener();
+
+    // Shade buttons for the confirmation notifications — see
+    // #initNotificationActions(). Not awaited: it only registers listeners.
+    this.#initNotificationActions().catch(() => {});
     if (this.#getBtSettings().enabled) {
       DiagLog.log('BT', 'app init: starting Bluetooth watch (master switch is on)');
       this.#bluetooth.startWatch();
@@ -157,6 +168,23 @@ class FindMyCarApp {
 
     const dailyStatusToggle = Utils.el('dailyStatusToggle');
     if (dailyStatusToggle) dailyStatusToggle.checked = this.#getDailyStatusSettings().enabled;
+
+    // The device-settings guide only means anything on native (the OemSetup
+    // plugin is absent in the browser), so its Settings entry point stays
+    // hidden on the PWA rather than opening a modal with nothing to show.
+    if (OemSetup.isSupported()) {
+      const oemSection = Utils.el('oemSetupSection');
+      if (oemSection) oemSection.style.display = '';
+      // Auto-open once the app has settled, and only while something is
+      // genuinely outstanding — never awaited, so a slow plugin call can't
+      // hold up init. Deliberately after the loading screen fades, since it
+      // is a modal over the main UI, not part of startup.
+      setTimeout(() => {
+        OemSetup.shouldAutoShow()
+          .then(show => { if (show) this.#openOemSetupModal(); })
+          .catch(() => {});
+      }, 2500);
+    }
 
     // Init map; after loading screen fades, invalidate size to handle any CSS transition artifacts
     setTimeout(() => {
@@ -312,6 +340,14 @@ class FindMyCarApp {
       if (file) this.#importData(file);
     });
 
+    Utils.el('openOemSetupBtn')?.addEventListener('click',     () => this.#openOemSetupModal());
+    Utils.el('oemSetupRefreshBtn')?.addEventListener('click',  () => this.#refreshOemSetupView());
+    Utils.el('oemSetupDismissBtn')?.addEventListener('click',  () => {
+      OemSetup.setManual({ dismissed: true });
+      this.#closeModal('oemSetupModal');
+      this.#ui.showToast('המדריך לא יוצג שוב אוטומטית — הוא נשאר זמין בהגדרות', 'info');
+    });
+
     Utils.el('openDiagLogBtn')?.addEventListener('click',   () => this.#openDiagLogModal());
     Utils.el('diagLogRefreshBtn')?.addEventListener('click', () => this.#refreshDiagLogView());
     Utils.el('diagLogVehicleFilter')?.addEventListener('change', () => this.#refreshDiagLogView());
@@ -376,6 +412,12 @@ class FindMyCarApp {
     Utils.el('gpsEndDismissBtn')?.addEventListener('click', () => this.#closeModal('gpsEndModal'));
     Utils.el('gpsAutoEndToggle')?.addEventListener('change', e => {
       Store.set(CFG.keys.gpsAutoEnd, { enabled: e.target.checked });
+      // Native's GpsDecisionEngine reads this from WidgetDataPlugin's
+      // KEY_GPS_AUTO_END_ENABLED mirror to decide whether to suggest ending a
+      // parking while the app is closed — without an immediate re-sync the
+      // mirror stays stale until some unrelated parking-state change happens,
+      // so the setting the user just flipped isn't the one actually in effect.
+      this.#syncUI();
     });
     Utils.el('dailyStatusToggle')?.addEventListener('change', e => {
       Store.set(CFG.keys.dailyStatus, { enabled: e.target.checked });
@@ -500,7 +542,7 @@ class FindMyCarApp {
     this.#state.userPos = { lat, lng, accuracy };
     this.#map.updateUserMarker(lat, lng);
     this.#ui.updateDistance(this.#state);
-    this.#checkGpsSpeed(speed);
+    this.#checkGpsSpeed(this.#effectiveSpeed(speed, lat, lng), lat, lng);
     this.#checkGpsDistance(lat, lng);
   }
 
@@ -576,8 +618,7 @@ class FindMyCarApp {
     };
 
     this.#state.current       = parking;
-    this.#state.gpsEndSuggested = false;
-    this.#state.gpsSpeedSince   = null;
+    this.#resetGpsDetection();
     VehicleController.setCurrent(this.#state.activeVehicleId, parking);
 
     this.#map.addParkingMarker(loc.lat, loc.lng, null);
@@ -656,8 +697,7 @@ class FindMyCarApp {
     };
 
     this.#state.current         = parking;
-    this.#state.gpsEndSuggested = false;
-    this.#state.gpsSpeedSince   = null;
+    this.#resetGpsDetection();
     VehicleController.setCurrent(vehicleId, parking);
 
     this.#map.addParkingMarker(loc.lat, loc.lng, null);
@@ -715,8 +755,7 @@ class FindMyCarApp {
     if (!this.#state.current) return;
     this.#addToHistory(this.#state.current);
     this.#state.current       = null;
-    this.#state.gpsSpeedSince   = null;
-    this.#state.gpsEndSuggested = false;
+    this.#resetGpsDetection();
     VehicleController.removeCurrent(this.#state.activeVehicleId);
     this.#map.removeParkingMarker();
     this.#stopTimer();
@@ -745,8 +784,7 @@ class FindMyCarApp {
     this.#state.activeVehicleId  = id;
     this.#state.current          = VehicleController.getCurrent(id);
     this.#state.history          = VehicleController.getHistory(id);
-    this.#state.gpsSpeedSince    = null;
-    this.#state.gpsEndSuggested  = false;
+    this.#resetGpsDetection();
 
     if (this.#state.current) {
       this.#map.addParkingMarker(
@@ -780,6 +818,21 @@ class FindMyCarApp {
   // the app isn't foregrounded) — just reachable from a widget tap too now.
   async performWidgetAction(action, vehicleId) {
     try {
+      // Duplicate-delivery guard. A real report showed two identical
+      // performWidgetAction('save') calls landing in the same second, saving
+      // two parkings and posting two notifications: the two ran concurrently,
+      // so each read "no parking yet" before the other wrote, and the
+      // per-action guards below could not catch it. Returning the first call's
+      // own result keeps the caller's Toast/notification truthful — the action
+      // really was performed, just once.
+      const key = `${action}:${vehicleId || ''}`;
+      const recent = this.#lastWidgetAction;
+      if (recent && recent.key === key && Date.now() - recent.at < CFG.widgetActionDedupeMs) {
+        DiagLog.log('WIDGET', `ignored duplicate performWidgetAction(${action}) within ${CFG.widgetActionDedupeMs}ms`);
+        return recent.message;
+      }
+      this.#lastWidgetAction = { key, at: Date.now(), message: 'מבצע…' };
+
       if (vehicleId && vehicleId !== this.#state.activeVehicleId &&
           this.#state.vehicles.some(v => v.id === vehicleId)) {
         this.#switchVehicle(vehicleId, { silent: true });
@@ -809,6 +862,7 @@ class FindMyCarApp {
       } else {
         message = 'פעולה לא מוכרת';
       }
+      this.#lastWidgetAction = { key, at: Date.now(), message };
       DiagLog.log('WIDGET', `performWidgetAction(${action}) → ${message}`, { vehicleName: v?.name, vehicleIcon: v?.icon });
       // Unconditional (not gated by document.visibilityState like
       // #notifyIfBackground) — a widget action, by definition, never has an
@@ -820,6 +874,8 @@ class FindMyCarApp {
       return message;
     } catch (e) {
       const errMsg = 'שגיאה בביצוע הפעולה';
+      // Clear the dedupe marker: a failed attempt must not suppress a retry.
+      this.#lastWidgetAction = null;
       DiagLog.log('WIDGET', `performWidgetAction(${action}) threw — ${e?.message || e}`);
       Notify.show('FindMyCar', errMsg);
       return errMsg;
@@ -985,8 +1041,7 @@ class FindMyCarApp {
     if (isActive) {
       this.#state.current         = null;
       this.#state.history         = hist;
-      this.#state.gpsSpeedSince   = null;
-      this.#state.gpsEndSuggested = false;
+      this.#resetGpsDetection();
       this.#map.removeParkingMarker();
       this.#stopTimer();
       this.#releaseWakeLock();
@@ -1165,6 +1220,30 @@ class FindMyCarApp {
     return Store.get(CFG.keys.gpsAutoEnd, { enabled: false });
   }
 
+  // Every GPS-detection field, reset as a unit. They are only meaningful
+  // relative to one another — accumulated vehicle-speed evidence, the sample
+  // clock that interval math is measured from, and the previous fix that speed
+  // is derived from — so a call site that reset a subset would silently carry
+  // the last session's evidence into the next parking, which is exactly what
+  // the distance trigger's new gate relies on NOT happening.
+  #resetGpsDetection() {
+    this.#state.gpsSpeedAccumMs      = 0;
+    this.#state.gpsLastSpeedSampleAt = null;
+    this.#state.gpsPrevFix           = null;
+    this.#state.gpsLastAboveAt       = null;
+    this.#state.gpsEndSuggested      = false;
+  }
+
+  // Straight-line distance in metres from the active parking spot, or null if
+  // there is no active parking. Shared by #checkGpsSpeed (which needs it to
+  // decide whether vehicle speed counts as THIS car departing) and
+  // #checkGpsDistance, so both read one definition of "how far from the car".
+  #distanceFromParking(lat, lng) {
+    const p = this.#state.current;
+    if (!p) return null;
+    return Utils.distance(lat, lng, p.location.lat, p.location.lng);
+  }
+
   // ── DAILY STATUS NOTIFICATION ───────────────────────────────────
   // Global master switch — Android-only (no PWA equivalent, see
   // js/widget-bridge.js). Reading this here (rather than a plain Store.get
@@ -1175,39 +1254,108 @@ class FindMyCarApp {
     return Store.get(CFG.keys.dailyStatus, { enabled: false });
   }
 
-  #checkGpsSpeed(speed) {
-    if (!this.#state.current || this.#state.gpsEndSuggested) return;
-    if (!this.#getGpsSettings().enabled) return;
-    if (speed === null || speed === undefined || Number.isNaN(speed) || speed < CFG.gpsSpeedThreshold) {
-      this.#state.gpsSpeedSince = null;
-      return;
+  // Best available speed in m/s, or null if genuinely unknown. Mirrors
+  // GpsDecisionEngine.effectiveSpeed() (android/.../core/GpsDecisionEngine.kt).
+  // coords.speed is absent or a hard 0 on plenty of real devices — which is
+  // exactly why #checkGpsDistance used to have no speed condition at all.
+  // Deriving from the distance and time between consecutive fixes removes that
+  // dependency, so requiring speed evidence can't disable detection on them.
+  #effectiveSpeed(reported, lat, lng) {
+    const prev    = this.#state.gpsPrevFix;
+    const now     = Date.now();
+    const elapsed = prev ? now - prev.at : null;
+    // Hold the baseline while the interval is still too short to derive over,
+    // so it can actually grow past the minimum — advancing it on every fix
+    // would keep every interval at the update period (~1s) and make derivation
+    // permanently unavailable.
+    if (elapsed === null || elapsed >= CFG.gpsDerivedSpeedMinIntervalMs) {
+      this.#state.gpsPrevFix = { lat, lng, at: now };
     }
-    if (!this.#state.gpsSpeedSince) {
-      this.#state.gpsSpeedSince = Date.now();
-      DiagLog.log('GPS', `sustained speed above threshold (${speed.toFixed(1)} m/s) — timing before suggesting end`);
-    } else if (Date.now() - this.#state.gpsSpeedSince >= CFG.gpsSpeedDuration) {
-      this.#state.gpsSpeedSince = null;
-      this.#suggestGpsEnd();
-    }
+    if (reported !== null && reported !== undefined && !Number.isNaN(reported) && reported > 0) return reported;
+    // Consecutive fixes seconds apart are dominated by GPS jitter — 20m of
+    // error over 1s reads as 20 m/s, past the vehicle threshold — so too short
+    // an interval is reported as unknown rather than as fabricated evidence.
+    if (elapsed === null || elapsed < CFG.gpsDerivedSpeedMinIntervalMs) return null;
+    return Utils.distance(lat, lng, prev.lat, prev.lng) / (elapsed / 1000);
   }
 
-  // Second, independent signal alongside speed: catches movement that
-  // wouldn't cross the speed threshold (e.g. a device that never reports
-  // coords.speed, or being driven away slowly in traffic).
+  // Accumulates time observed at vehicle speed, then suggests once enough has
+  // built up. Mirrors GpsDecisionEngine.checkSpeed(). Accumulated rather than
+  // "sustained continuously since": a continuous timer resets at every red
+  // light, which would make a 2-minute requirement unreachable in city driving.
+  // The threshold is deliberately only just above running, not at a "real
+  // driving speed" — see CLAUDE.md "Vehicle-movement detection" (v1.42.0).
+  #checkGpsSpeed(speed, lat, lng) {
+    if (!this.#state.current || this.#state.gpsEndSuggested) return;
+    if (!this.#getGpsSettings().enabled) return;
+
+    const now = Date.now();
+
+    // Expire stale evidence FIRST, before the unknown-speed return below:
+    // going stale is a function of elapsed time, not of whether this
+    // particular fix happened to carry a usable speed.
+    const lastAbove = this.#state.gpsLastAboveAt;
+    if (lastAbove !== null && now - lastAbove >= CFG.gpsEvidenceTtlMs) {
+      DiagLog.log('GPS', 'vehicle-speed evidence expired (stale) — the distance trigger is disarmed again');
+      this.#state.gpsSpeedAccumMs = 0;
+      this.#state.gpsLastAboveAt  = null;
+    }
+
+    // An unknown speed is not evidence of anything — including not evidence of
+    // having been stationary — so it leaves the sample clock alone too.
+    // Advancing it here would shrink the interval credited to the next KNOWN
+    // reading, which is derived over the time since the last known one.
+    if (speed === null || speed === undefined || Number.isNaN(speed)) return;
+
+    const last = this.#state.gpsLastSpeedSampleAt;
+    // First sample of the session has no interval behind it; the cap stops a
+    // long gap with no fixes (screen off while parked) from being dumped into
+    // the accumulator by one fast sample.
+    const delta = last === null ? 0 : Math.min(Math.max(now - last, 0), CFG.gpsSpeedSampleCapMs);
+    this.#state.gpsLastSpeedSampleAt = now;
+
+    // Deliberately NOT reset below the threshold: a stop at a traffic light
+    // does not make the preceding driving un-happen.
+    if (speed < CFG.gpsSpeedThreshold) return;
+
+    const before = this.#state.gpsSpeedAccumMs;
+    this.#state.gpsSpeedAccumMs = before + delta;
+    this.#state.gpsLastAboveAt  = now;
+    if (before < CFG.gpsVehicleEvidenceMs && this.#state.gpsSpeedAccumMs >= CFG.gpsVehicleEvidenceMs) {
+      const fromCar = this.#distanceFromParking(lat, lng);
+      DiagLog.log('GPS', `vehicle-speed evidence reached (${speed.toFixed(1)} m/s, ${Math.round(fromCar ?? -1)}m from the car) — the distance trigger is now armed`);
+    }
+    if (this.#state.gpsSpeedAccumMs >= CFG.gpsSpeedDuration) this.#suggestGpsEnd();
+  }
+
+  // Second, independent signal alongside speed — it fires far sooner than
+  // #checkGpsSpeed's accumulated duration on a normal drive, so it stays the
+  // trigger that catches most real departures. Mirrors
+  // GpsDecisionEngine.checkDistance(), including its vehicle-evidence gate:
+  // distance says how FAR, never HOW, so walking 300m from the car used to
+  // produce a "your car seems to have moved" suggestion.
   #checkGpsDistance(lat, lng) {
     if (!this.#state.current || this.#state.gpsEndSuggested) return;
     if (!this.#getGpsSettings().enabled) return;
-    const { lat: pLat, lng: pLng } = this.#state.current.location;
-    if (Utils.distance(lat, lng, pLat, pLng) >= CFG.gpsDistanceThreshold) this.#suggestGpsEnd();
+    const fromCar = this.#distanceFromParking(lat, lng);
+    if (fromCar === null || fromCar < CFG.gpsDistanceThreshold) return;
+    // The evidence this reads was already anchored and expiry-checked by
+    // #checkGpsSpeed on this same position update — see its comments.
+    if (this.#state.gpsSpeedAccumMs < CFG.gpsVehicleEvidenceMs) return;
+    this.#suggestGpsEnd();
   }
 
   #suggestGpsEnd() {
     if (this.#state.gpsEndSuggested) return; // race guard: speed+distance can both fire on the same position update
+    this.#resetGpsDetection();
     this.#state.gpsEndSuggested = true;
-    this.#state.gpsSpeedSince   = null;
     DiagLog.log('GPS', 'showing end-parking suggestion (speed or distance threshold crossed)');
     this.#ui.openModal('gpsEndModal');
-    this.#notifyIfBackground('🚗 מזוהה נסיעה', 'ייתכן שהרכב זז ממקום החניה. פתח את האפליקציה לסיים את החניה.');
+    this.#notifyIfBackground(
+      '🚗 מזוהה נסיעה',
+      'ייתכן שהרכב זז ממקום החניה.',
+      { actionTypeId: Notify.CONFIRM_END, extra: { vehicleId: this.#state.activeVehicleId } },
+    );
   }
 
   // Stage 7 of the native background-detection migration (see CLAUDE.md
@@ -1246,9 +1394,40 @@ class FindMyCarApp {
   // Background-only system notification alongside an in-app toast/modal —
   // if the app is visible the on-screen UI already alerts the user, so a
   // notification would just be redundant noise.
-  #notifyIfBackground(title, body) {
+  #notifyIfBackground(title, body, opts) {
     if (document.visibilityState === 'visible') return;
-    Notify.show(title, body);
+    Notify.show(title, body, opts);
+  }
+
+  // Wires the shade buttons on the two confirmation notifications (GPS
+  // "the car seems to have moved", Bluetooth "you connected — end the
+  // parking?"). Both used to say "open the app to confirm", which is the
+  // wrong thing to ask of someone who is driving: it's a one-tap decision
+  // and it belongs in the shade.
+  //
+  // "end" deliberately routes through the SAME performWidgetAction() the
+  // widgets use rather than calling #resetParking()/#btEndParking()
+  // directly — that method already handles switching to a non-active
+  // vehicle, guards against the parking having been ended since, and posts
+  // its own result notification. One headless action path, not two.
+  // Called once, fire-and-forget, from #init(); no-op in the browser.
+  async #initNotificationActions() {
+    await Notify.registerActionTypes();
+    await Notify.addActionListener(async ({ actionId, extra }) => {
+      const vehicleId = extra?.vehicleId ?? null;
+      DiagLog.log('NOTIFY', `notification action "${actionId}" (vehicleId=${vehicleId || '(active)'})`);
+      if (actionId !== 'end') return; // 'dismiss' and a plain 'tap' just open/close
+      // The in-app modals become stale the moment the action is taken from
+      // the shade — close whichever one is showing so the user doesn't come
+      // back to a question they already answered.
+      this.#closeModal('gpsEndModal');
+      this.#closeModal('btParkingModal');
+      try {
+        await this.performWidgetAction('end', vehicleId);
+      } catch (e) {
+        DiagLog.log('NOTIFY', `notification action "end" threw — ${e?.message || e}`);
+      }
+    });
   }
 
   // ── BLUETOOTH ─────────────────────────────────────────────────
@@ -1283,7 +1462,11 @@ class FindMyCarApp {
         if (title) title.textContent = `${v.icon} הגעת לרכב?`;
         if (desc)  desc.textContent  = `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`;
         this.#ui.openModal('btParkingModal');
-        this.#notifyIfBackground(`${v.icon} הגעת לרכב?`, `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}. פתח את האפליקציה לאישור.`);
+        this.#notifyIfBackground(
+          `${v.icon} הגעת לרכב?`,
+          `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`,
+          { actionTypeId: Notify.CONFIRM_END, extra: { vehicleId: v.id } },
+        );
       }
     }
     if (!matched) DiagLog.log('BT', `no vehicle is linked to device label="${label}" — event ignored`);
@@ -1449,6 +1632,14 @@ class FindMyCarApp {
         } else {
           this.#bluetooth.stopWatch();
         }
+        // Mirror the new setting to native immediately. The native side reads
+        // these (BtDecisionEngine via the vehicles_json mirror, and the
+        // "bluetooth" foreground-service keep-alive reason via
+        // KEY_BT_ENABLED) to decide what to do while the app is CLOSED — so
+        // leaving the mirror stale until some unrelated parking-state sync
+        // happens means a setting the user just changed isn't the one acting
+        // on their next real BT event.
+        this.#syncUI();
         this.#refreshBtModal();
       },
       onToggleVehicle: (vehicleId, updates) => {
@@ -1456,12 +1647,14 @@ class FindMyCarApp {
         DiagLog.log('BT', `per-vehicle settings changed: ${JSON.stringify(updates)}`, { vehicleName: v?.name, vehicleIcon: v?.icon });
         VehicleController.updateBluetooth(vehicleId, updates);
         this.#state.vehicles = VehicleController.getAll();
+        this.#syncUI();
         this.#refreshBtModal();
       },
       onSetAll: updates => {
         DiagLog.log('BT', `settings changed for all vehicles: ${JSON.stringify(updates)}`);
         VehicleController.updateAllBluetooth(updates);
         this.#state.vehicles = VehicleController.getAll();
+        this.#syncUI();
         this.#refreshBtModal();
       },
     };
@@ -1797,6 +1990,87 @@ class FindMyCarApp {
   }
 
   // ── DIAGNOSTIC LOG ───────────────────────────────────────────
+  // ── BACKGROUND-DETECTION SETUP GUIDE ──────────────────────────
+  // Android-only in practice (OemSetup.buildSteps() returns [] in the
+  // browser), which is why the Settings entry point stays hidden on the PWA
+  // rather than opening an empty modal.
+  async #openOemSetupModal() {
+    await this.#refreshOemSetupView();
+    this.#ui.openModal('oemSetupModal');
+  }
+
+  async #refreshOemSetupView() {
+    const list = Utils.el('oemSetupList');
+    const intro = Utils.el('oemSetupIntro');
+    if (!list) return;
+
+    const steps = await OemSetup.buildSteps();
+    if (!steps.length) {
+      list.innerHTML = '<p class="oem-setup-empty">אין הגדרות מכשיר לבדוק בגרסה הזו (זמין באפליקציית האנדרואיד בלבד).</p>';
+      if (intro) intro.textContent = '';
+      return;
+    }
+
+    const todo = steps.filter(s => s.state !== 'ok').length;
+    if (intro) {
+      intro.textContent = todo
+        ? `${todo} מתוך ${steps.length} הגדרות עדיין דורשות טיפול. לחץ על כל שלב כדי לפתוח את המסך המתאים.`
+        : 'כל ההגדרות שניתן לבדוק תקינות. שים לב שאת שלבי היצרן אי אפשר לאמת — הסימון מבוסס על מה שסימנת בעצמך.';
+    }
+
+    list.innerHTML = steps.map(s => {
+      const badge = {
+        ok:      '<span class="oem-step-badge oem-step-ok">תקין</span>',
+        todo:    '<span class="oem-step-badge oem-step-todo">דורש טיפול</span>',
+        unknown: '<span class="oem-step-badge oem-step-unknown">לא ניתן לבדוק</span>',
+      }[s.state];
+      // Manual steps carry their own "I did this" checkbox precisely because
+      // no API can confirm them — see js/oem-setup.js.
+      const confirm = s.kind === 'manual'
+        ? `<label class="oem-step-confirm">
+             <input type="checkbox" data-oem-confirm="${Utils.escHtml(s.id)}" ${s.state === 'ok' ? 'checked' : ''}>
+             <span>סימנתי שביצעתי את זה</span>
+           </label>`
+        : '';
+      const action = s.action
+        ? `<button class="settings-backup-btn oem-step-btn" data-oem-action="${Utils.escHtml(s.action)}">
+             <span>${Utils.escHtml(s.actionLabel)}</span>
+           </button>`
+        : '';
+      return `<div class="oem-step oem-step-${s.state}">
+        <div class="oem-step-head">
+          <span class="oem-step-icon">${s.icon}</span>
+          <span class="oem-step-title">${Utils.escHtml(s.title)}</span>
+          ${badge}
+        </div>
+        <p class="oem-step-desc">${Utils.escHtml(s.desc)}</p>
+        ${action}
+        ${confirm}
+      </div>`;
+    }).join('');
+
+    list.querySelectorAll('[data-oem-action]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const result = await OemSetup.runAction(btn.dataset.oemAction);
+        // A vendor screen that doesn't exist on this ROM silently falls back
+        // to the generic app-settings page — say so, or the user is left
+        // wondering why the screen they were promised never appeared.
+        if (result === 'fallback') {
+          this.#ui.showToast('מסך היצרן לא זמין במכשיר הזה — נפתחו הגדרות האפליקציה במקום', 'warning');
+        } else if (result === 'failed' || result === null) {
+          this.#ui.showToast('לא ניתן היה לפתוח את המסך — פתח אותו ידנית בהגדרות המכשיר', 'error');
+        }
+      });
+    });
+
+    list.querySelectorAll('[data-oem-confirm]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        OemSetup.setManual({ [cb.dataset.oemConfirm]: cb.checked });
+        this.#refreshOemSetupView();
+      });
+    });
+  }
+
   #openDiagLogModal() {
     const select = Utils.el('diagLogVehicleFilter');
     if (select) {

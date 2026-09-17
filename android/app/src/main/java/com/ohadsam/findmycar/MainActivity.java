@@ -60,6 +60,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BluetoothClassicPlugin.class);
         registerPlugin(WidgetDataPlugin.class);
+        registerPlugin(OemSetupPlugin.class);
         super.onCreate(savedInstanceState);
         activeInstance = new WeakReference<>(this);
 
@@ -86,6 +87,11 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         foreground = true;
+        // Being visible is what makes a location-typed foreground service
+        // legal to start on Android 14 when ACCESS_BACKGROUND_LOCATION isn't
+        // granted. A service that came up from BOOT_COMPLETED had to skip that
+        // type; this is the moment it can be added. No-op otherwise.
+        ParkingForegroundService.onAppForegrounded();
     }
 
     @Override

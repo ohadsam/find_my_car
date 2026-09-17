@@ -5,14 +5,9 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.location.LocationManager
-import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
-import android.provider.Settings
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -22,12 +17,8 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
-import com.ohadsam.findmycar.core.BtConnectDecision
 import com.ohadsam.findmycar.core.BtDecisionEngine
-import com.ohadsam.findmycar.core.BtDisconnectDecision
 import com.ohadsam.findmycar.core.BtShadowFormatter
-import com.ohadsam.findmycar.core.NativeVehicle
-import com.ohadsam.findmycar.core.PendingBtAction
 import com.ohadsam.findmycar.core.PendingBtActionJson
 import com.ohadsam.findmycar.core.VehicleJsonParser
 import java.util.concurrent.CountDownLatch
@@ -54,9 +45,30 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     private var prevLabels: MutableSet<String> = mutableSetOf()
     private val labelsLock = Any()
 
+    // Real, previously-shipped bug (found from production diagnostic-log
+    // evidence — see CLAUDE.md "Open investigation" / its resolution): this
+    // used to also clear the "bluetooth" ParkingForegroundService keep-alive
+    // reason here. But this Plugin instance is tied to the Activity/Bridge
+    // lifecycle, so handleOnDestroy() fires every time the Activity is
+    // destroyed — which is ROUTINE (app closed/backgrounded long enough),
+    // not exceptional — while the entire POINT of the "bluetooth" reason is
+    // to keep the foreground service (and its BT broadcast receiver) alive
+    // PRECISELY while there's no live Activity to rely on. Clearing it here
+    // defeated that purpose: the moment a parking session ended (or one was
+    // never active) and the user closed the app, "bluetooth" was the only
+    // reason keeping the service alive — tearing it down here stopped the
+    // ENTIRE foreground service, receiver included, until the app was
+    // reopened. Confirmed from a real device log: "bluetooth" reason set at
+    // app open, parking ended 8s later, service fully stopped ("last
+    // reason=bluetooth cleared") just 2 minutes after that — leaving zero
+    // background BT detection for however long the app then stayed closed.
+    // The reason now reflects only the actual BT master-switch setting,
+    // toggled exclusively by startWatch()/stopWatch() — once set, it
+    // persists across Activity destroy/recreate cycles exactly like a real
+    // background BT watcher should, until the user explicitly disables
+    // Bluetooth detection in Settings.
     override fun handleOnDestroy() {
         BtEventBus.removeListener(this)
-        if (watching) ParkingForegroundService.setReasonActive(context, "bluetooth", false)
         super.handleOnDestroy()
     }
 
@@ -115,12 +127,12 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         call.resolve()
     }
 
+    // Delegates to the shared OemSettingsIntents rather than building the
+    // intent inline — OemSetupPlugin's guided flow needs the exact same
+    // launch/fallback behavior, and two copies would drift (same reasoning as
+    // BackgroundAlertNotifier).
     private fun openAppSettingsInternal() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.fromParts("package", context.packageName, null)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
+        OemSettingsIntents.openAppSettings(context)
     }
 
     // Standard Android battery optimization (Doze) restricts background work
@@ -150,18 +162,9 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     fun requestIgnoreBatteryOptimizations(call: PluginCall) {
         NativeLogStore.add(context, TAG, "BRIDGE", "← JS: requestIgnoreBatteryOptimizations() called")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) { call.resolve(); return }
-        try {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:${context.packageName}")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            // Some OEMs block this specific intent — app settings is the
-            // next best place for the user to find the equivalent toggle.
-            Log.w(TAG, "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS failed, falling back to app settings", e)
-            openAppSettingsInternal()
-        }
+        // Shared implementation (falls back to the app settings page on OEMs
+        // that block this specific intent) — see openAppSettingsInternal().
+        OemSettingsIntents.requestIgnoreBatteryOptimizations(context)
         call.resolve()
     }
 
@@ -245,16 +248,23 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         val ret = JSObject(); ret.put("devices", arr); call.resolve(ret)
     }
 
-    // BtEventBus.Listener — fired from ParkingForegroundService's receiver
+    // BtEventBus.Listener — fired from ParkingForegroundService's receiver,
+    // but ONLY while this Activity-bound Plugin instance is alive and
+    // registered. The pending-action recording (Stage 5) that used to live
+    // here was moved to BtPendingActionRecorder, called directly and
+    // unconditionally from ParkingForegroundService's own receiver instead
+    // — see CLAUDE.md "Open investigation" resolution for why: this
+    // listener path is torn down (handleOnDestroy() -> removeListener())
+    // exactly when the Activity is destroyed, which is precisely the
+    // WebView-unreachable case Stage 5 exists to handle, so recording via
+    // this listener could never actually fire in that scenario.
     override fun onConnected(label: String) {
         emitAndTrack(label, connected = true)
         runShadowDecision(label, connected = true)
-        maybeRecordPendingAction(label, connected = true)
     }
     override fun onDisconnected(label: String) {
         emitAndTrack(label, connected = false)
         runShadowDecision(label, connected = false)
-        maybeRecordPendingAction(label, connected = false)
     }
 
     // Stage 2 of the native background-detection migration (see CLAUDE.md
@@ -286,75 +296,6 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
             notifyListeners("btShadowDecision", data)
         } catch (e: Exception) {
             Log.w(TAG, "shadow decision failed (non-fatal, real BT event already handled)", e)
-        }
-    }
-
-    // Stage 5 of the native background-detection migration (see CLAUDE.md
-    // "Native background detection"): when the WebView is unreachable
-    // (MainActivity.getActiveWebView() == null — the case this whole
-    // migration exists to fix), the emitAndTrack() notifyListeners() call
-    // above has nobody listening, so nothing happens today. This records
-    // what BtDecisionEngine decided for real, so JS can reconcile ("catch
-    // up") the next time it resumes — see PendingBtActionStore. Deliberately
-    // a no-op when the WebView IS reachable: the live listener path already
-    // handles the event through the normal, unchanged flow, so acting here
-    // too would double the action. Only ever records AutoEnd/AutoStart —
-    // SuggestEnd needs a confirmation modal, which has no meaning without a
-    // UI to show it in, so it stays JS/foreground-only exactly like today.
-    // Wrapped in its own try/catch backstop, independent of runShadowDecision
-    // (which must stay strictly log-only) and of the real event already
-    // emitted above.
-    private fun maybeRecordPendingAction(label: String, connected: Boolean) {
-        try {
-            if (MainActivity.getActiveWebView() != null) return // live path already handles it
-            val json = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
-                .getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]"
-            val vehicles = VehicleJsonParser.parse(json)
-            val hasParking: (String) -> Boolean = { id -> vehicles.find { it.id == id }?.hasParking ?: false }
-            val direction = if (connected) "connected" else "disconnected"
-
-            if (connected) {
-                // #btEndParking (js/app.js) just moves the EXISTING parking
-                // record to history — it never needs a fresh location fix,
-                // unlike auto-start below.
-                for (decision in BtDecisionEngine.onConnected(vehicles, label, hasParking)) {
-                    if (decision !is BtConnectDecision.AutoEnd) continue
-                    recordPendingAction(direction, "autoEnd", decision.vehicle, label, lat = null, lng = null)
-                }
-            } else {
-                for (decision in BtDecisionEngine.onDisconnected(vehicles, label, hasParking)) {
-                    if (decision !is BtDisconnectDecision.AutoStart) continue
-                    val (lat, lng) = lastKnownLocation()
-                    recordPendingAction(direction, "autoStart", decision.vehicle, label, lat, lng)
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "maybeRecordPendingAction failed (non-fatal)", e)
-        }
-    }
-
-    private fun recordPendingAction(
-        direction: String, action: String, vehicle: NativeVehicle, label: String, lat: Double?, lng: Double?,
-    ) {
-        val entry = PendingBtAction(direction, action, vehicle.id, vehicle.name, label, lat, lng, System.currentTimeMillis())
-        PendingBtActionStore.add(context, entry)
-        Log.i(TAG, "recorded pending BT action (WebView unreachable): $entry")
-        val title = if (action == "autoEnd") "🚗 חניה הסתיימה אוטומטית" else "🅿️ חניה חדשה תישמר בפתיחה הבאה"
-        BackgroundAlertNotifier.show(context, title, "${vehicle.name} — יטופל כשהאפליקציה תיפתח מחדש")
-    }
-
-    /** Best-effort — no fresh location request, just whatever the system already has cached. */
-    private fun lastKnownLocation(): Pair<Double?, Double?> {
-        return try {
-            val fineGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED
-            if (!fineGranted) return null to null
-            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null to null
-            val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            if (loc != null) loc.latitude to loc.longitude else null to null
-        } catch (e: Exception) {
-            null to null
         }
     }
 

@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.36.1',
+  version: '1.42.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -13,11 +13,26 @@ export const CFG = Object.freeze({
     bluetoothSettings: 'fmc_bluetooth_v1',
     gpsAutoEnd:        'fmc_gps_auto_end_v1',
     dailyStatus:       'fmc_daily_status_v1',
+    // Which manual steps of the background-setup guide the user says they've
+    // completed, plus whether they dismissed it. Manual-only by necessity:
+    // MIUI Autostart / the OEM battery policy / the Recents lock have no API
+    // to read, so this stores the user's own word — never a verified fact
+    // (see js/oem-setup.js).
+    oemSetup:          'fmc_oem_setup_v1',
     notifTag:          'fmc-parking-active',
   }),
-  gpsSpeedThreshold:    7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
-  gpsSpeedDuration:     8000, // ms speed must be sustained before suggesting end
-  gpsDistanceThreshold: 300,  // meters from the saved parking spot before suggesting end (catches slow/no-speed-signal movement e.g. being driven away)
+  // Vehicle-movement detection. See CLAUDE.md "Vehicle-movement detection"
+  // for the reasoning behind each of these — in particular why the distance
+  // trigger is no longer allowed to fire on its own (walking 300m from the car
+  // used to produce a "your car seems to have moved" suggestion).
+  gpsSpeedThreshold:    7,      // m/s ≈ 25 km/h — above walking (~1.4) and running (~3-5), which is all it has to exclude. NOT a "real driving speed": city traffic averages well under that, and a higher bar disarmed detection for whole drives (see CLAUDE.md, v1.42.0)
+  gpsSpeedDuration:     120000, // ms ACCUMULATED above the threshold before speed alone suggests end (not "continuously since" — red lights must not undo progress)
+  gpsVehicleEvidenceMs: 10000,  // ms accumulated above the threshold before the distance trigger may fire at all — distance says how far, never how
+  gpsSpeedSampleCapMs:  15000,  // ms ceiling on how much any single sample may add, so one fast fix after a long gap can't fill the accumulator at once
+  gpsDerivedSpeedMinIntervalMs: 5000, // ms — shortest interval a speed may be DERIVED over when the device reports none; below this, GPS jitter (20m of error 1s apart reads as 20 m/s) would fabricate vehicle evidence
+  gpsEvidenceTtlMs:     600000, // ms (10 min) — accumulated evidence expires after this long with no further above-threshold sample, so one ride early in a parking session can't leave the distance trigger armed for a plain walk hours later
+  widgetActionDedupeMs: 3000,   // ms — an identical widget/notification action repeated within this window is treated as one tap, not two (a duplicate broadcast saved two parkings and posted two notifications)
+  gpsDistanceThreshold: 300,    // meters from the saved parking spot before suggesting end (catches movement the speed check would miss, e.g. stop-and-go traffic)
   // How often the WEB (js/app.js) and SERVICE (ParkingForegroundService.kt)
   // heartbeats log to DiagLog's SERVICE category, proving each is
   // continuously alive — not just at start/stop transitions. No single
@@ -40,6 +55,98 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.42.0',
+      date: '2026-09-18',
+      items: Object.freeze([
+        'תוקן שורש הבעיה שדיווחת עליה: סף המהירות של 50 קמ"ש (שנכנס ב-1.40.0) פשוט לא מושג בנסיעה עירונית. הלוג שלך מראה קילומטר שלם של נסיעה עם 0 שניות "עדות נסיעה" — ולכן ההצעה לסיום חניה לא הופיעה. הסף חזר ל-25 קמ"ש, שזה עדיין הרבה מעל הליכה (5 קמ"ש) וריצה (11-18 קמ"ש)',
+        'בוטלה גם הדרישה (מ-1.41.0) שהתנועה המהירה תתחיל ליד הרכב — באותה נסיעה הדגימה המהירה הראשונה הייתה כבר מעבר לקילומטר מהרכב, כך שההצעה לא הייתה מופיעה אף פעם. מנגנון שיכול להשבית זיהוי לצמיתות הוא מחיר גבוה מדי',
+        'תוקן באג שבו לחיצה על פעולת ווידג'ט נעלמה בשקט: אם האפליקציה הייתה חיה אבל הדף עוד לא הספיק להיטען, הפעולה לא בוצעה, לא נשמרה לביצוע מאוחר, ולא הופיעה בשום מקום. עכשיו כל לחיצה או מתבצעת מיד, או נשמרת ומבוצעת בפתיחה הבאה — עם הודעה בהתאם',
+        'תוקן: לחיצה אחת על פעולת ווידג'ט יכלה להישלח פעמיים ולשמור שתי חניות עם שתי התראות',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.41.0',
+      date: '2026-09-17',
+      items: Object.freeze([
+        'המשך לתיקון של 1.40.0: הדרישה ל"עדות לנסיעה" מנעה הליכה, אבל העדות עצמה עדיין אמרה רק "הטלפון נע מהר מתישהו" — לא "הרכב הזה נסע". עכשיו העדות נספרת רק אם התנועה המהירה התחילה ליד הרכב החונה (עד 150 מטר)',
+        'תוקן: הליכה לתחנה ואז נסיעה ברכבת/אוטובוס כבר לא מזוהה כ"הרכב זז" — זו נסיעה שלך, לא של הרכב',
+        'תוקן: עדות שנצברה פעם אחת נשארה תקפה עד סוף החניה, כך שנסיעה מוקדמת השאירה את ההתראה דרוכה גם להליכה רגילה שעות אחר כך. העדות פגה עכשיו אחרי 10 דקות ללא תנועה מהירה נוספת',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.40.0',
+      date: '2026-09-17',
+      items: Object.freeze([
+        'תוקן זיהוי תנועה שגוי: הליכה ברגל של 300 מטר מהרכב הפעילה את ההצעה לסיום חניה. בדיקת המרחק פעלה ללא שום תנאי מהירות — היא ידעה כמה התרחקת, אף פעם לא איך — ולכן היא דורשת עכשיו גם עדות אמיתית לנסיעה',
+        'סף הזיהוי הוא כעת 50 קמ"ש, מהירות שאי אפשר להגיע אליה בהליכה או באופניים, במקום 25 קמ"ש',
+        'הזמן שנצבר במהירות נסיעה נספר במצטבר ולא "ברציפות" — עצירה ברמזור כבר לא מאפסת את הספירה ומתחילה מהתחלה',
+        'כשהמכשיר לא מדווח מהירות (קורה בהרבה מכשירים), המהירות מחושבת מהמרחק והזמן בין שתי מדידות — כדי שדרישת המהירות החדשה לא תשבית את הזיהוי דווקא במכשירים האלה',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.39.0',
+      date: '2026-09-16',
+      items: Object.freeze([
+        'להתראות שמבקשות אישור — "מזוהה נסיעה" ו"הגעת לרכב?" — נוספו כפתורים ישירות בתריס: "סיים חניה" ו"התעלם". קודם הן רק ביקשו "פתח את האפליקציה לאישור", וזו בדיוק הבקשה הלא נכונה ממישהו שנוהג',
+        'הכפתורים פועלים בלי לפתוח את האפליקציה, ואם היא סגורה לגמרי הפעולה מתבצעת בפתיחה הבאה — בדיוק כמו פעולות הווידג\'טים',
+        'לחיצה על כפתור בתריס סוגרת גם את החלון המקביל בתוך האפליקציה, כדי שלא תחזור לשאלה שכבר ענית עליה',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.38.1',
+      date: '2026-09-16',
+      items: Object.freeze([
+        'תוקן שורש הבעיה של זיהוי נסיעה ברקע: כששירות הרקע עולה מחדש לבד (אחרי עדכון או הפעלת המכשיר), אנדרואיד לא מעניקה לו הרשאת מיקום-ברקע — והוספת ההרשאה מאוחר יותר לא עוזרת רטרואקטיבית. השירות פשוט לא קיבל אף עדכון מיקום, בזמן שכל הסימנים הראו "פעיל". עכשיו הוא מופעל מחדש מתוך האפליקציה ברגע שהיא נפתחת, וכך מקבל את ההרשאה באמת',
+        'רישום "פעימת הלב" כולל עכשיו כמה עדכוני GPS התקבלו בפועל, לפני כמה זמן היה העדכון האחרון, והמרחק הנוכחי מהחניה — כדי שלא תהיה יותר אי-ודאות בין "המעקב לא רץ", "רץ אבל לא מגיע אף עדכון" ו"מגיעים עדכונים אך לא נחצה הסף"',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.38.0',
+      date: '2026-09-16',
+      items: Object.freeze([
+        'נוספו לכל שלושת הווידג\'טים שני סמלי חיווי קטנים — מיקום ו-Bluetooth — שצבעם מראה במבט אחד אם זיהוי הרקע באמת פועל כרגע, בלי להיכנס לאפליקציה או לקרוא את יומן האבחון',
+        'ירוק = פעיל, כתום = רץ אך אנדרואיד מונע עדכונים ברקע (פתח את האפליקציה פעם אחת), אדום = אמור לרוץ ולא רץ, אפור = כבוי בהגדרות או שאין חניה פעילה — כדי שאדום יסמן תמיד תקלה אמיתית ולא הגדרה שכיבית בכוונה',
+        'החיווי מתרענן כל 2 דקות, וגם מיד עם כל שינוי הגדרה או פעולת חניה',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.37.1',
+      date: '2026-09-16',
+      items: Object.freeze([
+        'תוקן באג חמור שנכנס בגרסה 1.36.3: בהפעלה מחדש של המכשיר ובעדכון האפליקציה, שירות הרקע ניסה לעלות עם הרשאת מיקום שאנדרואיד 14 מתירה רק כשהאפליקציה גלויה על המסך — הבקשה נדחתה, וכל שירות הרקע נפל יחד איתה (ללא Bluetooth, ללא GPS, ללא כלום) עד לפתיחה ידנית של האפליקציה',
+        'שירות הרקע עולה עכשיו תמיד, גם אם אנדרואיד דוחה סוג הרשאה מסוים — דחייה עולה לנו באותה יכולת בלבד, לא בכיבוי מוחלט של הזיהוי',
+        'מעקב המיקום משתדרג אוטומטית ברגע שהאפליקציה נפתחת, כך שאחרי הפעלה מחדש של המכשיר הזיהוי חוזר לפעול מלא',
+        'יומן האבחון מציין עכשיו במפורש כשמעקב GPS התחיל אך אנדרואיד עדיין מונע ממנו לקבל עדכונים ברקע — במקום לרשום "הופעל" ולהשאיר את זה עמום',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.37.0',
+      date: '2026-09-15',
+      items: Object.freeze([
+        'נוסף מדריך "הגדרת זיהוי ברקע" (אנדרואיד) — מציג רשימה של כל הגדרות המכשיר שקובעות אם האפליקציה בכלל רשאית לפעול ברקע, ופותח כל מסך בלחיצה אחת במקום לחפש אותו ידנית בהגדרות',
+        'המדריך בודק בפועל מה שניתן לבדוק (פטור מחיסכון בסוללה, הרשאות מיקום/התראות/Bluetooth) ומסמן בבירור אילו הגדרות של היצרן — כמו "הפעלה אוטומטית" בשיאומי — אי אפשר לאמת מתוך האפליקציה, כדי שלא יוצג מידע שאינו נכון',
+        'המדריך נפתח אוטומטית בפתיחת האפליקציה רק כל עוד משהו עדיין דורש טיפול, וזמין תמיד מתוך ההגדרות',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.36.3',
+      date: '2026-09-15',
+      items: Object.freeze([
+        'תוקן באג שורש בזיהוי GPS ברקע: לשירות הרקע חסרה ההרשאה המיוחדת שאנדרואיד דורשת כדי להמשיך לקבל עדכוני מיקום כשהאפליקציה סגורה — לכן זיהוי הנסיעה פשוט הפסיק לפעול רגע אחרי סגירת האפליקציה, וההצעה לסיום חניה הופיעה רק בפתיחה הבאה',
+        'תוקן: לאחר הפעלה מחדש של המכשיר או עדכון האפליקציה, תהליכי הרקע נשארו כבויים עד שהאפליקציה נפתחה ידנית — עכשיו הם מתאוששים לבד',
+        'תוקן: אם מערכת ההפעלה סגרה את תהליך האפליקציה, שירות הרקע היה חוזר "ריק" בלי לדעת שיש חניה פעילה או ש-Bluetooth דלוק — עכשיו הוא משחזר את מצבו מהנתונים השמורים',
+        'תוקן: שינוי הגדרות Bluetooth או זיהוי נסיעה לא עודכן מיד בצד הרקע אלא רק אחרי פעולת חניה כלשהי — עכשיו כל שינוי הגדרה מסונכרן מיידית',
+      ]),
+    }),
+    Object.freeze({
+      version: '1.36.2',
+      date: '2026-09-15',
+      items: Object.freeze([
+        'תוקן באג משמעותי: כשלא הייתה חניה פעילה, סגירת האפליקציה גרמה לשירות הרקע כולו להיעצר לגמרי (לא רק המסך) — כך שזיהוי Bluetooth ברקע פסק לעבוד עד לפתיחה הבאה של האפליקציה, גם כשההגדרה הייתה דלוקה',
+        'תוקן: גם לאחר שהשירות נשאר פעיל, רישום פעולות Bluetooth שקרו כשהאפליקציה סגורה (לצורך ביצוען בפתיחה הבאה) לא תמיד עבד — עכשיו זה קורה ישירות משירות הרקע ולא תלוי בכך שהאפליקציה הייתה פתוחה לאחרונה',
+      ]),
+    }),
     Object.freeze({
       version: '1.36.1',
       date: '2026-09-10',

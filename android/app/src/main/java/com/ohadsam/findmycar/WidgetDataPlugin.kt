@@ -24,6 +24,7 @@ import com.ohadsam.findmycar.core.PendingGpsSuggestionJson
 import com.ohadsam.findmycar.core.PendingWidgetActionJson
 import com.ohadsam.findmycar.widgets.ActiveParkingWidgetProvider
 import com.ohadsam.findmycar.widgets.MiniMapWidgetProvider
+import com.ohadsam.findmycar.widgets.WidgetStatusRefresher
 
 /**
  * Bridge for js/widget-bridge.js: mirrors the active-parking snapshot into
@@ -55,6 +56,30 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         const val KEY_ACTIVE_VEHICLE_ID = "active_vehicle_id"
         const val KEY_GPS_AUTO_END_ENABLED = "gps_auto_end_enabled"
         const val KEY_DAILY_STATUS_ENABLED = "daily_status_notification_enabled"
+        // The Bluetooth master switch (js/config.js's CFG.keys.bluetoothSettings),
+        // mirrored here purely so the native side can answer "should BT detection
+        // be running?" WITHOUT the app being open — needed by
+        // ParkingForegroundService.restoreReasons()/startIfNeeded() to rebuild the
+        // "bluetooth" keep-alive reason after a process death or reboot, since
+        // every setReasonActive() caller is a @PluginMethod only reachable from
+        // live JS. This was the one BT-relevant setting never mirrored.
+        const val KEY_BT_ENABLED = "bluetooth_enabled"
+
+        // Live background-machinery state, written by ParkingForegroundService
+        // at the same points it already logs to NativeLogStore, and read by
+        // WidgetStatus for the widgets' two liveness dots. These describe what
+        // the service is ACTUALLY doing, not what settings ask for — the gap
+        // between the two is exactly what three consecutive silent-failure bugs
+        // lived in (see CLAUDE.md), and what the dots exist to expose.
+        const val KEY_GPS_WATCH_ACTIVE = "gps_watch_active"
+        // Distinct from the above on purpose: the watch can be running while
+        // Android withholds every update, because the `location`
+        // foreground-service type isn't in effect (the v1.37.1 post-reboot
+        // state). Without this flag those two are indistinguishable.
+        const val KEY_GPS_LOCATION_TYPE_ACTIVE = "gps_location_type_active"
+        const val KEY_BT_RECEIVER_ACTIVE = "bt_receiver_active"
+        const val KEY_SVC_HEARTBEAT_AT = "svc_heartbeat_at"
+
         private const val TAG = "FMC-WidgetData"
         private const val PARKING_NOTIF_CHANNEL_ID = "findmycar_parking_active"
         private const val PARKING_NOTIF_ID = 4202
@@ -91,12 +116,14 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         val activeId = call.getString("activeVehicleId", "") ?: ""
         val gpsAutoEndEnabled = call.getBoolean("gpsAutoEndEnabled", false) ?: false
         val dailyStatusEnabled = call.getBoolean("dailyStatusNotificationEnabled", false) ?: false
+        val bluetoothEnabled = call.getBoolean("bluetoothEnabled", false) ?: false
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putString(KEY_VEHICLES_JSON, vehiclesArray?.toString() ?: "[]")
             .putString(KEY_ACTIVE_VEHICLE_ID, activeId)
             .putBoolean(KEY_GPS_AUTO_END_ENABLED, gpsAutoEndEnabled)
             .putBoolean(KEY_DAILY_STATUS_ENABLED, dailyStatusEnabled)
+            .putBoolean(KEY_BT_ENABLED, bluetoothEnabled)
             .apply()
         // Re-arms (or cancels) the once-daily status-notification alarm on
         // every sync — cheap and idempotent (recomputing "next occurrence of
@@ -107,6 +134,15 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         // to track — this just piggybacks on that existing high-frequency
         // call site. See DailyStatusScheduler/DailyStatusReceiver.
         DailyStatusScheduler.scheduleOrCancel(context, dailyStatusEnabled)
+        // The two settings this call just wrote (KEY_BT_ENABLED,
+        // KEY_GPS_AUTO_END_ENABLED) are direct inputs to the widgets' status
+        // dots, so repaint them now. refreshWidgets() below is deliberately NOT
+        // used: it only targets the two data-driven providers and is only
+        // called from update()/clear(), so a settings change alone would leave
+        // the dots showing the previous setting until some unrelated parking
+        // event happened — the same stale-mirror failure that every settings
+        // toggle now calls #syncUI() to avoid on the JS side.
+        WidgetStatusRefresher.refreshAll(context)
         call.resolve()
     }
 
