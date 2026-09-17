@@ -1013,6 +1013,79 @@ solve OEM-specific background killers (Xiaomi's "autostart" permission, Huawei's
 developer option) — those have no public API to query or toggle from an app, and
 remain something only the user can find in their device's own settings.
 
+### Vehicle-movement detection (`GpsDecisionEngine` + `#checkGpsSpeed`/`#checkGpsDistance`)
+
+**Real, previously-shipped false positive (v1.40.0)**: walking produced the
+"🚗 מזוהה נסיעה" suggestion. Everything above this section is about making
+detection *fire*; this is the first bug about it firing when it shouldn't.
+
+**The culprit is not the one the symptom points at.** GPS end-suggestion has two
+independent triggers, and the speed one was never involved — walking is ~1.4 m/s
+against a 7 m/s threshold. `#checkGpsDistance` had **no speed condition at all**:
+being 300m from the parked car was sufficient, however you got there. It was
+written that way deliberately, to catch movement the speed check misses on devices
+with unreliable `coords.speed` — but "no speed condition" also means "on foot
+counts". Raising the speed bar alone would have left the reported bug exactly
+where it was, so the fix does both halves:
+
+- **Speed threshold 13.9 m/s (50 km/h)**, well past any walking or cycling speed,
+  so a single sample crossing it is real evidence of a vehicle.
+- **Distance requires corroborating evidence** — `CFG.gpsVehicleEvidenceMs` (10s)
+  accumulated above that threshold — before it may fire at all. Seconds, not
+  minutes, so it still fires promptly on a real drive (it remains the trigger that
+  catches most real departures, long before the speed trigger's own duration is
+  reached) while staying unreachable on foot. A short accumulation rather than
+  "any one sample above threshold" also tolerates a single spurious GPS spike.
+- **Accumulated, not continuous.** `speedAccumMs`/`#state.gpsSpeedAccumMs` is total
+  time observed at vehicle speed, not a "sustained since" timestamp. A continuous
+  timer resets at every red light, which would make the 2-minute speed requirement
+  nearly unreachable in city driving. A below-threshold sample therefore never
+  clears the accumulator — a stop at a light does not make the preceding driving
+  un-happen.
+- **Speed is derived when the platform reports none.** `GpsDecisionEngine
+  .effectiveSpeed()` / `#effectiveSpeed()` fall back to Δdistance/Δtime between
+  consecutive fixes. This is what makes requiring speed evidence safe: the original
+  justification for leaving distance unconditional was precisely that
+  `coords.speed`/`Location.hasSpeed()` is absent or a hard 0 on many real devices.
+
+**Three details that are load-bearing, each of which silently breaks the feature
+in a different direction if changed:**
+
+1. **An unknown speed is ignored entirely — the sample clock included.** Unknown is
+   not evidence of having been stationary, and advancing `lastSampleAt` on an
+   unknown sample would shrink the interval credited to the next *known* one. Since
+   a derived speed represents the time since the last known reading (not since the
+   last fix of any kind), doing that would under-count accumulated evidence by
+   roughly the fix rate — a drive would accumulate at a fraction of real time and
+   the 2-minute threshold would take far longer than 2 minutes of driving.
+2. **`sampleCapMs` (15s) caps any single sample's contribution.** Without it a long
+   gap with no fixes (app suspended while parked) followed by one fast sample dumps
+   the entire gap into the accumulator and fires immediately.
+3. **`gpsDerivedSpeedMinIntervalMs` (5s) is the minimum interval a speed may be
+   *derived* over, and the caller must hold its previous-fix baseline until the
+   interval reaches it.** Consecutive fixes a second apart are dominated by GPS
+   jitter — 20m of error over 1s reads as 20 m/s, past the vehicle threshold — so
+   deriving over a short interval fabricates exactly the vehicle evidence this
+   whole change exists to require. And if the caller advanced the baseline on every
+   fix instead, every interval would stay at the update period and derivation would
+   be permanently unavailable. The guard lives in the engine; the baseline-advance
+   policy lives with the caller's own state, in both languages.
+
+**Two implementations, no shared source** — `GpsDecisionEngine.kt` (the native
+watch, which is what runs while the app is closed) and `js/app.js` (the live
+`watchPosition` path). The five constants are duplicated between `js/config.js` and
+`ParkingForegroundService.kt`, same as every other JS/Kotlin constant pair here;
+the release-checklist skill checks them against each other, because a drift is
+invisible — both sides keep working and just decide differently depending on
+whether the app happened to be open.
+
+The heartbeat line carries `vehEvid=` (accumulated evidence, in seconds) alongside
+the existing `gpsFixes=`/`dist=`, so "fixes arrive, distance is large, nothing was
+suggested" is decidable from one line rather than being the new ambiguous silence.
+
+**Unchanged**: the suggestion still always requires confirmation and never ends a
+parking by itself, and the 300m distance threshold is the same as before.
+
 ### Notification action buttons (confirmations answerable from the shade)
 
 The two notifications that ask the user to *decide* something — GPS "the car
@@ -1271,8 +1344,10 @@ small, independently-tested, non-breaking stages:
    verified manually/via the diagnostic log on a real device. The speed/distance/
    duration threshold constants are duplicated as Kotlin constants in
    `ParkingForegroundService` (there is no single shared source between JS and
-   Kotlin) — keep them in sync with `js/config.js`'s `CFG.gpsSpeedThreshold`/
-   `gpsSpeedDuration`/`gpsDistanceThreshold` if those ever change.
+   Kotlin) — keep all five in sync with `js/config.js`'s `CFG.gpsSpeedThreshold`/
+   `gpsSpeedDuration`/`gpsVehicleEvidenceMs`/`gpsSpeedSampleCapMs`/
+   `gpsDerivedSpeedMinIntervalMs`/`gpsDistanceThreshold` if those ever change
+   (see "Vehicle-movement detection" above).
 5. **✅ Done**: `BluetoothClassicPlugin.maybeRecordPendingAction()` — the first half of
    flipping Bluetooth to live, split out the same way Bluetooth's engine (step 1) and
    GPS's engine (step 3) preceded their own wiring steps. On every real
@@ -1524,7 +1599,8 @@ round-trip, before the next stage builds on it.
 - [ ] Bluetooth: global toggles in BT settings screen apply to all linked vehicles
 - [ ] Bluetooth: per-vehicle toggles in BT settings screen work independently
 - [ ] Bluetooth: unlink device from vehicle removes all auto-behavior
-- [ ] GPS: walking >300m away from a parked car with GPS auto-end enabled shows the end-parking suggestion (confirmation only, does not auto-end)
+- [ ] **GPS (v1.40.0): walking >300m away from a parked car must NOT show the end-parking suggestion** — this is the false positive the vehicle-evidence gate exists to stop. Driving >300m away still shows it (confirmation only, never auto-ends), and should do so within a minute or so of setting off, not only after the full 2-minute speed accumulation
+- [ ] GPS (v1.40.0): drive away, then check the diagnostic log's `GPS` category — a "vehicle-speed evidence reached" entry should appear before the suggestion. If the suggestion never fires on a real drive, that entry is the discriminator: absent means no sample ever crossed 50 km/h (a speed-reporting/derivation problem), present means the trigger is armed and the distance threshold simply wasn't crossed yet
 - [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
 - [ ] Android APK: installing a new build over an already-installed older build works without uninstalling first

@@ -168,10 +168,35 @@ step broken or skipped:
   transition in `setReasonActive()` (`parkingWasActive != parkingIsActive`), not on
   every call — `WidgetDataPlugin.update()` fires on every parking-state sync (photo
   added, description edited, etc.), not just session start; a regression back to
-  "reset on every active=true call" would silently wipe the sustained-speed timer
-  before it ever reaches `CFG.gpsSpeedDuration`, making the speed check permanently
-  unable to fire without any test catching it (this logic lives in a `Service`,
-  which the `core` package's unit tests can't reach).
+  "reset on every active=true call" would silently wipe the accumulated
+  vehicle-speed evidence (`GpsDecisionState.speedAccumMs`) before it ever reaches
+  `CFG.gpsSpeedDuration` — and, worse since v1.40.0, before it reaches
+  `CFG.gpsVehicleEvidenceMs`, which the distance trigger now also depends on, so
+  BOTH triggers would become permanently unable to fire without any test catching
+  it (this logic lives in a `Service`, which the `core` package's unit tests can't
+  reach).
+- Confirm the five GPS constants are identical in both languages — `js/config.js`'s
+  `gpsSpeedThreshold`/`gpsSpeedDuration`/`gpsVehicleEvidenceMs`/
+  `gpsSpeedSampleCapMs`/`gpsDerivedSpeedMinIntervalMs` against
+  `ParkingForegroundService.kt`'s `GPS_SPEED_THRESHOLD_MPS`/`GPS_SPEED_DURATION_MS`/
+  `GPS_VEHICLE_EVIDENCE_MS`/`GPS_SPEED_SAMPLE_CAP_MS`/
+  `GPS_DERIVED_SPEED_MIN_INTERVAL_MS`. There is no shared source between JS and
+  Kotlin, and a drift here is invisible: both sides keep working, they just decide
+  differently depending on whether the app happened to be open — the hardest kind
+  of report to diagnose, since it reproduces only in one of the two states.
+- Confirm `js/app.js`'s `#checkGpsDistance()` still gates on
+  `this.#state.gpsSpeedAccumMs >= CFG.gpsVehicleEvidenceMs`, and
+  `GpsDecisionEngine.checkDistance()` on its `vehicleEvidenceMs` parameter. This is
+  the v1.40.0 walking-false-positive fix (see CLAUDE.md "Vehicle-movement
+  detection") — distance alone says how far, never how. A regression removes no
+  functionality and breaks no test on either side; it just starts telling people
+  out for a walk that their car has moved.
+- Confirm `js/app.js` resets GPS detection state ONLY through
+  `#resetGpsDetection()` (grep for direct `gpsSpeedAccumMs`/`gpsLastSpeedSampleAt`/
+  `gpsPrevFix` assignments outside it and `#checkGpsSpeed`/`#effectiveSpeed`) — the
+  four fields are only meaningful relative to one another, and a call site that
+  reset a subset would carry the previous session's evidence into a new parking,
+  which is exactly what the distance trigger's gate relies on not happening.
 - Confirm `js/widget-bridge.js`'s `syncVehicles()` call includes
   `gpsAutoEndEnabled` at the top level (not per-vehicle) — `GpsDecisionEngine`'s
   shadow evaluation reads it from `WidgetDataPlugin`'s `KEY_GPS_AUTO_END_ENABLED`;

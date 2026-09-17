@@ -33,7 +33,9 @@ class FindMyCarApp {
     vehicleDeleteId:      null,
     btPendingVehicleId:   null,  // vehicle awaiting end-parking confirmation
     btPendingLabel:       null,  // BT device label that triggered the confirm modal
-    gpsSpeedSince:        null,  // Date.now() when speed first exceeded threshold
+    gpsSpeedAccumMs:      0,     // ms ACCUMULATED at or above CFG.gpsSpeedThreshold this parking session
+    gpsLastSpeedSampleAt: null,  // Date.now() of the previous speed sample, for the interval above
+    gpsPrevFix:           null,  // {lat, lng, at} of the previous position fix, for deriving speed
     gpsEndSuggested:      false, // true after GPS end suggestion shown this session
   };
 
@@ -536,7 +538,7 @@ class FindMyCarApp {
     this.#state.userPos = { lat, lng, accuracy };
     this.#map.updateUserMarker(lat, lng);
     this.#ui.updateDistance(this.#state);
-    this.#checkGpsSpeed(speed);
+    this.#checkGpsSpeed(this.#effectiveSpeed(speed, lat, lng));
     this.#checkGpsDistance(lat, lng);
   }
 
@@ -612,8 +614,7 @@ class FindMyCarApp {
     };
 
     this.#state.current       = parking;
-    this.#state.gpsEndSuggested = false;
-    this.#state.gpsSpeedSince   = null;
+    this.#resetGpsDetection();
     VehicleController.setCurrent(this.#state.activeVehicleId, parking);
 
     this.#map.addParkingMarker(loc.lat, loc.lng, null);
@@ -692,8 +693,7 @@ class FindMyCarApp {
     };
 
     this.#state.current         = parking;
-    this.#state.gpsEndSuggested = false;
-    this.#state.gpsSpeedSince   = null;
+    this.#resetGpsDetection();
     VehicleController.setCurrent(vehicleId, parking);
 
     this.#map.addParkingMarker(loc.lat, loc.lng, null);
@@ -751,8 +751,7 @@ class FindMyCarApp {
     if (!this.#state.current) return;
     this.#addToHistory(this.#state.current);
     this.#state.current       = null;
-    this.#state.gpsSpeedSince   = null;
-    this.#state.gpsEndSuggested = false;
+    this.#resetGpsDetection();
     VehicleController.removeCurrent(this.#state.activeVehicleId);
     this.#map.removeParkingMarker();
     this.#stopTimer();
@@ -781,8 +780,7 @@ class FindMyCarApp {
     this.#state.activeVehicleId  = id;
     this.#state.current          = VehicleController.getCurrent(id);
     this.#state.history          = VehicleController.getHistory(id);
-    this.#state.gpsSpeedSince    = null;
-    this.#state.gpsEndSuggested  = false;
+    this.#resetGpsDetection();
 
     if (this.#state.current) {
       this.#map.addParkingMarker(
@@ -1021,8 +1019,7 @@ class FindMyCarApp {
     if (isActive) {
       this.#state.current         = null;
       this.#state.history         = hist;
-      this.#state.gpsSpeedSince   = null;
-      this.#state.gpsEndSuggested = false;
+      this.#resetGpsDetection();
       this.#map.removeParkingMarker();
       this.#stopTimer();
       this.#releaseWakeLock();
@@ -1201,6 +1198,19 @@ class FindMyCarApp {
     return Store.get(CFG.keys.gpsAutoEnd, { enabled: false });
   }
 
+  // Every GPS-detection field, reset as a unit. They are only meaningful
+  // relative to one another — accumulated vehicle-speed evidence, the sample
+  // clock that interval math is measured from, and the previous fix that speed
+  // is derived from — so a call site that reset a subset would silently carry
+  // the last session's evidence into the next parking, which is exactly what
+  // the distance trigger's new gate relies on NOT happening.
+  #resetGpsDetection() {
+    this.#state.gpsSpeedAccumMs      = 0;
+    this.#state.gpsLastSpeedSampleAt = null;
+    this.#state.gpsPrevFix           = null;
+    this.#state.gpsEndSuggested      = false;
+  }
+
   // ── DAILY STATUS NOTIFICATION ───────────────────────────────────
   // Global master switch — Android-only (no PWA equivalent, see
   // js/widget-bridge.js). Reading this here (rather than a plain Store.get
@@ -1211,36 +1221,84 @@ class FindMyCarApp {
     return Store.get(CFG.keys.dailyStatus, { enabled: false });
   }
 
+  // Best available speed in m/s, or null if genuinely unknown. Mirrors
+  // GpsDecisionEngine.effectiveSpeed() (android/.../core/GpsDecisionEngine.kt).
+  // coords.speed is absent or a hard 0 on plenty of real devices — which is
+  // exactly why #checkGpsDistance used to have no speed condition at all.
+  // Deriving from the distance and time between consecutive fixes removes that
+  // dependency, so requiring speed evidence can't disable detection on them.
+  #effectiveSpeed(reported, lat, lng) {
+    const prev    = this.#state.gpsPrevFix;
+    const now     = Date.now();
+    const elapsed = prev ? now - prev.at : null;
+    // Hold the baseline while the interval is still too short to derive over,
+    // so it can actually grow past the minimum — advancing it on every fix
+    // would keep every interval at the update period (~1s) and make derivation
+    // permanently unavailable.
+    if (elapsed === null || elapsed >= CFG.gpsDerivedSpeedMinIntervalMs) {
+      this.#state.gpsPrevFix = { lat, lng, at: now };
+    }
+    if (reported !== null && reported !== undefined && !Number.isNaN(reported) && reported > 0) return reported;
+    // Consecutive fixes seconds apart are dominated by GPS jitter — 20m of
+    // error over 1s reads as 20 m/s, past the vehicle threshold — so too short
+    // an interval is reported as unknown rather than as fabricated evidence.
+    if (elapsed === null || elapsed < CFG.gpsDerivedSpeedMinIntervalMs) return null;
+    return Utils.distance(lat, lng, prev.lat, prev.lng) / (elapsed / 1000);
+  }
+
+  // Accumulates time observed at vehicle speed, then suggests once enough has
+  // built up. Mirrors GpsDecisionEngine.checkSpeed(). Accumulated rather than
+  // "sustained continuously since": a continuous timer resets at every red
+  // light, which would make a 2-minute requirement unreachable in city driving.
   #checkGpsSpeed(speed) {
     if (!this.#state.current || this.#state.gpsEndSuggested) return;
     if (!this.#getGpsSettings().enabled) return;
-    if (speed === null || speed === undefined || Number.isNaN(speed) || speed < CFG.gpsSpeedThreshold) {
-      this.#state.gpsSpeedSince = null;
-      return;
+
+    // An unknown speed is not evidence of anything — including not evidence of
+    // having been stationary — so it leaves the sample clock alone too.
+    // Advancing it here would shrink the interval credited to the next KNOWN
+    // reading, which is derived over the time since the last known one.
+    if (speed === null || speed === undefined || Number.isNaN(speed)) return;
+
+    const now  = Date.now();
+    const last = this.#state.gpsLastSpeedSampleAt;
+    // First sample of the session has no interval behind it; the cap stops a
+    // long gap with no fixes (screen off while parked) from being dumped into
+    // the accumulator by one fast sample.
+    const delta = last === null ? 0 : Math.min(Math.max(now - last, 0), CFG.gpsSpeedSampleCapMs);
+    this.#state.gpsLastSpeedSampleAt = now;
+
+    // Deliberately NOT reset below the threshold: a stop at a traffic light
+    // does not make the preceding driving un-happen.
+    if (speed < CFG.gpsSpeedThreshold) return;
+
+    const before = this.#state.gpsSpeedAccumMs;
+    this.#state.gpsSpeedAccumMs = before + delta;
+    if (before < CFG.gpsVehicleEvidenceMs && this.#state.gpsSpeedAccumMs >= CFG.gpsVehicleEvidenceMs) {
+      DiagLog.log('GPS', `vehicle-speed evidence reached (${speed.toFixed(1)} m/s) — the distance trigger is now armed`);
     }
-    if (!this.#state.gpsSpeedSince) {
-      this.#state.gpsSpeedSince = Date.now();
-      DiagLog.log('GPS', `sustained speed above threshold (${speed.toFixed(1)} m/s) — timing before suggesting end`);
-    } else if (Date.now() - this.#state.gpsSpeedSince >= CFG.gpsSpeedDuration) {
-      this.#state.gpsSpeedSince = null;
-      this.#suggestGpsEnd();
-    }
+    if (this.#state.gpsSpeedAccumMs >= CFG.gpsSpeedDuration) this.#suggestGpsEnd();
   }
 
-  // Second, independent signal alongside speed: catches movement that
-  // wouldn't cross the speed threshold (e.g. a device that never reports
-  // coords.speed, or being driven away slowly in traffic).
+  // Second, independent signal alongside speed — it fires far sooner than
+  // #checkGpsSpeed's accumulated duration on a normal drive, so it stays the
+  // trigger that catches most real departures. Mirrors
+  // GpsDecisionEngine.checkDistance(), including its vehicle-evidence gate:
+  // distance says how FAR, never HOW, so walking 300m from the car used to
+  // produce a "your car seems to have moved" suggestion.
   #checkGpsDistance(lat, lng) {
     if (!this.#state.current || this.#state.gpsEndSuggested) return;
     if (!this.#getGpsSettings().enabled) return;
     const { lat: pLat, lng: pLng } = this.#state.current.location;
-    if (Utils.distance(lat, lng, pLat, pLng) >= CFG.gpsDistanceThreshold) this.#suggestGpsEnd();
+    if (Utils.distance(lat, lng, pLat, pLng) < CFG.gpsDistanceThreshold) return;
+    if (this.#state.gpsSpeedAccumMs < CFG.gpsVehicleEvidenceMs) return;
+    this.#suggestGpsEnd();
   }
 
   #suggestGpsEnd() {
     if (this.#state.gpsEndSuggested) return; // race guard: speed+distance can both fire on the same position update
+    this.#resetGpsDetection();
     this.#state.gpsEndSuggested = true;
-    this.#state.gpsSpeedSince   = null;
     DiagLog.log('GPS', 'showing end-parking suggestion (speed or distance threshold crossed)');
     this.#ui.openModal('gpsEndModal');
     this.#notifyIfBackground(
