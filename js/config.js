@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.39.0',
+  version: '1.40.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -21,9 +21,16 @@ export const CFG = Object.freeze({
     oemSetup:          'fmc_oem_setup_v1',
     notifTag:          'fmc-parking-active',
   }),
-  gpsSpeedThreshold:    7,    // m/s ≈ 25 km/h — below this = pedestrian/cyclist
-  gpsSpeedDuration:     8000, // ms speed must be sustained before suggesting end
-  gpsDistanceThreshold: 300,  // meters from the saved parking spot before suggesting end (catches slow/no-speed-signal movement e.g. being driven away)
+  // Vehicle-movement detection. See CLAUDE.md "Vehicle-movement detection"
+  // for the reasoning behind each of these — in particular why the distance
+  // trigger is no longer allowed to fire on its own (walking 300m from the car
+  // used to produce a "your car seems to have moved" suggestion).
+  gpsSpeedThreshold:    13.9,   // m/s ≈ 50 km/h — well above any walking/cycling speed, so crossing it is real evidence of a vehicle
+  gpsSpeedDuration:     120000, // ms ACCUMULATED above the threshold before speed alone suggests end (not "continuously since" — red lights must not undo progress)
+  gpsVehicleEvidenceMs: 10000,  // ms accumulated above the threshold before the distance trigger may fire at all — distance says how far, never how
+  gpsSpeedSampleCapMs:  15000,  // ms ceiling on how much any single sample may add, so one fast fix after a long gap can't fill the accumulator at once
+  gpsDerivedSpeedMinIntervalMs: 5000, // ms — shortest interval a speed may be DERIVED over when the device reports none; below this, GPS jitter (20m of error 1s apart reads as 20 m/s) would fabricate vehicle evidence
+  gpsDistanceThreshold: 300,    // meters from the saved parking spot before suggesting end (catches movement the speed check would miss, e.g. stop-and-go traffic)
   // How often the WEB (js/app.js) and SERVICE (ParkingForegroundService.kt)
   // heartbeats log to DiagLog's SERVICE category, proving each is
   // continuously alive — not just at start/stop transitions. No single
@@ -46,6 +53,16 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.40.0',
+      date: '2026-09-17',
+      items: Object.freeze([
+        'תוקן זיהוי תנועה שגוי: הליכה ברגל של 300 מטר מהרכב הפעילה את ההצעה לסיום חניה. בדיקת המרחק פעלה ללא שום תנאי מהירות — היא ידעה כמה התרחקת, אף פעם לא איך — ולכן היא דורשת עכשיו גם עדות אמיתית לנסיעה',
+        'סף הזיהוי הוא כעת 50 קמ"ש, מהירות שאי אפשר להגיע אליה בהליכה או באופניים, במקום 25 קמ"ש',
+        'הזמן שנצבר במהירות נסיעה נספר במצטבר ולא "ברציפות" — עצירה ברמזור כבר לא מאפסת את הספירה ומתחילה מהתחלה',
+        'כשהמכשיר לא מדווח מהירות (קורה בהרבה מכשירים), המהירות מחושבת מהמרחק והזמן בין שתי מדידות — כדי שדרישת המהירות החדשה לא תשבית את הזיהוי דווקא במכשירים האלה',
+      ]),
+    }),
     Object.freeze({
       version: '1.39.0',
       date: '2026-09-16',

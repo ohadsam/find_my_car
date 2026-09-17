@@ -53,13 +53,17 @@ class ParkingForegroundService : Service() {
         private const val NOTIFICATION_ID = 4201
         private val activeReasons = mutableSetOf<String>()
 
-        // Stage 4 of the native background-detection migration: GPS shadow
-        // thresholds mirroring js/config.js's CFG.gpsSpeedThreshold/
-        // gpsSpeedDuration/gpsDistanceThreshold — keep these in sync if
-        // those ever change (there is no single shared source between JS
-        // and Kotlin for these constants).
-        private const val GPS_SPEED_THRESHOLD_MPS = 7.0
-        private const val GPS_SPEED_DURATION_MS = 8000L
+        // GPS thresholds mirroring js/config.js's CFG.gpsSpeedThreshold/
+        // gpsSpeedDuration/gpsVehicleEvidenceMs/gpsSpeedSampleCapMs/
+        // gpsDistanceThreshold — keep these in sync if those ever change
+        // (there is no single shared source between JS and Kotlin for these
+        // constants). See CLAUDE.md "Vehicle-movement detection" for why the
+        // speed bar is set where it is and why distance now needs evidence.
+        private const val GPS_SPEED_THRESHOLD_MPS = 13.9
+        private const val GPS_SPEED_DURATION_MS = 120_000L
+        private const val GPS_VEHICLE_EVIDENCE_MS = 10_000L
+        private const val GPS_SPEED_SAMPLE_CAP_MS = 15_000L
+        private const val GPS_DERIVED_SPEED_MIN_INTERVAL_MS = 5000L
         private const val GPS_DISTANCE_THRESHOLD_M = 300.0
         private const val LOCATION_MIN_TIME_MS = 3000L
         private const val LOCATION_MIN_DISTANCE_M = 5f
@@ -194,6 +198,14 @@ class ParkingForegroundService : Service() {
     private var locationManager: LocationManager? = null
     private var locationListener: LocationListener? = null
     private var gpsShadowState = GpsDecisionState()
+
+    // Previous fix, kept solely so GpsDecisionEngine.effectiveSpeed() can
+    // derive a speed when the platform reports none — Location.hasSpeed() is
+    // false on plenty of real devices, and requiring speed evidence (which the
+    // distance trigger now does) must not silently disable detection on them.
+    private var prevFixLat: Double? = null
+    private var prevFixLng: Double? = null
+    private var prevFixAt: Long? = null
 
     private var heartbeatReceiver: BroadcastReceiver? = null
     private var heartbeatPendingIntent: PendingIntent? = null
@@ -497,6 +509,11 @@ class ParkingForegroundService : Service() {
             } else {
                 sb.append(", lastFix=NEVER")
             }
+            // Accumulated time observed at vehicle speed. Both triggers now
+            // depend on it (distance needs GPS_VEHICLE_EVIDENCE_MS of it before
+            // it may fire at all), so "fixes arrive, distance is large, nothing
+            // suggested" is only decidable with this number in the line.
+            sb.append(", vehEvid=").append(gpsShadowState.speedAccumMs / 1000).append('s')
         } else {
             sb.append(", gpsWatch=off")
         }
@@ -781,10 +798,15 @@ class ParkingForegroundService : Service() {
                 // startForeground() with a freshly resolved type is the
                 // documented way to add a type to an already-running FGS.
                 refreshForegroundServiceType()
-                // New parking session — reset the sustained-speed/already-
-                // suggested state, matching js/app.js resetting
-                // #state.gpsSpeedSince/#state.gpsEndSuggested on every save/swap.
+                // New parking session — reset the accumulated vehicle-speed
+                // evidence, the previous-fix baseline and the already-suggested
+                // flag, matching js/app.js's #resetGpsDetection() on every
+                // save/swap. Carrying evidence across sessions would arm the
+                // distance trigger for a drive that already ended.
                 gpsShadowState = GpsDecisionState()
+                prevFixLat = null
+                prevFixLng = null
+                prevFixAt = null
                 val listener = LocationListener { location -> onLocationShadow(location) }
                 lm.requestLocationUpdates(provider, LOCATION_MIN_TIME_MS, LOCATION_MIN_DISTANCE_M, listener)
                 locationManager = lm
@@ -837,10 +859,31 @@ class ParkingForegroundService : Service() {
             val parkLat = prefs.getFloat(WidgetDataPlugin.KEY_LAT, 0f).toDouble()
             val parkLng = prefs.getFloat(WidgetDataPlugin.KEY_LNG, 0f).toDouble()
 
-            val speed = if (location.hasSpeed()) location.speed.toDouble() else null
+            val now = System.currentTimeMillis()
+            val reported = if (location.hasSpeed()) location.speed.toDouble() else null
+            val prevLat = prevFixLat
+            val prevLng = prevFixLng
+            val prevAt = prevFixAt
+            val movedSincePrev = if (prevLat != null && prevLng != null) {
+                GpsMath.distanceMeters(location.latitude, location.longitude, prevLat, prevLng)
+            } else null
+            val sincePrev = if (prevAt != null) now - prevAt else null
+            val speed = GpsDecisionEngine.effectiveSpeed(
+                reported, movedSincePrev, sincePrev, GPS_DERIVED_SPEED_MIN_INTERVAL_MS,
+            )
+            // Hold the baseline while the interval is still too short to derive
+            // over, so it can actually grow past the minimum — advancing it on
+            // every fix would keep every interval at the update period and make
+            // derivation permanently unavailable.
+            if (sincePrev == null || sincePrev >= GPS_DERIVED_SPEED_MIN_INTERVAL_MS) {
+                prevFixLat = location.latitude
+                prevFixLng = location.longitude
+                prevFixAt = now
+            }
+
             val (afterSpeed, speedDecision) = GpsDecisionEngine.checkSpeed(
                 gpsShadowState, hasParking, gpsEnabled, speed,
-                GPS_SPEED_THRESHOLD_MPS, GPS_SPEED_DURATION_MS, System.currentTimeMillis(),
+                GPS_SPEED_THRESHOLD_MPS, GPS_SPEED_DURATION_MS, GPS_SPEED_SAMPLE_CAP_MS, now,
             )
             gpsShadowState = afterSpeed
             emitGpsShadowDecision("speed", speedDecision)
@@ -849,7 +892,8 @@ class ParkingForegroundService : Service() {
             val distance = GpsMath.distanceMeters(location.latitude, location.longitude, parkLat, parkLng)
             lastFixDistanceM = distance
             val (afterDistance, distanceDecision) = GpsDecisionEngine.checkDistance(
-                gpsShadowState, hasParking, gpsEnabled, distance, GPS_DISTANCE_THRESHOLD_M,
+                gpsShadowState, hasParking, gpsEnabled, distance,
+                GPS_DISTANCE_THRESHOLD_M, GPS_VEHICLE_EVIDENCE_MS,
             )
             gpsShadowState = afterDistance
             emitGpsShadowDecision("distance", distanceDecision)
