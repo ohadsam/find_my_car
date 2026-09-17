@@ -36,6 +36,8 @@ class FindMyCarApp {
     gpsSpeedAccumMs:      0,     // ms ACCUMULATED at or above CFG.gpsSpeedThreshold this parking session
     gpsLastSpeedSampleAt: null,  // Date.now() of the previous speed sample, for the interval above
     gpsPrevFix:           null,  // {lat, lng, at} of the previous position fix, for deriving speed
+    gpsDepartureStarted:  false, // true once vehicle-speed movement began near the parked car — anchors the evidence to THIS car
+    gpsLastAboveAt:       null,  // Date.now() of the last above-threshold sample, for CFG.gpsEvidenceTtlMs expiry
     gpsEndSuggested:      false, // true after GPS end suggestion shown this session
   };
 
@@ -538,7 +540,7 @@ class FindMyCarApp {
     this.#state.userPos = { lat, lng, accuracy };
     this.#map.updateUserMarker(lat, lng);
     this.#ui.updateDistance(this.#state);
-    this.#checkGpsSpeed(this.#effectiveSpeed(speed, lat, lng));
+    this.#checkGpsSpeed(this.#effectiveSpeed(speed, lat, lng), lat, lng);
     this.#checkGpsDistance(lat, lng);
   }
 
@@ -1208,7 +1210,19 @@ class FindMyCarApp {
     this.#state.gpsSpeedAccumMs      = 0;
     this.#state.gpsLastSpeedSampleAt = null;
     this.#state.gpsPrevFix           = null;
+    this.#state.gpsDepartureStarted  = false;
+    this.#state.gpsLastAboveAt       = null;
     this.#state.gpsEndSuggested      = false;
+  }
+
+  // Straight-line distance in metres from the active parking spot, or null if
+  // there is no active parking. Shared by #checkGpsSpeed (which needs it to
+  // decide whether vehicle speed counts as THIS car departing) and
+  // #checkGpsDistance, so both read one definition of "how far from the car".
+  #distanceFromParking(lat, lng) {
+    const p = this.#state.current;
+    if (!p) return null;
+    return Utils.distance(lat, lng, p.location.lat, p.location.lng);
   }
 
   // ── DAILY STATUS NOTIFICATION ───────────────────────────────────
@@ -1250,9 +1264,25 @@ class FindMyCarApp {
   // built up. Mirrors GpsDecisionEngine.checkSpeed(). Accumulated rather than
   // "sustained continuously since": a continuous timer resets at every red
   // light, which would make a 2-minute requirement unreachable in city driving.
-  #checkGpsSpeed(speed) {
+  #checkGpsSpeed(speed, lat, lng) {
     if (!this.#state.current || this.#state.gpsEndSuggested) return;
     if (!this.#getGpsSettings().enabled) return;
+
+    const now = Date.now();
+
+    // Expire stale evidence FIRST, before the unknown-speed return below:
+    // going stale is a function of elapsed time, not of whether this
+    // particular fix happened to carry a usable speed. gpsDepartureStarted is
+    // deliberately NOT cleared — the accumulator is the gate the distance
+    // trigger reads and walking can never refill it, while clearing the flag
+    // would break sitting in traffic near the car for longer than the TTL and
+    // then driving off.
+    const lastAbove = this.#state.gpsLastAboveAt;
+    if (lastAbove !== null && now - lastAbove >= CFG.gpsEvidenceTtlMs) {
+      DiagLog.log('GPS', 'vehicle-speed evidence expired (stale) — the distance trigger is disarmed again');
+      this.#state.gpsSpeedAccumMs = 0;
+      this.#state.gpsLastAboveAt  = null;
+    }
 
     // An unknown speed is not evidence of anything — including not evidence of
     // having been stationary — so it leaves the sample clock alone too.
@@ -1260,7 +1290,6 @@ class FindMyCarApp {
     // reading, which is derived over the time since the last known one.
     if (speed === null || speed === undefined || Number.isNaN(speed)) return;
 
-    const now  = Date.now();
     const last = this.#state.gpsLastSpeedSampleAt;
     // First sample of the session has no interval behind it; the cap stops a
     // long gap with no fixes (screen off while parked) from being dumped into
@@ -1272,10 +1301,20 @@ class FindMyCarApp {
     // does not make the preceding driving un-happen.
     if (speed < CFG.gpsSpeedThreshold) return;
 
+    // Vehicle speed — but is it THIS car leaving? Only if the departure already
+    // began near the spot, or this sample itself is still near it. Walking to a
+    // station and then riding a train is a commute, not the car departing.
+    const fromCar = this.#distanceFromParking(lat, lng);
+    if (!this.#state.gpsDepartureStarted && fromCar !== null && fromCar > CFG.gpsDepartureRadius) {
+      return;
+    }
+
     const before = this.#state.gpsSpeedAccumMs;
-    this.#state.gpsSpeedAccumMs = before + delta;
+    this.#state.gpsSpeedAccumMs     = before + delta;
+    this.#state.gpsDepartureStarted = true;
+    this.#state.gpsLastAboveAt      = now;
     if (before < CFG.gpsVehicleEvidenceMs && this.#state.gpsSpeedAccumMs >= CFG.gpsVehicleEvidenceMs) {
-      DiagLog.log('GPS', `vehicle-speed evidence reached (${speed.toFixed(1)} m/s) — the distance trigger is now armed`);
+      DiagLog.log('GPS', `vehicle-speed evidence reached (${speed.toFixed(1)} m/s, ${Math.round(fromCar ?? -1)}m from the car) — the distance trigger is now armed`);
     }
     if (this.#state.gpsSpeedAccumMs >= CFG.gpsSpeedDuration) this.#suggestGpsEnd();
   }
@@ -1289,8 +1328,10 @@ class FindMyCarApp {
   #checkGpsDistance(lat, lng) {
     if (!this.#state.current || this.#state.gpsEndSuggested) return;
     if (!this.#getGpsSettings().enabled) return;
-    const { lat: pLat, lng: pLng } = this.#state.current.location;
-    if (Utils.distance(lat, lng, pLat, pLng) < CFG.gpsDistanceThreshold) return;
+    const fromCar = this.#distanceFromParking(lat, lng);
+    if (fromCar === null || fromCar < CFG.gpsDistanceThreshold) return;
+    // The evidence this reads was already anchored and expiry-checked by
+    // #checkGpsSpeed on this same position update — see its comments.
     if (this.#state.gpsSpeedAccumMs < CFG.gpsVehicleEvidenceMs) return;
     this.#suggestGpsEnd();
   }

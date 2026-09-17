@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.40.0',
+  version: '1.41.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -30,6 +30,8 @@ export const CFG = Object.freeze({
   gpsVehicleEvidenceMs: 10000,  // ms accumulated above the threshold before the distance trigger may fire at all — distance says how far, never how
   gpsSpeedSampleCapMs:  15000,  // ms ceiling on how much any single sample may add, so one fast fix after a long gap can't fill the accumulator at once
   gpsDerivedSpeedMinIntervalMs: 5000, // ms — shortest interval a speed may be DERIVED over when the device reports none; below this, GPS jitter (20m of error 1s apart reads as 20 m/s) would fabricate vehicle evidence
+  gpsDepartureRadius:   150,    // meters — vehicle-speed evidence only counts as THIS car departing if it starts within this radius of the parking spot (walking to a station and then riding a train is a commute, not the car leaving)
+  gpsEvidenceTtlMs:     600000, // ms (10 min) — accumulated evidence expires after this long with no further above-threshold sample, so one ride early in a parking session can't leave the distance trigger armed for a plain walk hours later
   gpsDistanceThreshold: 300,    // meters from the saved parking spot before suggesting end (catches movement the speed check would miss, e.g. stop-and-go traffic)
   // How often the WEB (js/app.js) and SERVICE (ParkingForegroundService.kt)
   // heartbeats log to DiagLog's SERVICE category, proving each is
@@ -53,6 +55,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.41.0',
+      date: '2026-09-17',
+      items: Object.freeze([
+        'המשך לתיקון של 1.40.0: הדרישה ל"עדות לנסיעה" מנעה הליכה, אבל העדות עצמה עדיין אמרה רק "הטלפון נע מהר מתישהו" — לא "הרכב הזה נסע". עכשיו העדות נספרת רק אם התנועה המהירה התחילה ליד הרכב החונה (עד 150 מטר)',
+        'תוקן: הליכה לתחנה ואז נסיעה ברכבת/אוטובוס כבר לא מזוהה כ"הרכב זז" — זו נסיעה שלך, לא של הרכב',
+        'תוקן: עדות שנצברה פעם אחת נשארה תקפה עד סוף החניה, כך שנסיעה מוקדמת השאירה את ההתראה דרוכה גם להליכה רגילה שעות אחר כך. העדות פגה עכשיו אחרי 10 דקות ללא תנועה מהירה נוספת',
+      ]),
+    }),
     Object.freeze({
       version: '1.40.0',
       date: '2026-09-17',
