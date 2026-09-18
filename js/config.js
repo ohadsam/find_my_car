@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.43.0',
+  version: '1.43.1',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -65,6 +65,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.43.1',
+      date: '2026-09-18',
+      items: Object.freeze([
+        'תוקן (אנדרואיד): זיהוי ההליכה החדש יכול היה לא לפעול כלל אחרי הפעלה מחדש של הטלפון או אחרי עדכון האפליקציה — שירות הרקע היה משדרג את הרשאת המיקום שלו רק כשיש חניה פעילה, ודווקא לזיהוי ההליכה אין חניה פעילה בהגדרה',
+      ]),
+    }),
     Object.freeze({
       version: '1.43.0',
       date: '2026-09-18',
