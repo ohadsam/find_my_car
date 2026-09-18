@@ -1157,6 +1157,73 @@ suggested" is decidable from one line rather than being the new ambiguous silenc
 **Unchanged**: the suggestion still always requires confirmation and never ends a
 parking by itself, and the 300m distance threshold is the same as before.
 
+### Walk-away parking suggestion (`WalkAwayEngine` + `WalkAwayDetector`)
+
+`bluetoothAutoStart` saves a parking the instant the Bluetooth link drops.
+That is right for people who always park exactly where they disconnect, and
+wrong every time the link drops at a red light, in a tunnel, or while the car
+is still moving. With it OFF, a disconnect produces nothing at all. This fills
+that gap with the one signal that genuinely separates "parked and walked off"
+from "the link dropped": the phone then moves at **walking** speed, **away
+from where it disconnected**.
+
+**The location is the disconnect fix, never the answer-time fix.** By the time
+walking is confirmed the user is tens of metres from the car, so
+`PendingParkingSuggestion` carries the `getLastKnownLocation()` fix captured at
+disconnect, and `#saveNewParking(presetLoc)` saves at that. Saving where they
+stand when they tap would be worse than not asking. `presetLoc` is an optional
+parameter on the **existing** save path, not a second save — geocoding, widget
+sync, the notification and the wake lock all behave identically because it is
+literally the same method.
+
+**Native by necessity, not by preference.** Walk detection needs continuous
+location updates, and `navigator.geolocation.watchPosition` — the only thing
+JS could use — is throttled the moment the Activity stops being visible, which
+is exactly the window this runs in. `ParkingForegroundService`'s own
+`LocationManager` watch is not. So unlike `BtPendingActionRecorder`,
+`WalkAwayDetector` is deliberately **not** gated on the WebView being
+unreachable: there is no live JS path to defer to.
+
+**The location watch now has two independent consumers**, and that is the one
+structural change to existing behaviour. It used to be tied to the `"parking"`
+reason alone; a walk-away window needs it while there is deliberately *no*
+parking. Every start/stop decision goes through `shouldWatchLocation()`
+(`parking reason || open window`) so neither consumer can switch the other's
+watch off. The GPS decision state is therefore reset in
+`onParkingActiveChanged()` rather than inside `updateLocationWatch()`: when the
+watch is already running for a walk-away window, `updateLocationWatch(true)`
+returns early and would never reset it, carrying stale evidence into the new
+parking.
+
+**Thresholds are set to fail toward asking, never toward silence** — the
+v1.42.0 lesson applied from the start. `walkMinSpeed` (0.5 m/s) is low enough
+that GPS jitter can nudge the accumulator; that is deliberate, because
+`walkMinDisplacement` (30m) is what actually proves the user left, and jitter
+does not move anyone 30 metres. `walkWindowMs` is 10 minutes because sitting in
+the car for a few minutes before getting out is normal.
+
+**The window is abandoned** when speed exceeds `walkAbortSpeed` (6 m/s — the
+car never stopped here, so any later walk happens at a destination the
+disconnect fix knows nothing about), when the vehicle reconnects (they got back
+in), or when the window expires.
+
+**Opt-in per vehicle** (`walkAwaySuggest`, default false) and only meaningful
+with `bluetoothAutoStart` OFF — `WalkAwayDetector.eligible()` enforces both,
+plus "this vehicle has no parking already". The toggle sits in the Bluetooth
+settings modal next to the auto-start one, with a subtitle saying when it
+applies, so the relationship between the two is visible rather than hidden.
+
+**Answering**: the notification's "שמור חניה" button routes through
+`WidgetActionReceiver`'s `ACTION_SAVE_AT` → `performWidgetAction('saveAt')`,
+the same headless path as every other shade button, so it inherits the dedupe
+guard, the `PendingWidgetActionStore` replay queue and the result notification
+for free. The in-app `walkAwayModal` calls the *same* method. **Its confirm
+handler must use `this.#ui.closeModal()`, not `#closeModal()`** — the latter
+clears the pending suggestion (correct for a dismissal or a backdrop tap) and
+would delete the recorded location before `saveAt` could read it.
+
+Diagnostic-log category is `WALK`.
+
 ### Notification action buttons (confirmations answerable from the shade)
 
 The two notifications that ask the user to *decide* something — GPS "the car
@@ -1676,6 +1743,13 @@ round-trip, before the next stage builds on it.
 - [ ] **GPS (v1.42.0 — the regression that mattered): drive away in ORDINARY CITY TRAFFIC, not on a highway.** The suggestion must appear within a minute or two of setting off. Check a `SERVICE` heartbeat during the drive: `vehEvid` must be growing while `dist` grows. `vehEvid=0s` at `dist=1000m` is the exact v1.40.0/v1.41.0 failure — it means the speed bar is above real traffic speed again, and the distance trigger is disarmed for the whole drive
 - [ ] **Android APK (v1.42.0): tap a widget action while the app is COLD (killed, or just launched and still loading).** It must either happen immediately or show "יבוצע כשהאפליקציה תיפתח מחדש" and then actually apply on the next open — never nothing at all. The diagnostic log's `WIDGET` category must contain either a `performWidgetAction(...)` line or a "queued widget action ... for replay" line for every single tap; a tap with no line either way is the silent black hole returning
 - [ ] Android APK (v1.42.0): tap a widget action once and confirm exactly ONE parking is saved and ONE notification posted — two of each means the dedupe guard regressed
+- [ ] **Android APK (v1.43.0, walk-away): turn on "הצע חניה אחרי שהתרחקת" for a vehicle whose auto-start is OFF, drive somewhere, park, and walk away.** Within ~10-30 seconds of walking a "🅿️ לשמור את החניה?" notification must arrive with a "שמור חניה" button. Tapping it saves the parking **at the spot where Bluetooth disconnected**, not where you are standing — check the saved address is the car's, not yours
+- [ ] Android APK (v1.43.0): disconnect and then stay in the car / drive on (a red light or tunnel drop) — no suggestion must appear, and the diagnostic log's `WALK` category shows the window being abandoned ("still moving at vehicle speed")
+- [ ] Android APK (v1.43.0): disconnect, then sit in the car for 3-4 minutes before getting out and walking — the suggestion must STILL appear. A window that expires while you are doing paperwork is the failure mode to watch for
+- [ ] Android APK (v1.43.0): with auto-start ON, the walk-away suggestion must never appear (the parking is already saved outright) — and with the per-vehicle toggle off, it must never appear either
+- [ ] Android APK (v1.43.0): reconnect to the car shortly after disconnecting — the `WALK` log shows the window closed ("reconnected to the vehicle") and no suggestion arrives
+- [ ] Android APK (v1.43.0): confirm drive-away detection still works unchanged in the same session — the walk-away window shares the location watch with it, so a regression here would show up as the GPS end-suggestion no longer firing
+- [ ] **Every release: `npm run check:syntax` passes.** v1.42.0 shipped an unescaped apostrophe in a Hebrew changelog string that broke `js/config.js` and with it the entire app, through a fully green CI — unit tests do not import config, and Gradle packages a broken asset happily. This gate is the only thing that catches it
 - [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
 - [ ] Android APK: installing a new build over an already-installed older build works without uninstalling first

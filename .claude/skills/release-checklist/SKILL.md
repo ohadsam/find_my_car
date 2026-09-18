@@ -14,6 +14,18 @@ Run every check below. Report a single pass/fail table, channel by channel, then
 one-line overall verdict. Do not silently skip a check — if a tool or file isn't
 available, report that check as a explicit FAIL/UNKNOWN with the reason, not omit it.
 
+## 0. JS syntax (the gate that must never be skipped)
+
+- Run `npm run check:syntax`. It must pass. This is first for a reason: v1.42.0
+  shipped an unescaped apostrophe inside a Hebrew changelog string, which broke
+  `js/config.js` and therefore the entire app (every module imports `CFG`), and
+  **CI was green end to end** — `npm test` does not import config, `cap:sync`
+  only copies files, and Gradle packaged the broken asset into a working APK
+  build. A syntax error here is total: the app does not start.
+- Confirm `.github/workflows/build-android.yml` still runs `npm run check:syntax`
+  as its own step **before** the Android work, and that `npm test` still chains
+  it. Losing either makes the outage above shippable again.
+
 ## 1. Version consistency (both channels share one version number)
 
 - Read `js/config.js` — note the `version` field (e.g. `1.11.0`).
@@ -222,6 +234,29 @@ step broken or skipped:
 - Confirm `performWidgetAction()` still has its `CFG.widgetActionDedupeMs`
   guard and that it clears `#lastWidgetAction` in the catch branch — without
   that clear, one failed action would suppress the user's retry for 3 seconds.
+- Confirm `ParkingForegroundService.shouldWatchLocation()` is
+  `isParkingReasonActive() || PendingParkingSuggestionStore.getWindow(...) != null`
+  and that every start/stop goes through `refreshLocationWatch()` rather than
+  `updateLocationWatch(isParkingReasonActive())`. The GPS end-suggestion and the
+  walk-away window are two independent consumers of one watch; a regression to
+  the parking-only predicate silently kills walk-away detection, and a
+  walk-away-only one would kill drive-away detection.
+- Confirm the GPS decision state is reset in `onParkingActiveChanged()`, not
+  only inside `updateLocationWatch()` — when the watch is already running for a
+  walk-away window, `updateLocationWatch(true)` returns early and would carry
+  the previous session's evidence into the new parking.
+- Confirm `js/app.js`'s `walkAwayConfirmBtn` handler uses `this.#ui.closeModal()`
+  and NOT `this.#closeModal()`. The latter clears the pending suggestion (right
+  for a dismissal) and would delete the recorded disconnect location before
+  `saveAt` reads it — the parking would then be saved at the user's current
+  position, which is the one outcome this feature exists to avoid.
+- Confirm `WalkAwayDetector.eligible()` still requires all of `walkAwaySuggest`,
+  `!bluetoothAutoStart` and `!hasParking` — dropping the auto-start check makes
+  the app ask about a parking it already saved.
+- Confirm the six walk constants match between `js/config.js`
+  (`walkMinSpeed`/`walkMaxSpeed`/`walkAbortSpeed`/`walkRequiredMs`/
+  `walkMinDisplacement`/`walkWindowMs`) and `ParkingForegroundService.kt`
+  (`WALK_*`), same hand-kept parity as the GPS constants.
 - Confirm `js/widget-bridge.js`'s `syncVehicles()` call includes
   `gpsAutoEndEnabled` at the top level (not per-vehicle) — `GpsDecisionEngine`'s
   shadow evaluation reads it from `WidgetDataPlugin`'s `KEY_GPS_AUTO_END_ENABLED`;

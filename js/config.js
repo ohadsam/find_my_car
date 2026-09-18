@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.42.1',
+  version: '1.43.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -31,6 +31,16 @@ export const CFG = Object.freeze({
   gpsSpeedSampleCapMs:  15000,  // ms ceiling on how much any single sample may add, so one fast fix after a long gap can't fill the accumulator at once
   gpsDerivedSpeedMinIntervalMs: 5000, // ms — shortest interval a speed may be DERIVED over when the device reports none; below this, GPS jitter (20m of error 1s apart reads as 20 m/s) would fabricate vehicle evidence
   gpsEvidenceTtlMs:     600000, // ms (10 min) — accumulated evidence expires after this long with no further above-threshold sample, so one ride early in a parking session can't leave the distance trigger armed for a plain walk hours later
+  // Walk-away parking suggestion (Bluetooth disconnect -> observed walking
+  // away -> offer to save the spot). See CLAUDE.md "Walk-away parking
+  // suggestion". Every bound here is set to fail toward asking rather than
+  // toward silence — the v1.42.0 lesson.
+  walkMinSpeed:         0.5,    // m/s — lower edge of the pedestrian band. Low enough that GPS jitter can nudge the accumulator, which is fine: walkMinDisplacement is what actually proves the user left
+  walkMaxSpeed:         3.0,    // m/s — upper edge of the pedestrian band (~11 km/h)
+  walkAbortSpeed:       6.0,    // m/s (~22 km/h) — above this right after a disconnect the car clearly never stopped here, so the window is abandoned rather than left to fire at some later destination
+  walkRequiredMs:       8000,   // ms accumulated in the pedestrian band before suggesting
+  walkMinDisplacement:  30,     // meters from the disconnect point — pacing beside the car while unloading is walking, but it is not leaving
+  walkWindowMs:         600000, // ms (10 min) — how long after a disconnect the suggestion may still fire; generous, since sitting in the car a few minutes before getting out is normal
   widgetActionDedupeMs: 3000,   // ms — an identical widget/notification action repeated within this window is treated as one tap, not two (a duplicate broadcast saved two parkings and posted two notifications)
   gpsDistanceThreshold: 300,    // meters from the saved parking spot before suggesting end (catches movement the speed check would miss, e.g. stop-and-go traffic)
   // How often the WEB (js/app.js) and SERVICE (ParkingForegroundService.kt)
@@ -55,6 +65,16 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.43.0',
+      date: '2026-09-18',
+      items: Object.freeze([
+        'תכונה חדשה (אנדרואיד): אחרי ניתוק Bluetooth מהרכב, אם המכשיר מזהה שהתרחקת ברגל — האפליקציה מציעה לשמור את החניה. ההצעה מגיעה כהתראה בתריס עם כפתור "שמור חניה", בלי צורך לפתוח את האפליקציה',
+        'המיקום שנשמר הוא זה שנלכד ברגע הניתוק — לא המקום שבו אתה עומד כשאתה עונה, כי עד אז כבר התרחקת',
+        'התכונה היא opt-in לכל רכב בנפרד ("הצע חניה אחרי שהתרחקת" בהגדרות Bluetooth), ורלוונטית רק כשהתחלת חניה אוטומטית כבויה — עם התחלה אוטומטית החניה ממילא נשמרת מיד',
+        'אם אחרי הניתוק אתה עדיין נע במהירות רכב (הבלוטות\' נפל ברמזור או במנהרה) — ההצעה נזנחת, כי הרכב לא עצר שם',
+      ]),
+    }),
     Object.freeze({
       version: '1.42.1',
       date: '2026-09-18',

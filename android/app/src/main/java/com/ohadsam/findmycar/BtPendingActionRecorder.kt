@@ -1,11 +1,7 @@
 package com.ohadsam.findmycar
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
-import android.location.LocationManager
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.ohadsam.findmycar.core.BtConnectDecision
 import com.ohadsam.findmycar.core.BtDecisionEngine
 import com.ohadsam.findmycar.core.BtDisconnectDecision
@@ -64,7 +60,7 @@ object BtPendingActionRecorder {
             } else {
                 for (decision in BtDecisionEngine.onDisconnected(vehicles, label, hasParking)) {
                     if (decision !is BtDisconnectDecision.AutoStart) continue
-                    val (lat, lng) = lastKnownLocation(context)
+                    val (lat, lng) = LastKnownLocation.get(context)
                     record(context, direction, "autoStart", decision.vehicle, label, lat, lng)
                 }
             }
@@ -81,20 +77,5 @@ object BtPendingActionRecorder {
         Log.i(TAG, "recorded pending BT action (WebView unreachable): $entry")
         val title = if (action == "autoEnd") "🚗 חניה הסתיימה אוטומטית" else "🅿️ חניה חדשה תישמר בפתיחה הבאה"
         BackgroundAlertNotifier.show(context, title, "${vehicle.name} — יטופל כשהאפליקציה תיפתח מחדש")
-    }
-
-    /** Best-effort — no fresh location request, just whatever the system already has cached. */
-    private fun lastKnownLocation(context: Context): Pair<Double?, Double?> {
-        return try {
-            val fineGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED
-            if (!fineGranted) return null to null
-            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null to null
-            val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            if (loc != null) loc.latitude to loc.longitude else null to null
-        } catch (e: Exception) {
-            null to null
-        }
     }
 }

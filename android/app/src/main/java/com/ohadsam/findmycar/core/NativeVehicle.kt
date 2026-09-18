@@ -25,4 +25,12 @@ data class NativeVehicle(
     // Store's fmc_cur_{vehicleId} keys directly, since BtDecisionEngine needs
     // this for every vehicle, not only whichever one is currently active.
     val hasParking: Boolean,
+    /**
+     * Opt-in per vehicle: after a Bluetooth disconnect from this vehicle with
+     * [bluetoothAutoStart] OFF, offer to save a parking once the phone is
+     * observed actually walking away (see WalkAwayEngine). Defaults to false so
+     * a new suggestion category is never sprung on existing users — and so the
+     * many NativeVehicle constructions in tests keep compiling unchanged.
+     */
+    val walkAwaySuggest: Boolean = false,
 )
