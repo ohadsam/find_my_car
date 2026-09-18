@@ -74,6 +74,7 @@ export const VehicleController = {
       bluetoothAutoEnd:    false,
       bluetoothAutoStart:  false,
       bluetoothStartPopup: true,
+      walkAwaySuggest:     false,  // opt-in: a new suggestion category is never sprung on existing users
       ...vehicles[idx],
       ...updates,
     };

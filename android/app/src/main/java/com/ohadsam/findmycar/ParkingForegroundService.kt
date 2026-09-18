@@ -29,6 +29,9 @@ import com.ohadsam.findmycar.core.GpsDecisionState
 import com.ohadsam.findmycar.core.GpsMath
 import com.ohadsam.findmycar.core.PendingGpsSuggestion
 import com.ohadsam.findmycar.core.VehicleJsonParser
+import com.ohadsam.findmycar.core.WalkAwayDecision
+import com.ohadsam.findmycar.core.WalkAwayEngine
+import com.ohadsam.findmycar.core.WalkAwayState
 import com.ohadsam.findmycar.widgets.WidgetStatusRefresher
 import java.lang.ref.WeakReference
 
@@ -67,6 +70,18 @@ class ParkingForegroundService : Service() {
         private const val GPS_DERIVED_SPEED_MIN_INTERVAL_MS = 5000L
         private const val GPS_EVIDENCE_TTL_MS = 600_000L
         private const val GPS_DISTANCE_THRESHOLD_M = 300.0
+        // Walk-away detection thresholds, mirroring js/config.js's
+        // CFG.walkMinSpeed/walkMaxSpeed/walkAbortSpeed/walkRequiredMs/
+        // walkMinDisplacement/walkWindowMs — same hand-kept JS<->Kotlin parity
+        // as the GPS constants above (see CLAUDE.md "Walk-away parking
+        // suggestion").
+        private const val WALK_MIN_SPEED_MPS = 0.5
+        private const val WALK_MAX_SPEED_MPS = 3.0
+        private const val WALK_ABORT_SPEED_MPS = 6.0
+        private const val WALK_REQUIRED_MS = 8_000L
+        private const val WALK_MIN_DISPLACEMENT_M = 30.0
+        private const val WALK_WINDOW_MS = 600_000L
+
         private const val LOCATION_MIN_TIME_MS = 3000L
         private const val LOCATION_MIN_DISTANCE_M = 5f
 
@@ -125,12 +140,22 @@ class ParkingForegroundService : Service() {
             // GpsDecisionState would never accumulate a sustained-speed
             // window.
             if (reason == "parking" && parkingWasActive != parkingIsActive) {
-                instanceRef?.get()?.updateLocationWatch(parkingIsActive)
+                instanceRef?.get()?.onParkingActiveChanged(parkingIsActive)
             }
         }
 
         @Synchronized
         private fun isParkingReasonActive(): Boolean = activeReasons.contains("parking")
+
+        /**
+         * A walk-away window opened or closed. The location watch is normally
+         * tied to the "parking" reason, but a walk-away window needs it while
+         * there is deliberately NO parking yet — so the running instance has to
+         * re-evaluate. Same WeakReference nudge as setReasonActive()'s.
+         */
+        fun onWalkAwayWindowChanged(context: Context) {
+            instanceRef?.get()?.refreshLocationWatch()
+        }
 
         // activeReasons is plain in-memory static state — it does NOT survive
         // process death (an OEM background killer, an OOM kill, a reboot, or an
@@ -200,6 +225,11 @@ class ParkingForegroundService : Service() {
     private var locationManager: LocationManager? = null
     private var locationListener: LocationListener? = null
     private var gpsShadowState = GpsDecisionState()
+    private var walkAwayState = WalkAwayState()
+    // The window the current walkAwayState belongs to, so a NEW disconnect
+    // (a different window) resets the accumulator instead of inheriting the
+    // previous one's progress.
+    private var walkAwayWindowAt: Long? = null
 
     // Previous fix, kept solely so GpsDecisionEngine.effectiveSpeed() can
     // derive a speed when the platform reports none — Location.hasSpeed() is
@@ -254,7 +284,7 @@ class ParkingForegroundService : Service() {
             // instance started (e.g. the service starts fresh because of the
             // "parking" reason itself) — setReasonActive()'s direct nudge to
             // instanceRef only helps once an instance already exists.
-            if (isParkingReasonActive()) updateLocationWatch(true)
+            refreshLocationWatch()
             isRunning = true
             Log.i(TAG, "onCreate succeeded — foreground service running (type=$type)")
             NativeLogStore.add(this, TAG, "SERVICE", "onCreate succeeded — foreground service running (type=$type)")
@@ -479,7 +509,7 @@ class ParkingForegroundService : Service() {
         // so a restarted service knows whether to run its GPS watch instead of
         // silently coming back half-dead. See restoreReasons().
         restoreReasons(this)
-        if (isParkingReasonActive()) updateLocationWatch(true)
+        refreshLocationWatch()
         return START_STICKY
     }
 
@@ -735,10 +765,16 @@ class ParkingForegroundService : Service() {
                     BluetoothDevice.ACTION_ACL_CONNECTED -> {
                         BtEventBus.emitConnected(label)
                         BtPendingActionRecorder.maybeRecord(context, label, connected = true)
+                        // Reconnected — they got back in, so there is nothing
+                        // left to ask about the spot they walked away from.
+                        WalkAwayDetector.closeWindow(context, "reconnected to the vehicle")
                     }
                     BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
                         BtEventBus.emitDisconnected(label)
                         BtPendingActionRecorder.maybeRecord(context, label, connected = false)
+                        // Opt-in, and only for vehicles with auto-start OFF —
+                        // see WalkAwayDetector.eligible().
+                        WalkAwayDetector.maybeOpenWindow(context, label)
                     }
                 }
             }
@@ -751,6 +787,37 @@ class ParkingForegroundService : Service() {
         Log.i(TAG, "BT ACL receiver registered")
         NativeLogStore.add(this, TAG, "SERVICE", "BT ACL receiver registered")
         setStatusFlag(WidgetDataPlugin.KEY_BT_RECEIVER_ACTIVE, true)
+    }
+
+    /**
+     * The location watch serves two independent consumers now: the GPS
+     * end-suggestion (while a parking is active) and the walk-away parking
+     * suggestion (while a disconnect window is open, when there is deliberately
+     * NO parking). Every start/stop decision goes through this one predicate so
+     * neither consumer can switch the other's watch off.
+     */
+    private fun shouldWatchLocation(): Boolean =
+        isParkingReasonActive() || PendingParkingSuggestionStore.getWindow(this) != null
+
+    private fun refreshLocationWatch() = updateLocationWatch(shouldWatchLocation())
+
+    /**
+     * A parking genuinely started or ended. The GPS decision state is reset
+     * here rather than inside updateLocationWatch(), because the watch may
+     * already be running for a walk-away window — in which case
+     * updateLocationWatch(true) returns early and would never reset it,
+     * carrying the previous session's evidence into the new parking.
+     */
+    private fun onParkingActiveChanged(active: Boolean) {
+        if (active) resetGpsDecisionState()
+        refreshLocationWatch()
+    }
+
+    private fun resetGpsDecisionState() {
+        gpsShadowState = GpsDecisionState()
+        prevFixLat = null
+        prevFixLng = null
+        prevFixAt = null
     }
 
     // Stage 4 of the native background-detection migration (see CLAUDE.md
@@ -800,15 +867,13 @@ class ParkingForegroundService : Service() {
                 // startForeground() with a freshly resolved type is the
                 // documented way to add a type to an already-running FGS.
                 refreshForegroundServiceType()
-                // New parking session — reset the accumulated vehicle-speed
-                // evidence, the previous-fix baseline and the already-suggested
-                // flag, matching js/app.js's #resetGpsDetection() on every
-                // save/swap. Carrying evidence across sessions would arm the
-                // distance trigger for a drive that already ended.
-                gpsShadowState = GpsDecisionState()
-                prevFixLat = null
-                prevFixLng = null
-                prevFixAt = null
+                // Fresh watch — reset the accumulated vehicle-speed evidence
+                // and the previous-fix baseline, matching js/app.js's
+                // #resetGpsDetection(). onParkingActiveChanged() does this too,
+                // for the case where the watch was ALREADY running for a
+                // walk-away window when a parking started (this branch returns
+                // early then, so it could not do it on its own).
+                resetGpsDecisionState()
                 val listener = LocationListener { location -> onLocationShadow(location) }
                 lm.requestLocationUpdates(provider, LOCATION_MIN_TIME_MS, LOCATION_MIN_DISTANCE_M, listener)
                 locationManager = lm
@@ -902,8 +967,74 @@ class ParkingForegroundService : Service() {
             gpsShadowState = afterDistance
             emitGpsShadowDecision("distance", distanceDecision)
             maybeRecordPendingGpsSuggestion(distanceDecision)
+
+            // Independent of everything above, and wrapped separately so a bug
+            // in the newer feature can never break drive-away detection.
+            runWalkAwayCheck(location, speed, now)
         } catch (e: Exception) {
             Log.w(TAG, "onLocationShadow failed (non-fatal)", e)
+        }
+    }
+
+    /**
+     * Feeds WalkAwayEngine while a disconnect window is open. Runs off the same
+     * location fixes as the GPS end-suggestion above — a parking session and a
+     * walk-away window are mutually exclusive in practice (the window only
+     * opens for a vehicle with no active parking), but nothing here assumes it.
+     */
+    private fun runWalkAwayCheck(location: Location, speed: Double?, now: Long) {
+        try {
+            val window = PendingParkingSuggestionStore.getWindow(this) ?: return
+
+            // A different disconnect than the one the accumulator belongs to:
+            // start counting from scratch rather than inheriting its progress.
+            if (walkAwayWindowAt != window.disconnectedAt) {
+                walkAwayWindowAt = window.disconnectedAt
+                walkAwayState = WalkAwayState()
+            }
+
+            // With no fix captured at disconnect there is no origin to measure
+            // displacement from. Treat the first fix of the window as that
+            // origin — less precise than the real disconnect point, but it is
+            // the difference between the feature working on such devices and
+            // not working at all.
+            val originLat = window.lat
+            val originLng = window.lng
+            if (originLat == null || originLng == null) {
+                PendingParkingSuggestionStore.openWindow(
+                    this,
+                    window.copy(lat = location.latitude, lng = location.longitude),
+                )
+                NativeLogStore.add(
+                    this, TAG, "WALK",
+                    "no fix was captured at disconnect — using the first location update as the parking spot",
+                )
+                return
+            }
+
+            val moved = GpsMath.distanceMeters(location.latitude, location.longitude, originLat, originLng)
+            val (next, decision) = WalkAwayEngine.check(
+                walkAwayState, speed, moved, window.disconnectedAt,
+                WALK_MIN_SPEED_MPS, WALK_MAX_SPEED_MPS, WALK_ABORT_SPEED_MPS,
+                WALK_REQUIRED_MS, WALK_MIN_DISPLACEMENT_M, WALK_WINDOW_MS,
+                GPS_SPEED_SAMPLE_CAP_MS, now,
+            )
+            walkAwayState = next
+
+            when (decision) {
+                is WalkAwayDecision.SuggestStart -> {
+                    WalkAwayDetector.raise(this, window)
+                    WalkAwayDetector.closeWindow(this, "suggestion raised")
+                }
+                is WalkAwayDecision.Abort -> WalkAwayDetector.closeWindow(
+                    this,
+                    if (now - window.disconnectedAt >= WALK_WINDOW_MS) "window expired"
+                    else "still moving at vehicle speed — the car did not stop here",
+                )
+                null -> Unit
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "runWalkAwayCheck failed (non-fatal)", e)
         }
     }
 

@@ -886,6 +886,24 @@
     </div>
   </div>
 
+  <!-- ── WALK-AWAY PARKING SUGGESTION MODAL ── -->
+  <div id="walkAwayModal" class="modal" role="dialog" aria-modal="true" aria-label="לשמור את החניה" style="display:none;">
+    <div class="modal-backdrop" data-close="walkAwayModal"></div>
+    <div class="modal-sheet modal-sheet-alert">
+      <div class="modal-handle"></div>
+      <div class="modal-body alert-body">
+        <div class="alert-icon">🅿️</div>
+        <h3 class="alert-title">לשמור את החניה?</h3>
+        <p class="alert-desc" id="walkAwaySubtitle">נראה שחנית והתרחקת מהרכב</p>
+        <p class="alert-desc">המיקום יישמר מהרגע שבו התנתק ה-Bluetooth, לא מהמקום שבו אתה עכשיו.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn secondary" id="walkAwayDismissBtn">לא עכשיו</button>
+        <button class="modal-btn success" id="walkAwayConfirmBtn">שמור חניה 🅿️</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── BLUETOOTH SETTINGS MODAL ── -->
   <div id="btSettingsModal" class="modal" role="dialog" aria-modal="true" aria-label="הגדרות Bluetooth" style="display:none;">
     <div class="modal-backdrop" data-close="btSettingsModal"></div>
@@ -972,6 +990,7 @@
             <option value="GPS-SHADOW">GPS (השוואה נייטיבית)</option>
             <option value="GPS-PENDING">GPS (ממתין לביצוע)</option>
             <option value="WIDGET">ווידג'טים</option>
+            <option value="WALK">הצעת חניה אחרי הליכה</option>
             <option value="SERVICE">שירות רקע (נייטיב)</option>
             <option value="BRIDGE">תקשורת נייטיב↔אפליקציה</option>
             <option value="DAILY">סטטוס יומי</option>

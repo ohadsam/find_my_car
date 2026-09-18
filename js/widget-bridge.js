@@ -41,6 +41,24 @@ export class WidgetBridge {
     }
   }
 
+  // The walk-away parking suggestion WalkAwayEngine raised natively while the
+  // app wasn't in front of the user (see CLAUDE.md "Walk-away parking
+  // suggestion"). Mirrors getPendingGpsSuggestion's shape exactly.
+  static async getPendingParkingSuggestion() {
+    if (!this.#plugin) return null;
+    try {
+      const { suggestionJson } = await this.#plugin.getPendingParkingSuggestion();
+      const parsed = JSON.parse(suggestionJson ?? 'null');
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  static async clearPendingParkingSuggestion() {
+    await this.#plugin?.clearPendingParkingSuggestion?.().catch(() => {});
+  }
+
   static async clearPendingGpsSuggestion() {
     await this.#plugin?.clearPendingGpsSuggestion?.().catch(() => {});
   }
@@ -117,6 +135,7 @@ export class WidgetBridge {
           lng:                 parking?.location?.lng ?? null,
           timestamp:           parking?.timestamp ?? null,
           dailyStatusEnabled:  v.dailyStatusEnabled !== false,
+          walkAwaySuggest:     !!v.walkAwaySuggest,
         };
       }),
       activeVehicleId: state.activeVehicleId ?? '',

@@ -163,6 +163,12 @@ class FindMyCarApp {
     // rest of init. No-op in the browser/PWA.
     this.#reconcilePendingWidgetActions().catch(() => {});
 
+    // The walk-away parking suggestion (CLAUDE.md "Walk-away parking
+    // suggestion"). Unlike the other reconcilers this also runs on resume —
+    // it is normally raised while the app is merely backgrounded, not killed,
+    // so waiting for the next cold start would show it far too late.
+    this.#reconcilePendingParkingSuggestion().catch(() => {});
+
     const gpsToggle = Utils.el('gpsAutoEndToggle');
     if (gpsToggle) gpsToggle.checked = this.#getGpsSettings().enabled;
 
@@ -459,6 +465,22 @@ class FindMyCarApp {
       if (closeId) this.#closeModal(closeId);
     });
 
+    Utils.el('walkAwayConfirmBtn')?.addEventListener('click', async () => {
+      // Deliberately the plain UI close, NOT #closeModal: that one clears the
+      // pending suggestion (correct for a dismissal), which would delete the
+      // recorded location before saveAt could read it. #acceptWalkAwaySuggestion
+      // clears the store itself once it has the entry in hand.
+      this.#ui.closeModal('walkAwayModal');
+      // Straight through the same headless action a shade button uses, so the
+      // in-app answer and the notification answer cannot drift apart.
+      await this.performWidgetAction('saveAt', null);
+    });
+    Utils.el('walkAwayDismissBtn')?.addEventListener('click', () => {
+      this.#closeModal('walkAwayModal');
+      DiagLog.log('WALK', 'walk-away suggestion dismissed by the user');
+      WidgetBridge.clearPendingParkingSuggestion().catch(() => {});
+    });
+
     Utils.el('installAcceptBtn')?.addEventListener('click',  () => this.#promptInstall());
     Utils.el('installDismissBtn')?.addEventListener('click', () => {
       Utils.el('installBanner').style.display = 'none';
@@ -468,6 +490,7 @@ class FindMyCarApp {
       if (document.visibilityState !== 'visible') return;
       if (this.#state.current) this.#acquireWakeLock();
       if (this.#getBtSettings().enabled) this.#bluetooth.checkNow();
+      this.#reconcilePendingParkingSuggestion().catch(() => {});
     });
 
     document.addEventListener('keydown', e => {
@@ -589,17 +612,28 @@ class FindMyCarApp {
     }
   }
 
-  async #saveNewParking() {
-    this.#ui.showToast('מאתר מיקום... ⏳', 'info');
-    let loc;
-    try {
-      loc = await this.#getCurrentLocation();
-    } catch {
-      if (this.#state.userPos) {
-        loc = this.#state.userPos;
-      } else {
-        this.#ui.showToast('לא ניתן לאתר מיקום. בדוק הרשאות GPS.', 'error');
-        return;
+  /**
+   * @param presetLoc {lat, lng} to save at instead of the live GPS fix. Used
+   *   by the walk-away suggestion, which must save where the car actually is
+   *   (the spot captured when Bluetooth disconnected) rather than where the
+   *   user is standing by the time they answer — they are a walk away by then.
+   *   Everything after the fix is deliberately shared with the normal path:
+   *   geocoding, widget sync, the notification and the wake lock all behave
+   *   identically, because this is the same method, not a second save.
+   */
+  async #saveNewParking(presetLoc = null) {
+    let loc = presetLoc;
+    if (!loc) {
+      this.#ui.showToast('מאתר מיקום... ⏳', 'info');
+      try {
+        loc = await this.#getCurrentLocation();
+      } catch {
+        if (this.#state.userPos) {
+          loc = this.#state.userPos;
+        } else {
+          this.#ui.showToast('לא ניתן לאתר מיקום. בדוק הרשאות GPS.', 'error');
+          return;
+        }
       }
     }
 
@@ -859,6 +893,14 @@ class FindMyCarApp {
         const had = !!this.#state.current;
         this.#resetParking();
         message = had ? `✅ החניה הסתיימה — ${vLabel}` : 'אין חניה פעילה לסיום';
+      } else if (action === 'saveAt') {
+        // The walk-away suggestion's "save" answer. The location comes from the
+        // pending entry (captured when Bluetooth disconnected), never from the
+        // live fix — by now the user is a walk away from the car. Reaching it
+        // through performWidgetAction keeps this on the one headless path, so
+        // it inherits the dedupe guard, the replay queue and the result
+        // notification for free.
+        message = await this.#acceptWalkAwaySuggestion(vLabel);
       } else {
         message = 'פעולה לא מוכרת';
       }
@@ -880,6 +922,76 @@ class FindMyCarApp {
       Notify.show('FindMyCar', errMsg);
       return errMsg;
     }
+  }
+
+  /**
+   * Saves the parking a walk-away suggestion is about, at the spot recorded
+   * when Bluetooth disconnected. Returns the message performWidgetAction
+   * reports back (Toast + notification).
+   *
+   * Idempotency is enforced here rather than by the caller: the suggestion may
+   * have been answered from the shade already, or the vehicle may have gained
+   * a parking some other way in the meantime.
+   */
+  async #acceptWalkAwaySuggestion(vLabel) {
+    const pending = await WidgetBridge.getPendingParkingSuggestion();
+    await WidgetBridge.clearPendingParkingSuggestion();
+    if (!pending) {
+      DiagLog.log('WALK', 'saveAt requested but no walk-away suggestion is outstanding — ignoring');
+      return 'אין הצעת חניה ממתינה';
+    }
+    if (this.#state.current) {
+      DiagLog.log('WALK', 'saveAt ignored — this vehicle already has an active parking', { vehicleName: pending.vehicleName });
+      return 'כבר קיימת חניה פעילה';
+    }
+    const hasFix = typeof pending.lat === 'number' && typeof pending.lng === 'number';
+    // No captured fix: fall back to a live read rather than refusing. Less
+    // accurate, but the user explicitly asked for the spot to be saved.
+    await this.#saveNewParking(hasFix ? { lat: pending.lat, lng: pending.lng, accuracy: 0 } : null);
+    if (!this.#state.current) return 'שמירת חניה נכשלה (בדוק מיקום GPS)';
+    if (pending.label) {
+      this.#state.current.btStartDevice = pending.label;
+      VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
+      this.#syncUI();
+    }
+    DiagLog.log('WALK', `saved the parking from the walk-away suggestion (${hasFix ? 'at the disconnect spot' : 'at the current location — no fix was captured'})`,
+      { vehicleName: pending.vehicleName });
+    return `🅿️ חניה נשמרה — ${vLabel}`;
+  }
+
+  /**
+   * Replays a walk-away suggestion raised natively while the app wasn't in
+   * front of the user, as the same confirmation modal a live one would show.
+   * Never saves a parking by itself — like the GPS end-suggestion, this only
+   * ever asks. Called fire-and-forget from #init() and on every resume, since
+   * the suggestion is typically raised while the app is backgrounded rather
+   * than killed.
+   */
+  async #reconcilePendingParkingSuggestion() {
+    const pending = await WidgetBridge.getPendingParkingSuggestion();
+    if (!pending) return;
+    // Discard rather than ask about a vehicle that is no longer the one this
+    // would act on, mirroring #reconcilePendingGpsSuggestion's own checks.
+    if (pending.vehicleId !== this.#state.activeVehicleId) {
+      DiagLog.log('WALK', `discarding walk-away suggestion for ${pending.vehicleName} — a different vehicle is active now`);
+      await WidgetBridge.clearPendingParkingSuggestion();
+      return;
+    }
+    if (this.#state.current) {
+      DiagLog.log('WALK', 'discarding walk-away suggestion — a parking is already active', { vehicleName: pending.vehicleName });
+      await WidgetBridge.clearPendingParkingSuggestion();
+      return;
+    }
+    const age = Date.now() - (pending.timestamp || 0);
+    if (age > CFG.walkWindowMs) {
+      DiagLog.log('WALK', `discarding walk-away suggestion — it is ${Math.round(age / 60000)} minutes old`);
+      await WidgetBridge.clearPendingParkingSuggestion();
+      return;
+    }
+    DiagLog.log('WALK', 'showing the walk-away parking suggestion', { vehicleName: pending.vehicleName });
+    const sub = Utils.el('walkAwaySubtitle');
+    if (sub) sub.textContent = `${pending.vehicleName || ''} — נראה שחנית והתרחקת מהרכב`;
+    this.#ui.openModal('walkAwayModal');
   }
 
   // Stage 8 of the native background-detection migration (see CLAUDE.md
@@ -1837,6 +1949,7 @@ class FindMyCarApp {
     if (id === 'detailModal')       this.#map.destroyDetailMap();
     if (id === 'btParkingModal') { this.#state.btPendingVehicleId = null; this.#state.btPendingLabel = null; }
     if (id === 'gpsEndModal')    this.#state.gpsEndSuggested = true;
+    if (id === 'walkAwayModal') WidgetBridge.clearPendingParkingSuggestion().catch(() => {});
     if (id === 'settingsView')      return; // views are not modals
     this.#ui.closeModal(id);
   }

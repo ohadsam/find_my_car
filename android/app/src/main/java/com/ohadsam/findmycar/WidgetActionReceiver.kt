@@ -42,6 +42,12 @@ class WidgetActionReceiver : BroadcastReceiver() {
         // than in a second receiver, so every notification button goes through
         // exactly one path.
         const val ACTION_DISMISS = "dismiss"
+        // "Save the parking at the spot recorded in PendingParkingSuggestionStore"
+        // — the walk-away suggestion's accept button. Deliberately carries no
+        // coordinates of its own: the location lives in that store, which both
+        // the live path and the killed-app replay read, so the saved spot is
+        // where the car actually is rather than wherever the user is standing.
+        const val ACTION_SAVE_AT = "saveAt"
         // How long the page gets to acknowledge before the tap is queued
         // instead. Comfortably inside a manifest receiver's ~10s budget.
         private const val ACK_TIMEOUT_MS = 2500L

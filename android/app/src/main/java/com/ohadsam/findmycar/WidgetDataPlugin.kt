@@ -21,6 +21,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.ohadsam.findmycar.core.GpsDecision
 import com.ohadsam.findmycar.core.NativeLogEntryJson
 import com.ohadsam.findmycar.core.PendingGpsSuggestionJson
+import com.ohadsam.findmycar.core.PendingParkingSuggestionJson
 import com.ohadsam.findmycar.core.PendingWidgetActionJson
 import com.ohadsam.findmycar.widgets.ActiveParkingWidgetProvider
 import com.ohadsam.findmycar.widgets.MiniMapWidgetProvider
@@ -250,6 +251,20 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
     // while the WebView was unreachable, so it can replay them through the
     // real performWidgetAction() the next time it resumes. Mirrors
     // getPendingActions/clearPendingActions (BluetoothClassic, Stage 5).
+    @PluginMethod
+    fun getPendingParkingSuggestion(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getPendingParkingSuggestion() called")
+        val json = PendingParkingSuggestionJson.toJson(PendingParkingSuggestionStore.get(context))
+        val ret = JSObject(); ret.put("suggestionJson", json); call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun clearPendingParkingSuggestion(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: clearPendingParkingSuggestion() called")
+        PendingParkingSuggestionStore.clear(context)
+        call.resolve()
+    }
+
     @PluginMethod
     fun getPendingWidgetActions(call: PluginCall) {
         NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getPendingWidgetActions() called")
