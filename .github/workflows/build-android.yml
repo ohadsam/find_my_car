@@ -34,6 +34,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # A syntax error in any shipped JS file stops the whole app from
+      # starting, and nothing downstream notices: cap:sync only copies files
+      # and Gradle happily packages a broken asset into a green APK. This
+      # gate is deliberately before everything else — see
+      # scripts/check-syntax.mjs for the outage that prompted it.
+      - name: Check JS syntax
+        run: npm run check:syntax
+
+      - name: Run unit tests
+        run: npx vitest run
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
