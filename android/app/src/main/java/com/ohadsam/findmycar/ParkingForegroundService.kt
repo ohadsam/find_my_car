@@ -445,7 +445,13 @@ class ParkingForegroundService : Service() {
      * whose "parking" reason never transitions again.
      */
     fun onBecameEligibleForLocationType() {
-        if (!isParkingReasonActive()) return
+        // shouldWatchLocation(), NOT isParkingReasonActive(): the walk-away
+        // window is the second consumer of this watch and deliberately runs
+        // while there is NO parking, so gating on parking alone would leave it
+        // permanently unable to obtain the location capability — the same
+        // "every signal reads healthy while the OS delivers nothing" failure
+        // this restart exists to fix, just reached by the other consumer.
+        if (!shouldWatchLocation()) return
 
         // The real fix (v1.38.1). If this service entered the foreground state
         // WITHOUT the location type — which is exactly what a boot/update
@@ -471,7 +477,7 @@ class ParkingForegroundService : Service() {
         // The watch itself may never have started (or started under a type
         // Android was throttling) — restarting it under the now-correct type
         // is what actually resumes background GPS.
-        updateLocationWatch(true)
+        refreshLocationWatch()
     }
 
     private fun locationPermitted(): Boolean =

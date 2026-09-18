@@ -241,6 +241,16 @@ step broken or skipped:
   walk-away window are two independent consumers of one watch; a regression to
   the parking-only predicate silently kills walk-away detection, and a
   walk-away-only one would kill drive-away detection.
+- Confirm `onBecameEligibleForLocationType()` also gates on
+  `shouldWatchLocation()`, NOT `isParkingReasonActive()` — v1.43.0 unified the
+  watch predicate but left this one behind, and v1.43.1 fixed it. This is the
+  only path that can obtain real background-location capability (a foreground
+  restart), and the walk-away window runs by definition while there is NO
+  parking, so a parking-only gate means walk-away detection can never acquire
+  it after a reboot or an app update: it simply never fires, while the service
+  looks alive and the watch reports "started". Every signal reads healthy —
+  the same failure documented three times over in CLAUDE.md, reached by the
+  other consumer.
 - Confirm the GPS decision state is reset in `onParkingActiveChanged()`, not
   only inside `updateLocationWatch()` — when the watch is already running for a
   walk-away window, `updateLocationWatch(true)` returns early and would carry
