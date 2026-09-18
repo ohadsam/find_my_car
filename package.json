@@ -3,7 +3,8 @@
   "version": "1.2.0",
   "type": "module",
   "scripts": {
-    "test": "vitest run",
+    "check:syntax": "node scripts/check-syntax.mjs",
+    "test": "npm run check:syntax && vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "cap:prepare": "node scripts/prepare-www.mjs",
