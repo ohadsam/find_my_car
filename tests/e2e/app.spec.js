@@ -1,7 +1,17 @@
 import { test, expect } from '@playwright/test';
+import { CFG } from '../../js/config.js';
 
 test.describe('FindMyCar app', () => {
   test.beforeEach(async ({ page }) => {
+    // Every test gets a fresh browser profile, so fmc_seen_version_v1 is unset
+    // and js/app.js correctly treats the run as a first install — which opens
+    // the "מה חדש" modal 1.8s in, over the whole UI. Its backdrop then
+    // intercepts every click, so any test that clicks anything times out. Mark
+    // the current version as already seen before the app boots, so these tests
+    // exercise the normal returning-user state rather than first-launch.
+    await page.addInitScript(v => {
+      try { localStorage.setItem('fmc_seen_version_v1', JSON.stringify(v)); } catch { /* ignore */ }
+    }, CFG.version);
     await page.goto('/');
     // Wait for loading screen to disappear
     await page.waitForSelector('#loadingScreen.fade-out', { timeout: 5000 }).catch(() => {});
@@ -77,6 +87,12 @@ test.describe('FindMyCar app', () => {
     });
     await page.reload();
     await page.waitForTimeout(1500);
+    // An active parking makes ReturnModal auto-open ("חזרה לרכב") over the whole
+    // UI, exactly as a returning user sees it — and its backdrop swallows the
+    // click below. Dismiss it the way a user would, rather than clicking through
+    // a modal that is genuinely in the way.
+    await page.locator('#returnContinueBtn').click();
+    await expect(page.locator('#returnModal')).toBeHidden();
     await page.locator('#navigateBtn').click();
     await expect(page.locator('#navModal')).toBeVisible();
   });
