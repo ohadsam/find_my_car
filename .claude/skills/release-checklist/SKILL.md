@@ -351,6 +351,29 @@ step broken or skipped:
   recording step must stay side-effect-free on parking data; the JS-side replay
   (`#reconcilePendingBtActions()`, Stage 6) is the only place a pending entry is
   allowed to turn into a real save/end.
+- Confirm `BtPendingActionRecorder.maybeRecord()` gates on
+  `MainActivity.isForeground()`, NOT `getActiveWebView() != null`. A real,
+  previously-shipped bug (v1.45.0): a Capacitor event is pushed rather than
+  polled, but its DELIVERY waits for the WebView's JS engine to resume, so with
+  the Activity alive-but-paused the recorder deferred to a live path that was
+  frozen. The disconnect was handled 20+ minutes late, one second after the app
+  was opened, and auto-start saved the parking at the user's position instead of
+  the car's. CLAUDE.md previously asserted Bluetooth was immune to this; it is
+  not.
+- Confirm `emitAndTrack()` puts `at` (System.currentTimeMillis()) on both the
+  `connected` and `disconnected` payloads, and that `#onBtDisconnected` refuses
+  to auto-start past `CFG.btEventMaxAgeMs` when it has NO `presetLoc` — and
+  surfaces that refusal (toast), never silently. Without the timestamp the live
+  handler cannot tell fresh news from thawed news, which is the whole bug.
+- Confirm `#reconcilePendingBtActions()` passes the recorded `lat`/`lng` as
+  `presetLoc` into `#onBtDisconnected`. The recorded location must NOT go back
+  to being informational-only: re-deriving the decision from current settings is
+  right, re-taking the LOCATION at replay time is not — by then it describes the
+  user, not the car.
+- Confirm `#reconcilePendingBtActions()` is called from `visibilitychange` as
+  well as `#init()`, and is guarded against overlapping runs (`#reconcilingBt`).
+  The Activity usually survives the app being closed, so a resume is not a cold
+  start and a pending action would otherwise wait for one.
 - Confirm `js/app.js`'s `#reconcilePendingBtActions()` replays each entry by calling
   the real `#onBtConnected(label)` / `await #onBtDisconnected(label)` — the SAME
   handlers a live event uses — rather than a separate reimplementation that reads

@@ -34,9 +34,17 @@ export class NativeBluetoothController {
       DiagLog.log('BT-RAW', `native "connected" event received, label=${label || '(empty)'}`);
       if (label) this.#onDeviceConnected?.(label);
     });
-    const h2 = this.#plugin.addListener('disconnected', ({ label }) => {
-      DiagLog.log('BT-RAW', `native "disconnected" event received, label=${label || '(empty)'}`);
-      if (label) this.#onDeviceDisconnected?.(label);
+    const h2 = this.#plugin.addListener('disconnected', ({ label, at }) => {
+      // `at` is the native event's own timestamp. It is NOT redundant with
+      // "now": notifyListeners() reaches a paused WebView fine, but delivery
+      // waits for its JS engine to resume, so this callback can run many
+      // minutes after the car actually disconnected. Auto-start saves a
+      // location, which makes that delay the difference between the right spot
+      // and a completely wrong one — so the age has to travel with the event.
+      const ageMs = at ? Date.now() - at : 0;
+      DiagLog.log('BT-RAW', `native "disconnected" event received, label=${label || '(empty)'}` +
+        (ageMs > 5000 ? ` — delivered ${Math.round(ageMs / 1000)}s after it happened (JS was frozen)` : ''));
+      if (label) this.#onDeviceDisconnected?.(label, { at: at ?? null });
     });
     // Stage 2 of the native background-detection migration (see CLAUDE.md):
     // BluetoothClassicPlugin computes what its native BtDecisionEngine

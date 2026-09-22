@@ -306,7 +306,13 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         Log.i(TAG, "emitting ${if (connected) "connected" else "disconnected"} label=$label to JS")
         val eventName = if (connected) "connected" else "disconnected"
         NativeLogStore.add(context, TAG, "BRIDGE", "→ JS: notifyListeners($eventName, label=$label)")
-        val data = JSObject(); data.put("label", label)
+        // `at` is what lets JS tell a freshly-delivered event from one that sat
+        // queued while the page's JS engine was frozen. notifyListeners()
+        // succeeds against a paused WebView, but delivery waits for the engine
+        // to resume — which can be twenty minutes later, and for an auto-START
+        // that means saving the parking wherever the user is standing when they
+        // next open the app instead of where the car is. See CLAUDE.md.
+        val data = JSObject(); data.put("label", label); data.put("at", System.currentTimeMillis())
         notifyListeners(eventName, data)
     }
 

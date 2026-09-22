@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.44.1',
+  version: '1.45.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -41,6 +41,13 @@ export const CFG = Object.freeze({
   walkRequiredMs:       8000,   // ms accumulated in the pedestrian band before suggesting
   walkMinDisplacement:  30,     // meters from the disconnect point — pacing beside the car while unloading is walking, but it is not leaving
   walkWindowMs:         600000, // ms (10 min) — how long after a disconnect the suggestion may still fire; generous, since sitting in the car a few minutes before getting out is normal
+  // How old a native Bluetooth event may be before its location is no longer
+  // trustworthy for auto-start. Delivery of a plugin event waits for the
+  // WebView's JS engine to resume, so a disconnect can surface long after it
+  // happened — and saving "where you are now" is then simply the wrong place.
+  // Two minutes: within that you are still at the car; past it, defer to the
+  // location native recorded at the moment of the disconnect.
+  btEventMaxAgeMs:      120000,
   widgetActionDedupeMs: 3000,   // ms — an identical widget/notification action repeated within this window is treated as one tap, not two (a duplicate broadcast saved two parkings and posted two notifications)
   gpsDistanceThreshold: 300,    // meters from the saved parking spot before suggesting end (catches movement the speed check would miss, e.g. stop-and-go traffic)
   // How often the WEB (js/app.js) and SERVICE (ParkingForegroundService.kt)
@@ -65,6 +72,16 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.45.0',
+      date: '2026-09-22',
+      items: Object.freeze([
+        'תוקן (אנדרואיד) — באג שגרם לשמירת חניה במיקום שגוי: ניתוק Bluetooth בזמן שהאפליקציה סגורה טופל רק כשפתחת אותה, ואז החניה נשמרה איפה שאתה עומד במקום איפה שהרכב',
+        'המיקום נלכד עכשיו בצד הנייטיב ברגע הניתוק עצמו, ומשמש בשמירה — גם אם האפליקציה נפתחה רק שעה אחר כך',
+        'אירוע ניתוק שמגיע באיחור כבר לא ישמור חניה לפי המיקום הנוכחי; אם אין מיקום שנלכד, מוצגת הודעה במקום שמירה במקום הלא נכון',
+        'פעולות Bluetooth שממתינות מיושמות עכשיו גם בחזרה לאפליקציה, לא רק בהפעלה מחדש שלה',
+      ]),
+    }),
     Object.freeze({
       version: '1.44.1',
       date: '2026-09-22',
