@@ -42,7 +42,20 @@ object BtPendingActionRecorder {
 
     fun maybeRecord(context: Context, label: String, connected: Boolean) {
         try {
-            if (MainActivity.getActiveWebView() != null) return // live path already handles it
+            // isForeground(), NOT getActiveWebView() != null — the same correction
+            // Stage 7's GPS path already received, for a reason CLAUDE.md
+            // explicitly (and wrongly) said did not apply to Bluetooth.
+            //
+            // getActiveWebView() stays non-null for the Activity's whole
+            // lifetime, paused included. The claim was that a plugin event is
+            // PUSHED rather than polled, so it is not subject to the throttling
+            // that breaks watchPosition. The push is indeed not throttled — but
+            // its DELIVERY waits for the WebView's JS engine to resume, and a
+            // paused engine can sit frozen for as long as the app stays closed.
+            // Real log: disconnect handled 20+ minutes late, one second after
+            // the user opened the app, saving the parking where they were
+            // standing rather than where the car was.
+            if (MainActivity.isForeground()) return // live path genuinely handles it
             val json = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
                 .getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]"
             val vehicles = VehicleJsonParser.parse(json)

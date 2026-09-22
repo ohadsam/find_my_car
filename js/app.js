@@ -52,6 +52,7 @@ class FindMyCarApp {
   // Last widget/notification action performed, for performWidgetAction()'s
   // duplicate-delivery guard: {key, at, message}.
   #lastWidgetAction = null;
+  #reconcilingBt = false;
   #ui;
   #returnModal;
 
@@ -491,6 +492,11 @@ class FindMyCarApp {
       if (this.#state.current) this.#acquireWakeLock();
       if (this.#getBtSettings().enabled) this.#bluetooth.checkNow();
       this.#reconcilePendingParkingSuggestion().catch(() => {});
+      // Also on resume, not only from #init(): the Activity often stays alive
+      // while the app is closed, so a resume is NOT a fresh init — a pending
+      // action recorded while the JS engine was frozen would otherwise sit
+      // unreplayed until the next genuine cold start.
+      this.#reconcilePendingBtActions().catch(() => {});
     });
 
     document.addEventListener('keydown', e => {
@@ -1599,8 +1605,21 @@ class FindMyCarApp {
     if (!matched) DiagLog.log('BT', `no vehicle is linked to device label="${label}" — event ignored`);
   }
 
-  async #onBtDisconnected(label) {
-    DiagLog.log('BT', `disconnected event received, label=${label}`);
+  /**
+   * @param {object} [opts]
+   * @param {number|null} [opts.at] the native event's own timestamp. A plugin
+   *   event reaches a paused WebView fine, but is only delivered once its JS
+   *   engine resumes — so this handler can run many minutes after the car
+   *   actually disconnected.
+   * @param {{lat:number,lng:number}|null} [opts.presetLoc] the location native
+   *   captured AT the disconnect, supplied by the pending-action replay. When
+   *   present it is used instead of a live fix, because by then the user has
+   *   walked away and the live fix describes them, not the car.
+   */
+  async #onBtDisconnected(label, { at = null, presetLoc = null } = {}) {
+    const ageMs = at ? Date.now() - at : 0;
+    DiagLog.log('BT', `disconnected event received, label=${label}` +
+      (ageMs > 5000 ? ` (event is ${Math.round(ageMs / 1000)}s old)` : ''));
     const vehicles = this.#state.vehicles;
     let matched = false;
     for (const v of vehicles) {
@@ -1614,14 +1633,32 @@ class FindMyCarApp {
         DiagLog.log('BT', 'vehicle already has an active parking — ignoring disconnect event', { vehicleName: v.name, vehicleIcon: v.icon });
         continue; // already has parking
       }
-      DiagLog.log('BT', 'auto-starting parking (bluetoothAutoStart is on)', { vehicleName: v.name, vehicleIcon: v.icon });
+      // A stale event with no recorded location must NOT auto-start. Saving at
+      // the current position would put the parking wherever the user happens to
+      // be standing when the app finally resumes — the exact wrong-location bug
+      // this check exists for. Skipping leaves it to the native pending record,
+      // which carries the location from the moment of the disconnect.
+      if (!presetLoc && ageMs > CFG.btEventMaxAgeMs) {
+        DiagLog.log('BT',
+          `refusing to auto-start from a ${Math.round(ageMs / 60000)}-minute-old disconnect with no recorded ` +
+          'location — the car is not where you are now; leaving it to the native pending record',
+          { vehicleName: v.name, vehicleIcon: v.icon });
+        // Never silent: skipping is the right call, but the user still expected
+        // a parking to exist. A missing one they can save by hand beats one
+        // saved at the wrong place, and they need to know which happened.
+        this.#ui.showToast(`${v.icon} ${v.name} — ניתוק ישן זוהה באיחור, לא נשמרה חניה אוטומטית`, 'warning');
+        continue;
+      }
+      DiagLog.log('BT', 'auto-starting parking (bluetoothAutoStart is on)' +
+        (presetLoc ? ' at the location recorded when Bluetooth disconnected' : ''),
+        { vehicleName: v.name, vehicleIcon: v.icon });
 
       // Switch to this vehicle if needed silently, then save parking.
       // Roll back the switch if GPS fails so the user's active parking remains visible.
       const needsSwitch = v.id !== this.#state.activeVehicleId;
       const prevId      = this.#state.activeVehicleId;
       if (needsSwitch) this.#switchVehicle(v.id, { silent: true });
-      await this.#saveNewParking();
+      await this.#saveNewParking(presetLoc);
       if (!this.#state.current) {
         DiagLog.log('BT', 'auto-start aborted — GPS location unavailable', { vehicleName: v.name, vehicleIcon: v.icon });
         if (needsSwitch) this.#switchVehicle(prevId, { silent: true }); // GPS failed — restore previous vehicle
@@ -1686,6 +1723,19 @@ class FindMyCarApp {
   // concurrently) to match how real BT events only ever arrive one at a
   // time. No-op in the browser/PWA (getPendingActions() resolves to []).
   async #reconcilePendingBtActions() {
+    // Runs from #init() AND from visibilitychange, so an overlap is possible
+    // where it never was before; without this guard the two could replay the
+    // same entry twice, since the store is only cleared at the end.
+    if (this.#reconcilingBt) return;
+    this.#reconcilingBt = true;
+    try {
+      await this.#reconcilePendingBtActionsInner();
+    } finally {
+      this.#reconcilingBt = false;
+    }
+  }
+
+  async #reconcilePendingBtActionsInner() {
     const actions = (await this.#bluetooth.getPendingActions?.()) ?? [];
     if (!actions.length) return;
     for (const a of actions) {
@@ -1694,7 +1744,21 @@ class FindMyCarApp {
         if (a.direction === 'connected') {
           this.#onBtConnected(a.label);
         } else if (a.direction === 'disconnected') {
-          await this.#onBtDisconnected(a.label);
+          // The recorded lat/lng WAS purely informational, on the reasoning that
+          // the replay should re-derive everything from current state rather
+          // than trust a stale native decision. That is right about settings
+          // and wrong about location: a location is not a decision, it is an
+          // observation with a timestamp, and this one was taken at the
+          // disconnect — which is where the car is. The live fix at replay time
+          // describes the user, who has since walked away.
+          const presetLoc = (typeof a.lat === 'number' && typeof a.lng === 'number')
+            ? { lat: a.lat, lng: a.lng, accuracy: null }
+            : null;
+          if (!presetLoc) {
+            DiagLog.log('BT-PENDING', 'no location was captured at the disconnect — the replay will have to use a live fix',
+              { vehicleName: a.vehicleName });
+          }
+          await this.#onBtDisconnected(a.label, { at: a.timestamp ?? null, presetLoc });
         }
       } catch (e) {
         DiagLog.log('BT-PENDING', `replay threw — ${e?.message || e}`, { vehicleName: a.vehicleName });

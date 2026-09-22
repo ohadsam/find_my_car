@@ -1743,12 +1743,68 @@ category, never surfaced to the user.
 correct for its own purpose (`WidgetActionReceiver`'s headless widget actions
 genuinely only need the WebView to exist, not to be visible, since
 `evaluateJavascript()` on a paused-but-alive WebView works fine — Bluetooth's
-Stage 5 `maybeRecordPendingAction()` gate is correspondingly **not** affected by
-this bug: real BT connect/disconnect events are pushed to JS via a Capacitor
-plugin event (`notifyListeners()`), not a continuously-polled browser API, and
-that push mechanism is not subject to the same visibility-tied throttling —
-confirmed by the same log evidence that showed `GPS-SHADOW`'s own
-Service→Plugin→JS relay succeeding while backgrounded).
+Stage 5 gate was believed to be **unaffected** by this bug, on the reasoning
+that real BT events are pushed to JS via a Capacitor plugin event
+(`notifyListeners()`) rather than a continuously-polled browser API. **That
+reasoning was wrong, and v1.45.0 corrects it — see the section below.**)
+
+### Bluetooth events are pushed, but DELIVERED only when the JS engine resumes
+
+**Real, previously-shipped bug (v1.45.0), and a correction to the paragraph
+directly above.** The push is genuinely not throttled. Its *delivery* still
+waits for the WebView's JS engine to resume, and a paused engine stays frozen
+for as long as the app is closed. So a queued event is not lost — it arrives
+late, by an unbounded amount, which for auto-START is worse than losing it:
+
+```
+16:58:40  [WEB] BT  checkNow() invoked (app resumed / re-sync)      ← visibilitychange
+16:58:41  [WEB] BT-RAW  native "disconnected" event received, label=CK-5
+16:58:41  [WEB] BT  auto-starting parking (bluetoothAutoStart is on)
+```
+
+The car had been locked some twenty minutes earlier. `getActiveWebView()` was
+non-null the whole time (Activity alive, merely paused), so
+`BtPendingActionRecorder.maybeRecord()` no-opped, deferring to a live path
+whose timers were frozen. The event finally landed one second after the user
+opened the app, and `#saveNewParking()` took a **live** fix — saving the
+parking where the user was standing, not where the car was. Reported exactly
+that way: "it only detected when I entered the app, which saved the wrong
+location."
+
+Note the shape: `checkNow() invoked (app resumed / re-sync)` immediately before
+the event, and **no** `PERM — priming permissions` line, is the signature of a
+*resume of a living page* rather than a cold `#init()`. That distinction is what
+identifies this bug in a log.
+
+**Fix, in three parts — each necessary, none sufficient alone:**
+
+1. **`maybeRecord()` gates on `MainActivity.isForeground()`**, exactly as Stage
+   7's GPS path already does. Native then records at the moment of the
+   disconnect, capturing `LastKnownLocation` — which is the car.
+2. **The event carries its own `at` timestamp** (`emitAndTrack`), so JS can tell
+   a fresh delivery from a thawed one. Without it, the live handler cannot know
+   it is acting on twenty-minute-old news. `#onBtDisconnected` refuses to
+   auto-start past `CFG.btEventMaxAgeMs` (2 min) when it has no recorded
+   location, and says so with a toast rather than silently — a missing parking
+   the user can save by hand beats one saved somewhere wrong.
+3. **The replay uses the recorded location** (`#saveNewParking(presetLoc)`).
+   Stage 6 deliberately treated the recorded lat/lng as informational, so the
+   replay would re-derive everything from current state instead of trusting a
+   stale decision. That is right about *settings* and wrong about *location*: a
+   location is not a decision, it is an observation with a timestamp, and the
+   live fix at replay time describes the user, who has walked away.
+
+**`#reconcilePendingBtActions()` also runs on `visibilitychange`**, not only
+from `#init()`. The Activity commonly survives the app being closed, so a resume
+is not a fresh init and a record made while the engine was frozen would
+otherwise wait for the next genuine cold start. It is guarded by
+`#reconcilingBt` because two entry points can now overlap, and the store is only
+cleared at the end.
+
+**Either delivery order is safe**, which is what makes this robust rather than
+lucky: if the replay wins, the parking exists at the right spot and the late
+live event hits the existing "already has parking" guard; if the late event
+wins, it refuses as stale and the replay then does it properly.
 
 **Testing**: this sandbox has no local Android SDK/emulator, so native code can only
 be verified through CI, not locally — unlike the JS side's `npm test` (Vitest), which
@@ -1832,6 +1888,8 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (v1.44.0): tap ↻ on each of the three widgets — it repaints right away and never shows "יבוצע כשהאפליקציה תיפתח מחדש" (a refresh is never queued). With the app open, the `WIDGET` log shows "the page is re-syncing real state into the mirror"
 - [ ] Android APK (v1.44.0): once the app is opened and syncs, the ⏳ disappears and the address widget shows the real address — the marker must clear, or every widget will claim to be out of date forever
 - [ ] **Android APK (v1.44.0): with the app backgrounded or killed, trigger the GPS drive-away suggestion while using another app (Waze). The notification must POP UP over that app, not just appear in the shade.** If it only lands silently, check the `NOTIFY` log for "[channel findmycar_alerts_v2, heads-up]" — "[default channel — no heads-up]" there means channel creation failed; the same alert arriving with no banner at all on an already-installed build means the channel id was reused instead of bumped
+- [ ] **Android APK (v1.45.0, the wrong-location bug): with auto-start ON, close the app (do NOT force-kill), drive somewhere, park and lock the car — then wait 20+ minutes before opening the app.** The parking must be saved at the CAR's location, not wherever you are when you open it. Check the `BT` log for "auto-starting parking ... at the location recorded when Bluetooth disconnected"; a plain "auto-starting parking" with a `BT-RAW` line saying "delivered Ns after it happened" is the bug returning
+- [ ] Android APK (v1.45.0): same scenario but with location unavailable at disconnect (record has no lat/lng) — no parking is saved, and a toast says so. A silently missing parking, or one saved at your current position, are both wrong
 - [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
 - [ ] Android APK: installing a new build over an already-installed older build works without uninstalling first
