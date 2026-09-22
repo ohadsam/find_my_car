@@ -42,9 +42,21 @@ object WalkAwayDetector {
     fun maybeOpenWindow(context: Context, label: String) {
         try {
             val prefs = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
-            if (!prefs.getBoolean(WidgetDataPlugin.KEY_BT_ENABLED, false)) return
+            if (!prefs.getBoolean(WidgetDataPlugin.KEY_BT_ENABLED, false)) {
+                NativeLogStore.add(context, TAG, "WALK", "disconnect from \"$label\" ignored — the Bluetooth master switch is off")
+                return
+            }
             val vehicles = VehicleJsonParser.parse(prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]")
-            val vehicle = vehicles.firstOrNull { it.bluetoothDevice == label && eligible(it) } ?: return
+            val linked = vehicles.filter { it.bluetoothDevice == label }
+            val vehicle = linked.firstOrNull { eligible(it) }
+            if (vehicle == null) {
+                // Declining used to be completely silent, which made "the
+                // feature decided not to" indistinguishable from "the feature
+                // never ran" — the ambiguous silence this whole diagnostic log
+                // exists to eliminate. Say which condition failed, by name.
+                NativeLogStore.add(context, TAG, "WALK", declineReason(label, linked))
+                return
+            }
 
             val (lat, lng) = LastKnownLocation.get(context)
             PendingParkingSuggestionStore.openWindow(
@@ -75,6 +87,27 @@ object WalkAwayDetector {
 
     private fun eligible(v: NativeVehicle): Boolean =
         v.walkAwaySuggest && !v.bluetoothAutoStart && !v.hasParking
+
+    /**
+     * Names the specific condition that stopped a window from opening. Every
+     * one of these is a legitimate "nothing to do", not a fault — which is
+     * exactly why saying so matters: without it, a correct decline and a broken
+     * detector produce the same empty log.
+     */
+    private fun declineReason(label: String, linked: List<NativeVehicle>): String {
+        if (linked.isEmpty()) {
+            return "disconnect from \"$label\" ignored — no vehicle is linked to this device"
+        }
+        val why = linked.joinToString("; ") { v ->
+            when {
+                !v.walkAwaySuggest    -> "${v.name}: \"הצע חניה אחרי שהתרחקת\" is off for this vehicle"
+                v.bluetoothAutoStart  -> "${v.name}: auto-start is on, so a parking is saved outright instead"
+                v.hasParking          -> "${v.name}: it already has an active parking"
+                else                  -> "${v.name}: eligible"
+            }
+        }
+        return "disconnect from \"$label\" — no walk-away window opened ($why)"
+    }
 
     /**
      * Raises the suggestion: persists it for JS to turn into a confirmation on

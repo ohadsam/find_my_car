@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.44.0',
+  version: '1.44.1',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -65,6 +65,13 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.44.1',
+      date: '2026-09-22',
+      items: Object.freeze([
+        'יומן האבחון (קטגוריית WALK) מסביר עכשיו למה ניתוק Bluetooth לא פתח חלון "הצע חניה אחרי שהתרחקת" — איזו הגדרה בדיוק מנעה זאת. עד כה זה היה שקט מוחלט, ולא היה אפשר להבדיל בין "הופעל והחליט שאין מה לעשות" לבין "לא רץ בכלל"',
+      ]),
+    }),
     Object.freeze({
       version: '1.44.0',
       date: '2026-09-22',
