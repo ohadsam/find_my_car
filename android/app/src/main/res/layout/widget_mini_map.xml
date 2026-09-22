@@ -132,6 +132,22 @@
         android:textColor="#FFFFFF"
         android:text="⋮" />
 
+    <!-- Immediately inside ⋮ (this is a FrameLayout, so the end margin —
+         4 + the ⋮ button's own 24 + 4 — is what stops them overlapping).
+         See WidgetActionReceiver.ACTION_REFRESH. -->
+    <TextView
+        android:id="@+id/widget_refresh_btn"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="32dp"
+        android:background="@drawable/widget_icon_badge_bg"
+        android:gravity="center"
+        android:textSize="13sp"
+        android:textColor="#FFFFFF"
+        android:text="↻" />
+
     <!-- Background-detection liveness dots — see widget_active_parking.xml.
          Top|center_horizontal is the only free corner here: 🔁 takes
          top|start, ⋮ takes top|end, and the address caption is a

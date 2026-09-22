@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationManagerCompat
 import com.ohadsam.findmycar.core.PendingWidgetAction
 import com.ohadsam.findmycar.widgets.QuickSaveWidgetProvider
+import com.ohadsam.findmycar.widgets.WidgetStatusRefresher
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -48,6 +49,10 @@ class WidgetActionReceiver : BroadcastReceiver() {
         // the live path and the killed-app replay read, so the saved spot is
         // where the car actually is rather than wherever the user is standing.
         const val ACTION_SAVE_AT = "saveAt"
+        // The ↻ button every widget now carries. Deliberately NOT queueable:
+        // there is no state change to replay, so a refresh that cannot reach
+        // the page simply repaints from the native mirror and says so.
+        const val ACTION_REFRESH = "refresh"
         // How long the page gets to acknowledge before the tap is queued
         // instead. Comfortably inside a manifest receiver's ~10s budget.
         private const val ACK_TIMEOUT_MS = 2500L
@@ -70,6 +75,7 @@ class WidgetActionReceiver : BroadcastReceiver() {
             }
         }
         if (action == ACTION_DISMISS) return
+        if (action == ACTION_REFRESH) { handleRefresh(context); return }
 
         val webView = MainActivity.getActiveWebView()
         if (webView == null) {
@@ -164,9 +170,71 @@ class WidgetActionReceiver : BroadcastReceiver() {
         try {
             PendingWidgetActionStore.add(context, PendingWidgetAction(action, vehicleId, System.currentTimeMillis()))
             NativeLogStore.add(context, TAG, "WIDGET", "queued widget action \"$action\" for replay on next app open ($why)")
+            // Queuing used to be the whole story, and it left every widget
+            // showing the state the tap had already changed until the app was
+            // next opened — 22 minutes, in the report that prompted this. The
+            // action is certain to happen; only its reconciliation with the real
+            // parking records is deferred, so the display can follow it now.
+            WidgetMirror.applyQueuedAction(context, action, vehicleId)
             Toast.makeText(context, "יבוצע כשהאפליקציה תיפתח מחדש", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.w(TAG, "failed to record pending widget action (non-fatal)", e)
+        }
+    }
+
+    /**
+     * The ↻ button. Repaints from the native mirror unconditionally — that is
+     * instant, cannot fail, and is the most current thing native knows — and
+     * additionally asks the page to re-sync real state when it is reachable,
+     * which is the only way to pick up a change JS made without telling the
+     * mirror. Nothing is ever queued: replaying a refresh on next open would be
+     * pointless, since opening the app syncs anyway.
+     */
+    private fun handleRefresh(context: Context) {
+        WidgetDataPlugin.refreshDataWidgets(context)
+        WidgetStatusRefresher.refreshAll(context)
+
+        val webView = MainActivity.getActiveWebView()
+        if (webView == null) {
+            val pending = WidgetMirror.hasPendingSync(context)
+            NativeLogStore.add(
+                context, TAG, "WIDGET",
+                "refresh tapped — repainted from the native mirror (no live WebView" +
+                    (if (pending) ", changes still awaiting reconciliation)" else ")"),
+            )
+            Toast.makeText(
+                context,
+                if (pending) "עודכן — יסונכרן כשהאפליקציה תיפתח" else "עודכן",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+
+        // Same synchronous-marker contract as a real action, so "the page took
+        // it" stays distinguishable from "the page was not ready" — never the
+        // callback-less evaluateJavascript that once swallowed taps silently.
+        val script = """
+            (function() {
+              try {
+                if (!window.app || !window.app.performWidgetAction) return 'FMC_NOT_READY';
+                window.app.performWidgetAction('refresh', null);
+                return 'FMC_ACCEPTED';
+              } catch (e) { return 'FMC_NOT_READY'; }
+            })();
+        """.trimIndent()
+        try {
+            webView.evaluateJavascript(script) { result ->
+                val accepted = result != null && result.contains("FMC_ACCEPTED")
+                NativeLogStore.add(
+                    context, TAG, "WIDGET",
+                    if (accepted) "refresh tapped — the page is re-syncing real state into the mirror"
+                    else "refresh tapped — the page was not ready (result=$result); the mirror repaint still applied",
+                )
+            }
+            Toast.makeText(context, "מסנכרן…", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.w(TAG, "refresh evaluateJavascript threw (non-fatal)", e)
+            Toast.makeText(context, "עודכן", Toast.LENGTH_SHORT).show()
         }
     }
 }

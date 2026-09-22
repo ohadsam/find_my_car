@@ -84,6 +84,60 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         private const val TAG = "FMC-WidgetData"
         private const val PARKING_NOTIF_CHANNEL_ID = "findmycar_parking_active"
         private const val PARKING_NOTIF_ID = 4202
+
+        /**
+         * Repaints the two data-driven widgets. On the companion because
+         * WidgetMirror and WidgetActionReceiver need it from a plain
+         * BroadcastReceiver context, where no live Plugin instance exists —
+         * which is precisely when the mirror changes without JS involved.
+         */
+        fun refreshDataWidgets(context: Context) {
+            val mgr = AppWidgetManager.getInstance(context)
+            for (cls in listOf(ActiveParkingWidgetProvider::class.java, MiniMapWidgetProvider::class.java)) {
+                val ids = mgr.getAppWidgetIds(ComponentName(context, cls))
+                if (ids.isEmpty()) continue
+                val intent = Intent(context, cls).apply {
+                    action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+                }
+                context.sendBroadcast(intent)
+            }
+        }
+
+        // Stage 9's parking notification, on the companion for the same reason
+        // as refreshDataWidgets: WidgetMirror posts/cancels it when an action is
+        // accepted while no Plugin instance is alive.
+        fun showParkingNotification(context: Context, address: String) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                        PackageManager.PERMISSION_GRANTED
+                    if (!granted) return
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = NotificationChannel(PARKING_NOTIF_CHANNEL_ID, "חניה פעילה", NotificationManager.IMPORTANCE_LOW)
+                    context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+                }
+                val notification = NotificationCompat.Builder(context, PARKING_NOTIF_CHANNEL_ID)
+                    .setContentTitle("FindMyCar — חניה פעילה 🅿️")
+                    .setContentText(address.ifBlank { "מיקום נשמר" })
+                    .setSmallIcon(R.drawable.ic_stat_car)
+                    .setColor(0xFF5B8BF5.toInt())
+                    .setSilent(true)
+                    .build()
+                NotificationManagerCompat.from(context).notify(PARKING_NOTIF_ID, notification)
+            } catch (e: Exception) {
+                Log.w(TAG, "showParkingNotification failed (non-fatal)", e)
+            }
+        }
+
+        fun cancelParkingNotification(context: Context) {
+            try {
+                NotificationManagerCompat.from(context).cancel(PARKING_NOTIF_ID)
+            } catch (e: Exception) {
+                Log.w(TAG, "cancelParkingNotification failed (non-fatal)", e)
+            }
+        }
     }
 
     override fun load() {
@@ -143,6 +197,10 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         // the dots showing the previous setting until some unrelated parking
         // event happened — the same stale-mirror failure that every settings
         // toggle now calls #syncUI() to avoid on the JS side.
+        // Real state from JS has landed, so the mirror is confirmed: drop the
+        // "applied locally, not yet reconciled" marker WidgetMirror sets when
+        // an action is accepted while the page is unreachable.
+        WidgetMirror.clearPendingSync(context)
         WidgetStatusRefresher.refreshAll(context)
         call.resolve()
     }
@@ -161,6 +219,10 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
             .putString(KEY_VEHICLE_ICON, call.getString("vehicleIcon", "🚗"))
             .putString(KEY_VEHICLE_NAME, call.getString("vehicleName", ""))
             .apply()
+        // Real state from JS has landed, so the mirror is confirmed: drop the
+        // "applied locally, not yet reconciled" marker WidgetMirror sets when
+        // an action is accepted while the page is unreachable.
+        WidgetMirror.clearPendingSync(context)
         ParkingForegroundService.setReasonActive(context, "parking", true)
         showParkingNotification(address)
         refreshWidgets()
@@ -172,6 +234,10 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         NativeLogStore.add(context, TAG, "BRIDGE", "← JS: clear() called")
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit().putBoolean(KEY_HAS_PARKING, false).apply()
+        // Real state from JS has landed, so the mirror is confirmed: drop the
+        // "applied locally, not yet reconciled" marker WidgetMirror sets when
+        // an action is accepted while the page is unreachable.
+        WidgetMirror.clearPendingSync(context)
         ParkingForegroundService.setReasonActive(context, "parking", false)
         cancelParkingNotification()
         refreshWidgets()
@@ -193,37 +259,9 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
     // ParkingForegroundService's own foreground-service notification (a
     // required, generic "active in background" notice serving a different
     // technical purpose — keeping the process alive — not parking-specific).
-    private fun showParkingNotification(address: String) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-                    PackageManager.PERMISSION_GRANTED
-                if (!granted) return
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(PARKING_NOTIF_CHANNEL_ID, "חניה פעילה", NotificationManager.IMPORTANCE_LOW)
-                context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
-            }
-            val notification = NotificationCompat.Builder(context, PARKING_NOTIF_CHANNEL_ID)
-                .setContentTitle("FindMyCar — חניה פעילה 🅿️")
-                .setContentText(address)
-                .setSmallIcon(R.drawable.ic_stat_car)
-                .setColor(0xFF5B8BF5.toInt())
-                .setSilent(true)
-                .build()
-            NotificationManagerCompat.from(context).notify(PARKING_NOTIF_ID, notification)
-        } catch (e: Exception) {
-            Log.w(TAG, "showParkingNotification failed (non-fatal)", e)
-        }
-    }
+    private fun showParkingNotification(address: String) = showParkingNotification(context, address)
 
-    private fun cancelParkingNotification() {
-        try {
-            NotificationManagerCompat.from(context).cancel(PARKING_NOTIF_ID)
-        } catch (e: Exception) {
-            Log.w(TAG, "cancelParkingNotification failed (non-fatal)", e)
-        }
-    }
+    private fun cancelParkingNotification() = cancelParkingNotification(context)
 
     // Stage 7 of the native background-detection migration (see CLAUDE.md):
     // lets JS read/clear the GPS end-suggestion ParkingForegroundService
@@ -299,16 +337,5 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         call.resolve()
     }
 
-    private fun refreshWidgets() {
-        val mgr = AppWidgetManager.getInstance(context)
-        for (cls in listOf(ActiveParkingWidgetProvider::class.java, MiniMapWidgetProvider::class.java)) {
-            val ids = mgr.getAppWidgetIds(ComponentName(context, cls))
-            if (ids.isEmpty()) continue
-            val intent = Intent(context, cls).apply {
-                action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
-            }
-            context.sendBroadcast(intent)
-        }
-    }
+    private fun refreshWidgets() = refreshDataWidgets(context)
 }

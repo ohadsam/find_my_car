@@ -23,6 +23,45 @@ export class Notify {
   // action path, not two.
   static CONFIRM_END = 'FMC_CONFIRM_END';
 
+  // Must match BackgroundAlertNotifier.CHANNEL_ID (Kotlin) — the two paths
+  // deliberately share one channel so the user has a single switch for "the
+  // app's alerts", regardless of whether a given alert happened to be posted
+  // natively (app killed) or through this plugin (app alive, backgrounded).
+  //
+  // Importance 4 = Android's IMPORTANCE_HIGH, which is what actually produces a
+  // heads-up banner; 3 (DEFAULT, the plugin's default channel) only makes a
+  // sound and a status-bar icon. Reported as "the notification was in the shade
+  // but never popped up while I was in Waze". The `_v2` suffix is load-bearing:
+  // an existing channel's importance can never be raised, so reusing the old id
+  // would have changed nothing for anyone who already had the app installed.
+  static ALERT_CHANNEL = 'findmycar_alerts_v2';
+  static #channelReady = false;
+
+  static async #ensureChannel() {
+    const LocalNotifications = window.Capacitor?.Plugins?.LocalNotifications;
+    if (!window.Capacitor?.isNativePlatform?.() || !LocalNotifications?.createChannel) return null;
+    if (this.#channelReady) return this.ALERT_CHANNEL;
+    try {
+      await LocalNotifications.createChannel({
+        id:          this.ALERT_CHANNEL,
+        name:        'התראות רקע',
+        description: 'זיהוי נסיעה, חיבור Bluetooth והצעות חניה — מופיעות על המסך',
+        importance:  4,
+        visibility:  1,
+        vibration:   true,
+      });
+      await LocalNotifications.deleteChannel?.({ id: 'findmycar_bt_alerts' }).catch(() => {});
+      this.#channelReady = true;
+      DiagLog.log('NOTIFY', `created high-importance channel ${this.ALERT_CHANNEL} (heads-up enabled)`);
+      return this.ALERT_CHANNEL;
+    } catch (e) {
+      // Falling back to the plugin's default channel still delivers the
+      // notification — it just won't pop up. Better than not notifying at all.
+      DiagLog.log('NOTIFY', `createChannel failed, falling back to the default channel — ${e?.message || e}`);
+      return null;
+    }
+  }
+
   // Must run before any notification that uses CONFIRM_END is scheduled —
   // Android silently drops actions for an unregistered type. Called once from
   // js/app.js's #init(); no-op in the browser.
@@ -42,6 +81,9 @@ export class Notify {
       });
       this.#actionTypesRegistered = true;
       DiagLog.log('NOTIFY', 'registered notification action types');
+      // Same one-time-at-startup slot: the channel must exist before the first
+      // notification is scheduled, or that one lands on the default channel.
+      await this.#ensureChannel();
     } catch (e) {
       DiagLog.log('NOTIFY', `registerActionTypes failed — ${e?.message || e}`);
     }
@@ -122,9 +164,15 @@ export class Notify {
         const n = { id: this.#nextId++, title, body };
         if (opts.actionTypeId) n.actionTypeId = opts.actionTypeId;
         if (opts.extra)        n.extra        = opts.extra;
+        // Re-checked on every show rather than assumed: registerActionTypes()
+        // normally creates it at startup, but show() can be reached first on a
+        // replay path, and #ensureChannel() is a no-op once it has succeeded.
+        const channelId = await this.#ensureChannel();
+        if (channelId) n.channelId = channelId;
         await LocalNotifications.schedule({ notifications: [n] });
         DiagLog.log('NOTIFY', `scheduled native notification: "${title}"` +
-          (opts.actionTypeId ? ` (with actions: ${opts.actionTypeId})` : ''));
+          (opts.actionTypeId ? ` (with actions: ${opts.actionTypeId})` : '') +
+          (channelId ? ` [channel ${channelId}, heads-up]` : ' [default channel — no heads-up]'));
         return;
       }
 

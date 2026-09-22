@@ -224,6 +224,39 @@ step broken or skipped:
   real drive proved it would have disarmed detection permanently (CLAUDE.md).
   The general rule it left behind: prefer a detection fix that degrades to
   "fires more often than ideal" over one that can degrade to "never fires".
+- Confirm `WidgetActionReceiver.queueForReplay()` AND
+  `BtPendingActionRecorder.record()` both call
+  `WidgetMirror.applyQueuedAction(...)`. A queued action is guaranteed to
+  happen, so a widget that keeps showing the state it already changed — for
+  as long as it takes the user to next open the app — is simply a wrong
+  display. Both paths had this; fixing only the reported one leaves the
+  other. Confirm suggestions (GPS drive-away, walk-away) do NOT call it:
+  they change no state until answered.
+- Confirm `WidgetMirror` never invents an address (an optimistic save writes a
+  BLANK address plus `LastKnownLocation`, matching what js/app.js writes before
+  geocoding resolves), and that it PATCHES the `vehicles_json` entry rather
+  than rebuilding it — native does not know the BT/daily-status/walk-away
+  fields in there and would silently drop them.
+- Confirm `KEY_PENDING_SYNC_AT` is cleared by all three JS-driven writes
+  (`syncVehicles`/`update`/`clear`) and rendered as ⏳ by
+  `ActiveParkingWidgetProvider`. A marker that is set but never cleared would
+  leave every widget permanently claiming to be out of date.
+- Confirm `ACTION_REFRESH` is handled BEFORE the ack-or-queue path in
+  `WidgetActionReceiver.onReceive()` and never reaches `queueForReplay()` —
+  replaying a refresh is meaningless, and queueing one would make the ↻ button
+  report "יבוצע כשהאפליקציה תיפתח מחדש" for something it just did. Confirm
+  `performWidgetAction('refresh')` is the ONE action exempt from the otherwise
+  unconditional `Notify.show()`.
+- Confirm `BackgroundAlertNotifier`'s channel is `IMPORTANCE_HIGH` with
+  `PRIORITY_HIGH`, and `js/notify.js` passes a `channelId` created with
+  `importance: 4`. DEFAULT only makes a sound — it does NOT produce the
+  heads-up banner these confirmation prompts exist to deliver.
+- **If a channel's importance is ever changed again, its id must change too.**
+  Importance is fixed at channel creation and `createNotificationChannel`
+  silently ignores a raise on an existing id, so editing the constant alone
+  fixes nothing for anyone who already has the app installed — which is the
+  entire population who would report it. Confirm the old id is deleted, and
+  that both the Kotlin and JS constants name the SAME channel.
 - Confirm `WidgetActionReceiver` never calls `evaluateJavascript(script, null)`
   — it must pass a callback, and every path that cannot deliver live (no
   WebView, `FMC_NOT_READY`, the `ACK_TIMEOUT_MS` timeout, a thrown

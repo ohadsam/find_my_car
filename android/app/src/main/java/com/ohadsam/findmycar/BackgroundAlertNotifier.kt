@@ -25,7 +25,25 @@ import com.ohadsam.findmycar.widgets.QuickSaveWidgetProvider
  */
 object BackgroundAlertNotifier {
     private const val TAG = "FMC-BgNotify"
-    private const val CHANNEL_ID = "findmycar_bt_alerts"
+
+    // IMPORTANCE_HIGH, not DEFAULT — and a NEW channel id, which is the whole
+    // point of the rename. A real report: the "🚗 מזוהה נסיעה" alert reached
+    // the shade during a drive but never appeared on screen, while the user was
+    // in Waze; they expected it to pop up the way a WhatsApp message does.
+    //
+    // DEFAULT makes a sound and puts an icon in the status bar. It does NOT
+    // produce a heads-up banner — that needs IMPORTANCE_HIGH (plus PRIORITY_HIGH
+    // for pre-O). These are precisely the notifications that ask the driver to
+    // decide something, so reaching them only by pulling the shade down defeats
+    // the purpose.
+    //
+    // A channel's importance is fixed at creation: calling
+    // createNotificationChannel again with a higher importance on an existing id
+    // is silently ignored, so every already-installed user would have kept the
+    // old DEFAULT behaviour forever. Hence the v2 id, and deleting the old one
+    // so it doesn't linger in the app's notification settings.
+    private const val CHANNEL_ID = "findmycar_alerts_v2"
+    private const val LEGACY_CHANNEL_ID = "findmycar_bt_alerts"
 
     /**
      * One shade button. [action] is handed to WidgetActionReceiver, the same
@@ -44,8 +62,13 @@ object BackgroundAlertNotifier {
                 if (!granted) return
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(CHANNEL_ID, "התראות רקע", NotificationManager.IMPORTANCE_DEFAULT)
-                context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+                val mgr = context.getSystemService(NotificationManager::class.java)
+                val channel = NotificationChannel(CHANNEL_ID, "התראות רקע", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "זיהוי נסיעה, חיבור Bluetooth והצעות חניה — מופיעות על המסך"
+                    enableVibration(true)
+                }
+                mgr?.createNotificationChannel(channel)
+                runCatching { mgr?.deleteNotificationChannel(LEGACY_CHANNEL_ID) }
             }
             // Stable id, needed up front so each action's PendingIntent can
             // tell WidgetActionReceiver which notification to dismiss.
@@ -56,6 +79,15 @@ object BackgroundAlertNotifier {
                 .setSmallIcon(R.drawable.ic_stat_car)
                 .setColor(0xFF5B8BF5.toInt())
                 .setAutoCancel(true)
+                // PRIORITY_HIGH is what drives heads-up below Android 8, where
+                // channels don't exist; on 8+ the channel's importance wins and
+                // this is simply ignored. Both are needed to cover minSdk 22.
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                // Tells the OS this is a time-sensitive prompt rather than
+                // background chatter, which some launchers and Do-Not-Disturb
+                // configurations use when deciding whether to surface it.
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
             val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0)
             actions.forEachIndexed { i, a ->

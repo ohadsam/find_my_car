@@ -31,6 +31,7 @@ class MiniMapWidgetProvider : AppWidgetProvider() {
             val prefs = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
             val views = RemoteViews(context.packageName, R.layout.widget_mini_map)
             WidgetStatus.render(context, views)
+            WidgetRefreshButton.bind(context, views, id)
             val parked = ParkedVehicles.parse(prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]")
             val isLarge = (mgr.getAppWidgetOptions(id)?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0) ?: 0) >=
                 LARGE_MIN_HEIGHT_DP
