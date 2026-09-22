@@ -1222,7 +1222,10 @@ handler must use `this.#ui.closeModal()`, not `#closeModal()`** — the latter
 clears the pending suggestion (correct for a dismissal or a backdrop tap) and
 would delete the recorded location before `saveAt` could read it.
 
-Diagnostic-log category is `WALK`.
+Diagnostic-log category is `WALK`, and **every decline is logged with the
+specific condition that caused it** — a silent return would make a correct
+"nothing to do" identical to a broken detector, which is precisely what left
+one real report unanswerable from its log.
 
 ### The native mirror must follow an accepted action, not the replay (`WidgetMirror`)
 

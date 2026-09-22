@@ -293,6 +293,13 @@ step broken or skipped:
   for a dismissal) and would delete the recorded disconnect location before
   `saveAt` reads it — the parking would then be saved at the user's current
   position, which is the one outcome this feature exists to avoid.
+- Confirm `WalkAwayDetector.maybeOpenWindow()` logs a `WALK` entry on EVERY
+  path, including each decline (master switch off / no vehicle linked to that
+  label / per-vehicle opt-in off / auto-start on / already parked). A silent
+  return makes "ran and correctly decided there was nothing to do"
+  indistinguishable from "never ran" — the ambiguous silence the whole
+  diagnostic log exists to eliminate, and the reason one report could not be
+  answered from a log at all.
 - Confirm `WalkAwayDetector.eligible()` still requires all of `walkAwaySuggest`,
   `!bluetoothAutoStart` and `!hasParking` — dropping the auto-start check makes
   the app ask about a parking it already saved.
