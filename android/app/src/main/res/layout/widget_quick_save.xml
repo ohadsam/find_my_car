@@ -39,6 +39,22 @@
         android:textColor="#FFFFFF"
         android:text="⋮" />
 
+    <!-- Sits immediately inside ⋮ rather than in a free corner: this is a
+         FrameLayout, so two children at top|end would stack, and the end
+         margin (2 + the ⋮ button's own 20 + 2) is what places them side by
+         side. See WidgetActionReceiver.ACTION_REFRESH. -->
+    <TextView
+        android:id="@+id/widget_refresh_btn"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="2dp"
+        android:layout_marginEnd="24dp"
+        android:gravity="center"
+        android:textSize="12sp"
+        android:textColor="#FFFFFF"
+        android:text="↻" />
+
     <!-- Background-detection liveness dots (WidgetStatus tints these): 📍 GPS
          and Bluetooth. Green = working, amber = running but Android is
          withholding background updates, red = should be running and isn't,

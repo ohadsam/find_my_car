@@ -901,6 +901,16 @@ class FindMyCarApp {
         // it inherits the dedupe guard, the replay queue and the result
         // notification for free.
         message = await this.#acceptWalkAwaySuggestion(vLabel);
+      } else if (action === 'refresh') {
+        // The widgets' ↻ button. Re-reads storage rather than trusting
+        // #state, because the point of tapping refresh is to pick up a change
+        // this page may have missed, then pushes the result through the one
+        // choke point every widget update goes through.
+        this.#state.vehicles = VehicleController.getAll();
+        this.#state.current  = VehicleController.getCurrent(this.#state.activeVehicleId);
+        this.#state.history  = VehicleController.getHistory(this.#state.activeVehicleId);
+        this.#syncUI();
+        message = 'הנתונים סונכרנו';
       } else {
         message = 'פעולה לא מוכרת';
       }
@@ -912,7 +922,12 @@ class FindMyCarApp {
       // shows is only "מבצע…" (in progress), not the actual outcome, so
       // this notification is the only place the user finds out what
       // happened and to which vehicle.
-      Notify.show('FindMyCar', message);
+      //
+      // 'refresh' is the one deliberate exception: it changes no parking
+      // state, and its whole result is visible on the widget the user just
+      // tapped — a heads-up notification per refresh would be pure noise, and
+      // noise is what teaches people to swipe these away unread.
+      if (action !== 'refresh') Notify.show('FindMyCar', message);
       return message;
     } catch (e) {
       const errMsg = 'שגיאה בביצוע הפעולה';

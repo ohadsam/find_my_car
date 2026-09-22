@@ -1224,6 +1224,81 @@ would delete the recorded location before `saveAt` could read it.
 
 Diagnostic-log category is `WALK`.
 
+### The native mirror must follow an accepted action, not the replay (`WidgetMirror`)
+
+**Real, previously-shipped bug (v1.44.0).** The widgets and the Stage 9
+parking notification render exclusively from `WidgetDataPlugin`'s
+`SharedPreferences`, and until this version only `js/widget-bridge.js` ever
+wrote to it. That is correct while the page is alive and silently wrong the
+moment it is not:
+
+```
+16:13:32  queued widget action "end" for replay on next app open (no live WebView)
+16:35:58  replaying pending widget action=end → ✅ החניה הסתיימה
+```
+
+For those 22 minutes every widget still showed the car as parked, after the
+user had ended the parking from the shade, with nothing anywhere saying
+otherwise. `PendingWidgetActionStore`/`PendingBtActionStore` guarantee the
+action *happens*; nothing made the display agree in the meantime.
+
+**The distinction that makes the fix legitimate.** Native cannot read the
+WebView's localStorage, and JS remains the only thing that ever writes a real
+`Parking` record. But the mirror is not a parking record — it is a display
+cache native already owns and writes. `WidgetMirror.applyQueuedAction()`
+therefore patches that cache at the instant an action is accepted, and the
+replay reconciles it later. They always converge, because every replay ends in
+a full `WidgetBridge.sync()`.
+
+**It never fabricates anything JS would have to believe.** An optimistic
+"save" carries `LastKnownLocation` and a **blank** address — exactly what
+`js/app.js` itself writes before reverse geocoding resolves — never an invented
+one. `KEY_PENDING_SYNC_AT` marks the mirror "applied locally, not yet
+confirmed" and the address widget renders that as ⏳, rather than presenting a
+guess as a fact (same discipline as the liveness dots' four states and the
+setup guide's "cannot verify" badge). Every JS-driven write
+(`syncVehicles`/`update`/`clear`) clears the marker.
+
+**It patches, never regenerates**, the `vehicles_json` entry: native does not
+know most of what is in there (BT settings, daily-status opt-in, walk-away
+opt-in), so rewriting the object would silently drop them.
+
+**Both queue paths must call it** — `WidgetActionReceiver.queueForReplay()`
+and `BtPendingActionRecorder.record()`. The Bluetooth path had the identical
+staleness for the identical reason, and fixing only the one that was reported
+would have left the other in place. **Suggestions never call it**: GPS
+drive-away and walk-away change no state until answered.
+
+**The ↻ button** on all three widgets (`WidgetRefreshButton` +
+`WidgetActionReceiver.ACTION_REFRESH`) repaints from the mirror
+unconditionally, then asks the page to re-sync when it is reachable. It is
+deliberately **not** queueable — replaying a refresh would be meaningless,
+since opening the app syncs anyway — and `performWidgetAction('refresh')` is
+the one action exempt from the unconditional `Notify.show()`, because its
+result is visible on the widget the user just tapped.
+
+### A notification channel's importance can never be raised (`IMPORTANCE_HIGH`)
+
+**Real, previously-shipped bug (v1.44.0).** The "🚗 מזוהה נסיעה" alert reached
+the shade during a drive but never appeared on screen, while the user was in
+Waze; they expected it to pop up the way an incoming message does.
+
+`IMPORTANCE_DEFAULT` makes a sound and puts an icon in the status bar. It does
+**not** produce a heads-up banner — that needs `IMPORTANCE_HIGH` (plus
+`PRIORITY_HIGH` for pre-O, which this app still supports at minSdk 22). These
+are precisely the notifications that ask a driver to decide something, so
+reaching them only by pulling the shade down defeats their purpose. Note that
+CLAUDE.md previously asserted DEFAULT gives a heads-up; that was simply wrong.
+
+**The `_v2` channel id is the load-bearing part.** A channel's importance is
+fixed at creation: calling `createNotificationChannel` again with a higher
+importance on an existing id is silently ignored. Changing the constant alone
+would have fixed nothing for anyone who already had the app installed — the
+exact population that reported it. Both paths moved to
+`findmycar_alerts_v2` (`BackgroundAlertNotifier` natively, `js/notify.js` via
+`LocalNotifications.createChannel` with `importance: 4`) and delete the old
+one. **Any future change to a channel's importance needs a new id too.**
+
 ### Notification action buttons (confirmations answerable from the shade)
 
 The two notifications that ask the user to *decide* something — GPS "the car
@@ -1750,6 +1825,10 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (v1.43.0): reconnect to the car shortly after disconnecting — the `WALK` log shows the window closed ("reconnected to the vehicle") and no suggestion arrives
 - [ ] Android APK (v1.43.0): confirm drive-away detection still works unchanged in the same session — the walk-away window shares the location watch with it, so a regression here would show up as the GPS end-suggestion no longer firing
 - [ ] **Every release: `npm run check:syntax` passes.** v1.42.0 shipped an unescaped apostrophe in a Hebrew changelog string that broke `js/config.js` and with it the entire app, through a fully green CI — unit tests do not import config, and Gradle packages a broken asset happily. This gate is the only thing that catches it
+- [ ] **Android APK (v1.44.0): with the app fully closed, tap "סיים חניה" on a notification (or a widget's end action). The widgets must stop showing that car as parked IMMEDIATELY**, with a ⏳ next to the address until the app is next opened — not 20 minutes later when you happen to open it. Same check for a Bluetooth auto-end that happens while the app is closed
+- [ ] Android APK (v1.44.0): tap ↻ on each of the three widgets — it repaints right away and never shows "יבוצע כשהאפליקציה תיפתח מחדש" (a refresh is never queued). With the app open, the `WIDGET` log shows "the page is re-syncing real state into the mirror"
+- [ ] Android APK (v1.44.0): once the app is opened and syncs, the ⏳ disappears and the address widget shows the real address — the marker must clear, or every widget will claim to be out of date forever
+- [ ] **Android APK (v1.44.0): with the app backgrounded or killed, trigger the GPS drive-away suggestion while using another app (Waze). The notification must POP UP over that app, not just appear in the shade.** If it only lands silently, check the `NOTIFY` log for "[channel findmycar_alerts_v2, heads-up]" — "[default channel — no heads-up]" there means channel creation failed; the same alert arriving with no banner at all on an already-installed build means the channel id was reused instead of bumped
 - [ ] Backup: export from the PWA, import the same file into the APK (and vice versa) — vehicles/history/settings all present after reload
 - [ ] Android APK: `npm run cap:sync` completes without error
 - [ ] Android APK: installing a new build over an already-installed older build works without uninstalling first

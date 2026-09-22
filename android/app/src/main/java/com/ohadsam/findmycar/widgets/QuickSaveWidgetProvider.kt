@@ -27,6 +27,7 @@ class QuickSaveWidgetProvider : AppWidgetProvider() {
         fun updateOne(context: Context, mgr: AppWidgetManager, id: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_quick_save)
             WidgetStatus.render(context, views)
+            WidgetRefreshButton.bind(context, views, id)
             val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0)
 

@@ -89,6 +89,20 @@
                     android:text="🔁"
                     android:visibility="gone" />
 
+                <!-- Re-reads the current parking state on demand: repaints
+                     from the native mirror immediately and, when the app's
+                     page is alive, asks it to re-sync the real records. Always
+                     shown — its value is highest exactly when something looks
+                     stale, which is when a conditional button would be hidden. -->
+                <TextView
+                    android:id="@+id/widget_refresh_btn"
+                    android:layout_width="20dp"
+                    android:layout_height="18dp"
+                    android:gravity="center"
+                    android:textSize="12sp"
+                    android:textColor="#B8C4DB"
+                    android:text="↻" />
+
                 <TextView
                     android:id="@+id/widget_quick_actions_btn"
                     android:layout_width="24dp"

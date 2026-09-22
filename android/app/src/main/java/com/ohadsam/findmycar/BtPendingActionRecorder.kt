@@ -75,6 +75,11 @@ object BtPendingActionRecorder {
         val entry = PendingBtAction(direction, action, vehicle.id, vehicle.name, label, lat, lng, System.currentTimeMillis())
         PendingBtActionStore.add(context, entry)
         Log.i(TAG, "recorded pending BT action (WebView unreachable): $entry")
+        // Exactly the staleness a queued widget tap used to cause, reached by a
+        // different path: a Bluetooth auto-end recorded here is certain to be
+        // applied on the next app open, so leaving every widget showing the car
+        // as parked until then is simply a wrong display, not caution.
+        WidgetMirror.applyQueuedAction(context, if (action == "autoEnd") "end" else "save", vehicle.id)
         val title = if (action == "autoEnd") "🚗 חניה הסתיימה אוטומטית" else "🅿️ חניה חדשה תישמר בפתיחה הבאה"
         BackgroundAlertNotifier.show(context, title, "${vehicle.name} — יטופל כשהאפליקציה תיפתח מחדש")
     }

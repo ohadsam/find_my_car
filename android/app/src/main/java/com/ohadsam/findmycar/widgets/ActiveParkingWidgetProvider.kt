@@ -12,6 +12,7 @@ import android.widget.RemoteViews
 import com.ohadsam.findmycar.MainActivity
 import com.ohadsam.findmycar.R
 import com.ohadsam.findmycar.WidgetDataPlugin
+import com.ohadsam.findmycar.WidgetMirror
 
 /**
  * "חניה פעילה" widget — current parking address + vehicle, tap opens the
@@ -31,7 +32,14 @@ class ActiveParkingWidgetProvider : AppWidgetProvider() {
             val prefs = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
             val views = RemoteViews(context.packageName, R.layout.widget_active_parking)
             WidgetStatus.render(context, views)
+            WidgetRefreshButton.bind(context, views, id)
             val parked = ParkedVehicles.parse(prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]")
+            // Marks a change WidgetMirror applied locally that JS has not yet
+            // reconciled. Shown rather than hidden on purpose: the widget is
+            // reporting its own best knowledge, and saying so is the difference
+            // between an honest display and a guess presented as a fact.
+            val pending = if (WidgetMirror.hasPendingSync(context)) " ⏳" else ""
+
             val isLarge = (mgr.getAppWidgetOptions(id)?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0) ?: 0) >=
                 LARGE_MIN_HEIGHT_DP
 
@@ -50,7 +58,7 @@ class ActiveParkingWidgetProvider : AppWidgetProvider() {
                     }
                     val v = parked[index]
                     views.setTextViewText(R.id.widget_title, "${v.name} חונה כאן".trim())
-                    views.setTextViewText(R.id.widget_subtitle, v.address.ifBlank { "מיקום נשמר" })
+                    views.setTextViewText(R.id.widget_subtitle, v.address.ifBlank { "מיקום נשמר" } + pending)
                     views.setTextViewText(R.id.widget_icon_badge, v.icon)
                     views.setViewVisibility(R.id.widget_row2, View.GONE)
                     if (parked.size >= 2) {
@@ -64,10 +72,10 @@ class ActiveParkingWidgetProvider : AppWidgetProvider() {
                     val v1 = parked[0]
                     val v2 = parked[1]
                     views.setTextViewText(R.id.widget_title, "${v1.name} חונה כאן".trim())
-                    views.setTextViewText(R.id.widget_subtitle, v1.address.ifBlank { "מיקום נשמר" })
+                    views.setTextViewText(R.id.widget_subtitle, v1.address.ifBlank { "מיקום נשמר" } + pending)
                     views.setTextViewText(R.id.widget_icon_badge, v1.icon)
                     views.setTextViewText(R.id.widget_title2, "${v2.name} חונה כאן".trim())
-                    views.setTextViewText(R.id.widget_subtitle2, v2.address.ifBlank { "מיקום נשמר" })
+                    views.setTextViewText(R.id.widget_subtitle2, v2.address.ifBlank { "מיקום נשמר" } + pending)
                     views.setTextViewText(R.id.widget_icon_badge2, v2.icon)
                     views.setViewVisibility(R.id.widget_row2, View.VISIBLE)
                     views.setViewVisibility(R.id.widget_cycle_btn, View.GONE)
