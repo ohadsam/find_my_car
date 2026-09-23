@@ -267,7 +267,7 @@ class FindMyCarApp {
       if (!navigator.geolocation) { resolve(); return; }
       navigator.geolocation.getCurrentPosition(
         () => { DiagLog.log('PERM', 'geolocation: granted'); resolve(); },
-        () => { DiagLog.log('PERM', 'geolocation: denied or unavailable'); resolve(); },
+        err => { DiagLog.log('PERM', `geolocation: ${FindMyCarApp.describeGeoError(err)}`); resolve(); },
         { timeout: 8000 }
       );
     });
@@ -575,15 +575,83 @@ class FindMyCarApp {
     this.#checkGpsDistance(lat, lng);
   }
 
+  /**
+   * Turns a GeolocationPositionError into something a diagnostic log can be
+   * read from. "denied or unavailable" used to cover all three codes, which
+   * made a revoked permission indistinguishable from simply being indoors —
+   * and that ambiguity is what left one real report unanswerable: the user
+   * said location was on, the log said "denied or unavailable", and nothing
+   * could tell which of the two was true.
+   */
+  /**
+   * A parking that silently fails to save is the worst outcome there is — the
+   * user believes their spot is recorded and finds out much later that it
+   * isn't. So say what actually went wrong, and separate the two cases that
+   * need completely different actions from the user:
+   *
+   *  - permission revoked → nothing they do in this app will help until they
+   *    re-grant it, so offer the settings screen directly;
+   *  - no fix → waiting or stepping outside will fix it.
+   *
+   * The native check is authoritative: a browser `PERMISSION_DENIED` and a
+   * plain timeout are easy to confuse, and guessing wrong sends the user to
+   * the wrong place. A notification goes out too, because on a Bluetooth
+   * auto-start there is no screen to show a toast on.
+   */
+  async #reportLocationFailure(err) {
+    let granted = null;
+    try {
+      if (OemSetup.isSupported()) granted = (await OemSetup.status())?.locationGranted ?? null;
+    } catch { /* fall back to the browser's own error code below */ }
+
+    const denied = granted === false || (granted === null && err?.code === 1);
+    if (denied) {
+      DiagLog.log('GPS', 'location permission is NOT granted — the parking could not be saved');
+      this.#ui.showToast('אין הרשאת מיקום — החניה לא נשמרה. פתח הגדרות ואשר מיקום.', 'error');
+      Notify.show('FindMyCar', '⚠️ החניה לא נשמרה — חסרה הרשאת מיקום');
+      this.#bluetooth.openAppSettings?.();
+      return;
+    }
+    this.#ui.showToast('לא ניתן לאתר מיקום כרגע — החניה לא נשמרה. נסה שוב בחוץ.', 'error');
+    Notify.show('FindMyCar', '⚠️ החניה לא נשמרה — לא התקבל מיקום GPS');
+  }
+
+  static describeGeoError(err) {
+    switch (err?.code) {
+      case 1:  return 'PERMISSION DENIED — the app does not currently hold location permission ' +
+                      '(an Android "only this time" grant is revoked once the app stops being used)';
+      case 2:  return 'position unavailable — permission is fine, but no fix could be obtained (indoors / location services off)';
+      case 3:  return 'timed out — permission is fine, but no fix arrived in time';
+      default: return `failed — ${err?.message || 'unknown error'}`;
+    }
+  }
+
+  /**
+   * One high-accuracy attempt, then — rather than giving up — a relaxed one
+   * that accepts a coarse or slightly stale fix. A single strict attempt fails
+   * routinely indoors or in a car park, and when it does on an auto-start the
+   * user gets nothing at all: no parking, and a toast they never see because
+   * the app is backgrounded. A slightly less precise saved spot beats none.
+   *
+   * A denied permission is NOT retried — there is nothing a second attempt can
+   * do about it, and retrying would just delay telling the user the truth.
+   */
   #getCurrentLocation() {
-    return new Promise((resolve, reject) => {
+    const attempt = opts => new Promise((resolve, reject) => {
       if (!navigator.geolocation) { reject(new Error('Geolocation not supported')); return; }
       navigator.geolocation.getCurrentPosition(
         pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
         err => reject(err),
-        { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
+        opts
       );
     });
+
+    return attempt({ enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 })
+      .catch(err => {
+        if (err?.code === 1) throw err;
+        DiagLog.log('GPS', `precise fix ${FindMyCarApp.describeGeoError(err)} — retrying with a coarse/cached fix`);
+        return attempt({ enableHighAccuracy: false, timeout: 10000, maximumAge: 120000 });
+      });
   }
 
   // ── GEOCODING ─────────────────────────────────────────────────
@@ -633,11 +701,13 @@ class FindMyCarApp {
       this.#ui.showToast('מאתר מיקום... ⏳', 'info');
       try {
         loc = await this.#getCurrentLocation();
-      } catch {
+      } catch (err) {
         if (this.#state.userPos) {
+          DiagLog.log('GPS', `save: ${FindMyCarApp.describeGeoError(err)} — falling back to the last watched position`);
           loc = this.#state.userPos;
         } else {
-          this.#ui.showToast('לא ניתן לאתר מיקום. בדוק הרשאות GPS.', 'error');
+          DiagLog.log('GPS', `save ABORTED — no location: ${FindMyCarApp.describeGeoError(err)}`);
+          await this.#reportLocationFailure(err);
           return;
         }
       }
@@ -704,16 +774,19 @@ class FindMyCarApp {
 
     this.#ui.showToast('מחפש מיקום... ⏳', 'info');
     let loc;
+    let locErr = null;
     try {
       loc = await this.#getCurrentLocation();
-    } catch {
+    } catch (err) {
+      locErr = err;
       loc = this.#state.userPos ?? null;
     } finally {
       this.#swapping = false;
     }
 
     if (!loc) {
-      this.#ui.showToast('לא ניתן לאתר מיקום. בדוק הרשאות GPS.', 'error');
+      DiagLog.log('GPS', `swap ABORTED — no location: ${FindMyCarApp.describeGeoError(locErr)}`);
+      await this.#reportLocationFailure(locErr);
       return;
     }
 

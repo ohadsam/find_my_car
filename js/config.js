@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.45.0',
+  version: '1.45.1',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -72,6 +72,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.45.1',
+      date: '2026-09-23',
+      items: Object.freeze([
+        'חניה שלא נשמרה בגלל מיקום כבר לא נכשלת בשקט: מוצגת הודעה שאומרת מה בדיוק קרה — אין הרשאת מיקום (ואז נפתחות ההגדרות) או שלא התקבל קליט GPS — ובנוסף נשלחת התראה, כי בשמירה אוטומטית אין מסך לראות בו הודעה',
+        'לפני ויתור, נעשה ניסיון שני עם מיקום גס/מהמטמון — ניסיון מדויק יחיד נכשל דרך קבע בחניון או בתוך מבנה, ומיקום קצת פחות מדויק עדיף על כלום',
+        'יומן האבחון מפריד עכשיו בין "אין הרשאה" לבין "לא התקבל קליט" ו"פג הזמן". עד כה כל השלושה נרשמו כ-"denied or unavailable", ולא היה אפשר לדעת מה מהם קרה',
+      ]),
+    }),
     Object.freeze({
       version: '1.45.0',
       date: '2026-09-22',
