@@ -225,7 +225,7 @@ export class UIController {
       // Shown regardless (rather than hidden) so the relationship between the
       // two is visible, with the subtitle saying when it applies.
       card.appendChild(this.#makeBtRow(
-        'הצע חניה אחרי שהתרחקת', 'רק כשהתחלת חניה אוטומטית כבויה',
+        'הצע חניה עם ניתוק', 'רק כשהתחלת חניה אוטומטית כבויה',
         v.walkAwaySuggest,
         checked => onToggleVehicle(v.id, { walkAwaySuggest: checked })
       ));

@@ -33,8 +33,16 @@ object PendingParkingSuggestionStore {
     private const val KEY_WINDOW_LNG = "window_lng"
     private const val KEY_WINDOW_HAS_FIX = "window_has_fix"
     private const val KEY_WINDOW_AT = "window_at"
+    private const val KEY_WINDOW_NOTIF_ID = "window_notif_id"
 
-    /** An open "did they park and walk away?" window. */
+    /**
+     * An open "did they park and walk away?" window. The suggestion notification
+     * fires immediately when this opens (see WalkAwayDetector.maybeOpenWindow) —
+     * this window no longer waits for a confirmed walk before asking. It stays
+     * open only so a later fix can retract an already-shown notification if it
+     * turns out the car never stopped ([notificationId] is what
+     * WalkAwayDetector.abort() cancels).
+     */
     data class Window(
         val vehicleId: String,
         val vehicleName: String,
@@ -42,6 +50,7 @@ object PendingParkingSuggestionStore {
         val lat: Double?,
         val lng: Double?,
         val disconnectedAt: Long,
+        val notificationId: Int = 0,
     )
 
     private fun prefs(context: Context) =
@@ -59,6 +68,7 @@ object PendingParkingSuggestionStore {
             .putFloat(KEY_WINDOW_LNG, (window.lng ?: 0.0).toFloat())
             .putBoolean(KEY_WINDOW_HAS_FIX, window.lat != null && window.lng != null)
             .putLong(KEY_WINDOW_AT, window.disconnectedAt)
+            .putInt(KEY_WINDOW_NOTIF_ID, window.notificationId)
             .apply()
     }
 
@@ -75,6 +85,7 @@ object PendingParkingSuggestionStore {
             lat = if (hasFix) p.getFloat(KEY_WINDOW_LAT, 0f).toDouble() else null,
             lng = if (hasFix) p.getFloat(KEY_WINDOW_LNG, 0f).toDouble() else null,
             disconnectedAt = p.getLong(KEY_WINDOW_AT, 0L),
+            notificationId = p.getInt(KEY_WINDOW_NOTIF_ID, 0),
         )
     }
 
@@ -88,6 +99,7 @@ object PendingParkingSuggestionStore {
             .remove(KEY_WINDOW_LNG)
             .remove(KEY_WINDOW_HAS_FIX)
             .remove(KEY_WINDOW_AT)
+            .remove(KEY_WINDOW_NOTIF_ID)
             .apply()
     }
 

@@ -773,7 +773,10 @@ class ParkingForegroundService : Service() {
                         BtPendingActionRecorder.maybeRecord(context, label, connected = true)
                         // Reconnected — they got back in, so there is nothing
                         // left to ask about the spot they walked away from.
-                        WalkAwayDetector.closeWindow(context, "reconnected to the vehicle")
+                        // Withdraws the notification too, not just the window,
+                        // since it may already be showing (raised immediately
+                        // on the disconnect that preceded this reconnect).
+                        WalkAwayDetector.cancelOnReconnect(context)
                     }
                     BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
                         BtEventBus.emitDisconnected(label)
@@ -983,10 +986,15 @@ class ParkingForegroundService : Service() {
     }
 
     /**
-     * Feeds WalkAwayEngine while a disconnect window is open. Runs off the same
-     * location fixes as the GPS end-suggestion above — a parking session and a
-     * walk-away window are mutually exclusive in practice (the window only
-     * opens for a vehicle with no active parking), but nothing here assumes it.
+     * Feeds WalkAwayEngine while a disconnect window is open. The suggestion
+     * itself already fired at disconnect time (WalkAwayDetector.maybeOpenWindow)
+     * — this only decides whether to take it back: SuggestStart (confirmed
+     * walking) means the question was the right one to ask and needs no action;
+     * Abort (still moving like a vehicle, or the window ran out) withdraws it.
+     * Runs off the same location fixes as the GPS end-suggestion above — a
+     * parking session and a walk-away window are mutually exclusive in practice
+     * (the window only opens for a vehicle with no active parking), but nothing
+     * here assumes it.
      */
     private fun runWalkAwayCheck(location: Location, speed: Double?, now: Long) {
         try {
@@ -1028,12 +1036,13 @@ class ParkingForegroundService : Service() {
             walkAwayState = next
 
             when (decision) {
-                is WalkAwayDecision.SuggestStart -> {
-                    WalkAwayDetector.raise(this, window)
-                    WalkAwayDetector.closeWindow(this, "suggestion raised")
-                }
-                is WalkAwayDecision.Abort -> WalkAwayDetector.closeWindow(
-                    this,
+                is WalkAwayDecision.SuggestStart ->
+                    // The suggestion already fired at disconnect time — this
+                    // only confirms it was the right call. Nothing left to do
+                    // but stop watching.
+                    WalkAwayDetector.closeWindow(this, "walking confirmed — suggestion already showing")
+                is WalkAwayDecision.Abort -> WalkAwayDetector.abort(
+                    this, window,
                     if (now - window.disconnectedAt >= WALK_WINDOW_MS) "window expired"
                     else "still moving at vehicle speed — the car did not stop here",
                 )

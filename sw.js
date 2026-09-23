@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME      = 'findmycar-v1.45.1';
+const CACHE_NAME      = 'findmycar-v1.46.0';
 const TILES_CACHE     = 'findmycar-tiles-v1.0.0';
 const STATIC_ASSETS = [
   './',

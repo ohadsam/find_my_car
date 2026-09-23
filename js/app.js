@@ -1084,7 +1084,7 @@ class FindMyCarApp {
     }
     DiagLog.log('WALK', 'showing the walk-away parking suggestion', { vehicleName: pending.vehicleName });
     const sub = Utils.el('walkAwaySubtitle');
-    if (sub) sub.textContent = `${pending.vehicleName || ''} — נראה שחנית והתרחקת מהרכב`;
+    if (sub) sub.textContent = `${pending.vehicleName || ''} — התנתקת מהרכב. לשמור את החניה כאן?`;
     this.#ui.openModal('walkAwayModal');
   }
 
