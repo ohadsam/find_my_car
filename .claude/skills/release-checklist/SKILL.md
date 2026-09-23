@@ -374,6 +374,22 @@ step broken or skipped:
   well as `#init()`, and is guarded against overlapping runs (`#reconcilingBt`).
   The Activity usually survives the app being closed, so a resume is not a cold
   start and a pending action would otherwise wait for one.
+- Confirm every `getCurrentPosition` error path reports the actual
+  `PositionError.code` via `FindMyCarApp.describeGeoError()` — never a single
+  "denied or unavailable" for all three. A revoked permission, no fix, and a
+  timeout need completely different actions from the user, and collapsing them
+  left one real report impossible to answer from its log.
+- Confirm `#saveNewParking`/`#swapParking` call `#reportLocationFailure()`
+  instead of a bare toast when no location can be had, and that it checks the
+  NATIVE permission (`OemSetup.status().locationGranted`) rather than trusting
+  the browser error code alone — sending someone to app settings when the real
+  problem is being indoors (or vice versa) is worse than saying nothing.
+  Confirm it also fires `Notify.show(...)`: on a Bluetooth auto-start there is
+  no screen for a toast, so without it the save fails completely silently.
+- Confirm `#getCurrentLocation()` retries once with relaxed options
+  (`enableHighAccuracy: false`, a large `maximumAge`) after a precise attempt
+  fails, and does NOT retry when `err.code === 1` (permission denied) — a
+  second attempt cannot help there and only delays telling the truth.
 - Confirm `js/app.js`'s `#reconcilePendingBtActions()` replays each entry by calling
   the real `#onBtConnected(label)` / `await #onBtDisconnected(label)` — the SAME
   handlers a live event uses — rather than a separate reimplementation that reads
