@@ -54,12 +54,18 @@ object BackgroundAlertNotifier {
      */
     data class Action(val label: String, val action: String, val vehicleId: String?)
 
-    fun show(context: Context, title: String, body: String, actions: List<Action> = emptyList()) {
+    /**
+     * Returns the notification's id (0 if it could not be shown — permission
+     * missing, or an exception) so a caller that may need to retract this
+     * specific notification later (see WalkAwayDetector.abort()) can hold onto
+     * it, rather than every caller inventing its own id scheme.
+     */
+    fun show(context: Context, title: String, body: String, actions: List<Action> = emptyList()): Int {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
                     PackageManager.PERMISSION_GRANTED
-                if (!granted) return
+                if (!granted) return 0
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val mgr = context.getSystemService(NotificationManager::class.java)
@@ -102,8 +108,16 @@ object BackgroundAlertNotifier {
                 builder.addAction(0, a.label, pi)
             }
             NotificationManagerCompat.from(context).notify(notifId, builder.build())
+            return notifId
         } catch (e: Exception) {
             Log.w(TAG, "show failed (non-fatal)", e)
+            return 0
         }
+    }
+
+    /** Retracts a notification previously shown via [show], if it's still up. */
+    fun cancel(context: Context, notifId: Int) {
+        if (notifId == 0) return
+        runCatching { NotificationManagerCompat.from(context).cancel(notifId) }
     }
 }

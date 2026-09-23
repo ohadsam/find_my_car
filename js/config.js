@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.45.1',
+  version: '1.46.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -31,16 +31,21 @@ export const CFG = Object.freeze({
   gpsSpeedSampleCapMs:  15000,  // ms ceiling on how much any single sample may add, so one fast fix after a long gap can't fill the accumulator at once
   gpsDerivedSpeedMinIntervalMs: 5000, // ms — shortest interval a speed may be DERIVED over when the device reports none; below this, GPS jitter (20m of error 1s apart reads as 20 m/s) would fabricate vehicle evidence
   gpsEvidenceTtlMs:     600000, // ms (10 min) — accumulated evidence expires after this long with no further above-threshold sample, so one ride early in a parking session can't leave the distance trigger armed for a plain walk hours later
-  // Walk-away parking suggestion (Bluetooth disconnect -> observed walking
-  // away -> offer to save the spot). See CLAUDE.md "Walk-away parking
-  // suggestion". Every bound here is set to fail toward asking rather than
-  // toward silence — the v1.42.0 lesson.
-  walkMinSpeed:         0.5,    // m/s — lower edge of the pedestrian band. Low enough that GPS jitter can nudge the accumulator, which is fine: walkMinDisplacement is what actually proves the user left
-  walkMaxSpeed:         3.0,    // m/s — upper edge of the pedestrian band (~11 km/h)
-  walkAbortSpeed:       6.0,    // m/s (~22 km/h) — above this right after a disconnect the car clearly never stopped here, so the window is abandoned rather than left to fire at some later destination
-  walkRequiredMs:       8000,   // ms accumulated in the pedestrian band before suggesting
-  walkMinDisplacement:  30,     // meters from the disconnect point — pacing beside the car while unloading is walking, but it is not leaving
-  walkWindowMs:         600000, // ms (10 min) — how long after a disconnect the suggestion may still fire; generous, since sitting in the car a few minutes before getting out is normal
+  // Walk-away parking suggestion (Bluetooth disconnect -> offer to save the
+  // spot). See CLAUDE.md "Walk-away parking suggestion". Since v1.46.0 the ask
+  // itself is unconditional (fires on every eligible disconnect) — these
+  // thresholds now only govern whether an already-shown notification gets
+  // WITHDRAWN. walkMinSpeed/walkMaxSpeed/walkRequiredMs/walkMinDisplacement
+  // are read on the native side only (ParkingForegroundService.kt's mirrored
+  // constants), feeding WalkAwayEngine's now-vestigial SuggestStart branch —
+  // kept rather than removed so the engine's tests and shape stay untouched.
+  // walkAbortSpeed and walkWindowMs are the ones still doing real work.
+  walkMinSpeed:         0.5,    // m/s — lower edge of the pedestrian band (vestigial, see above)
+  walkMaxSpeed:         3.0,    // m/s — upper edge of the pedestrian band (~11 km/h) (vestigial, see above)
+  walkAbortSpeed:       6.0,    // m/s (~22 km/h) — above this shortly after a disconnect the car clearly never stopped here, so the already-shown suggestion is withdrawn rather than left standing for a destination it knows nothing about
+  walkRequiredMs:       8000,   // ms accumulated in the pedestrian band (vestigial, see above)
+  walkMinDisplacement:  30,     // meters from the disconnect point (vestigial, see above)
+  walkWindowMs:         600000, // ms (10 min) — how long after a disconnect a stale suggestion is still allowed to reach the in-app modal on resume; generous, since sitting in the car a few minutes before getting out is normal
   // How old a native Bluetooth event may be before its location is no longer
   // trustworthy for auto-start. Delivery of a plugin event waits for the
   // WebView's JS engine to resume, so a disconnect can surface long after it
@@ -72,6 +77,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.46.0',
+      date: '2026-09-23',
+      items: Object.freeze([
+        'הצעת "התחלת חניה" אחרי ניתוק Bluetooth נשלחת עכשיו מיד עם הניתוק, ולא רק אחרי שזוהתה הליכה בפועל — הליכה הייתה לפעמים איטית/קצרה מדי כדי להיקלט, וההצעה פשוט לא הופיעה',
+        'אם מתברר תוך כמה שניות שהרכב עדיין בתנועה (הניתוק היה ברמזור/במנהרה) ההודעה מבוטלת אוטומטית מהמסך',
+        'התראה שכבר נשלחה מבוטלת גם בחיבור מחדש לרכב',
+      ]),
+    }),
     Object.freeze({
       version: '1.45.1',
       date: '2026-09-23',
