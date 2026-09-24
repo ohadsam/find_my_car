@@ -39,6 +39,22 @@ class PendingWidgetActionJsonTest {
     }
 
     @Test
+    fun `round-trips the location recorded at tap time`() {
+        val original = listOf(PendingWidgetAction("save", null, 5000L, 32.08, 34.78, 12.0, 4000L))
+        assertEquals(original, PendingWidgetActionJson.parse(PendingWidgetActionJson.toJson(original)))
+    }
+
+    @Test
+    fun `entry queued before location was recorded parses with no fix`() {
+        val json = """[{"action":"save","vehicleId":null,"timestamp":7}]"""
+        val parsed = PendingWidgetActionJson.parse(json)[0]
+        assertNull(parsed.lat)
+        assertNull(parsed.lng)
+        assertNull(parsed.accuracy)
+        assertNull(parsed.fixTime)
+    }
+
+    @Test
     fun `empty list round-trips to empty list`() {
         assertEquals(emptyList<PendingWidgetAction>(), PendingWidgetActionJson.parse(PendingWidgetActionJson.toJson(emptyList())))
     }

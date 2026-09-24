@@ -53,6 +53,7 @@ class FindMyCarApp {
   // duplicate-delivery guard: {key, at, message}.
   #lastWidgetAction = null;
   #reconcilingBt = false;
+  #reconcilingWidget = false;
   #geocoding = new Set();   // parking ids with an address lookup in flight
   #fillingAddresses = false;
   #mergingNativeLog = false;
@@ -502,6 +503,7 @@ class FindMyCarApp {
       // action recorded while the JS engine was frozen would otherwise sit
       // unreplayed until the next genuine cold start.
       this.#reconcilePendingBtActions().catch(() => {});
+      this.#reconcilePendingWidgetActions().catch(() => {});
       this.#fillMissingAddresses().catch(() => {});
     });
 
@@ -825,7 +827,7 @@ class FindMyCarApp {
     this.#resolveAddress(this.#state.activeVehicleId, parking.id).catch(() => {});
   }
 
-  async #swapParking() {
+  async #swapParking(presetLoc = null) {
     if (this.#swapping) return;
     if (!this.#state.current) { this.#ui.showToast('אין חניה פעילה להחלפה.', 'info'); return; }
     this.#swapping = true;
@@ -840,17 +842,18 @@ class FindMyCarApp {
     const prevId    = this.#state.current.id;
     const vehicleId = this.#state.activeVehicleId;
 
-    this.#ui.showToast('מחפש מיקום... ⏳', 'info');
-    let loc;
+    let loc = presetLoc;
     let locErr = null;
-    try {
-      loc = await this.#getCurrentLocation();
-    } catch (err) {
-      locErr = err;
-      loc = this.#state.userPos ?? null;
-    } finally {
-      this.#swapping = false;
+    if (!loc) {
+      this.#ui.showToast('מחפש מיקום... ⏳', 'info');
+      try {
+        loc = await this.#getCurrentLocation();
+      } catch (err) {
+        locErr = err;
+        loc = this.#state.userPos ?? null;
+      }
     }
+    this.#swapping = false;
 
     if (!loc) {
       DiagLog.log('GPS', `swap ABORTED — no location: ${FindMyCarApp.describeGeoError(locErr)}`);
@@ -985,7 +988,18 @@ class FindMyCarApp {
   // foreground. Same idea as the existing BT-triggered background saves
   // (#onBtDisconnected already calls #switchVehicle/#saveNewParking while
   // the app isn't foregrounded) — just reachable from a widget tap too now.
-  async performWidgetAction(action, vehicleId) {
+  //
+  // opts.tappedAt: set by WidgetActionReceiver's live delivery. A frozen page
+  //   runs that script only when it thaws — after the receiver gave up waiting
+  //   and queued the tap — so a delivery older than CFG.widgetAckTimeoutMs is
+  //   dropped and the queued replay (which carries the tap-time location) runs
+  //   instead. Returns null in that case, so no Toast or notification.
+  // opts.presetLoc: the location recorded at the tap, from the replay.
+  async performWidgetAction(action, vehicleId, { tappedAt = null, presetLoc = null } = {}) {
+    if (tappedAt && Date.now() - tappedAt > CFG.widgetAckTimeoutMs) {
+      DiagLog.log('WIDGET', `dropped late live delivery of ${action} (${Math.round((Date.now() - tappedAt) / 1000)}s after the tap) — it was queued for replay with the tap-time location`);
+      return null;
+    }
     try {
       // Duplicate-delivery guard. A real report showed two identical
       // performWidgetAction('save') calls landing in the same second, saving
@@ -1013,7 +1027,7 @@ class FindMyCarApp {
         if (this.#state.current) {
           message = 'יש כבר חניה פעילה — להחלפה השתמש ב"החלף חניה"';
         } else {
-          await this.#saveNewParking();
+          await this.#saveNewParking(presetLoc);
           message = this.#state.current ? `🅿️ חניה נשמרה — ${vLabel}` : 'שמירת חניה נכשלה (בדוק מיקום GPS)';
         }
       } else if (action === 'swap') {
@@ -1021,7 +1035,7 @@ class FindMyCarApp {
           message = 'אין חניה פעילה להחלפה';
         } else {
           const prevId = this.#state.current.id;
-          await this.#swapParking();
+          await this.#swapParking(presetLoc);
           message = this.#state.current?.id !== prevId ? `🔄 החניה הוחלפה — ${vLabel}` : 'החלפת חניה נכשלה (בדוק מיקום GPS)';
         }
       } else if (action === 'end') {
@@ -1154,18 +1168,56 @@ class FindMyCarApp {
   // consistent state is safe. Processed sequentially to match how widget
   // taps only ever happen one at a time. No-op in the browser/PWA
   // (getPendingWidgetActions() resolves to []).
+  //
+  // Runs on every resume as well as from #init() (guarded against overlap):
+  // the Activity usually survives the app being closed, so a tap queued while
+  // the page was frozen would otherwise wait for the next cold start.
   async #reconcilePendingWidgetActions() {
-    const actions = await WidgetBridge.getPendingWidgetActions();
-    if (!actions.length) return;
-    for (const a of actions) {
-      DiagLog.log('WIDGET', `replaying pending widget action=${a.action} vehicleId=${a.vehicleId || '(active)'}`);
-      try {
-        await this.performWidgetAction(a.action, a.vehicleId ?? null);
-      } catch (e) {
-        DiagLog.log('WIDGET', `pending widget action replay threw — ${e?.message || e}`);
+    if (this.#reconcilingWidget) return;
+    this.#reconcilingWidget = true;
+    try {
+      const actions = await WidgetBridge.getPendingWidgetActions();
+      if (!actions.length) return;
+      for (const a of actions) {
+        DiagLog.log('WIDGET', `replaying pending widget action=${a.action} vehicleId=${a.vehicleId || '(active)'}`);
+        try {
+          const placed = a.action === 'save' || a.action === 'swap';
+          const presetLoc = placed ? this.#tapLocation(a) : null;
+          if (presetLoc === false) {
+            const msg = 'החניה לא נשמרה — המיקום בזמן הלחיצה על הווידג\u05f3ט לא היה ידוע';
+            this.#ui.showToast(msg, 'error');
+            Notify.show('FindMyCar', `⚠️ ${msg}`);
+            continue;
+          }
+          await this.performWidgetAction(a.action, a.vehicleId ?? null, { presetLoc });
+        } catch (e) {
+          DiagLog.log('WIDGET', `pending widget action replay threw — ${e?.message || e}`);
+        }
       }
+      await WidgetBridge.clearPendingWidgetActions();
+    } finally {
+      this.#reconcilingWidget = false;
     }
-    await WidgetBridge.clearPendingWidgetActions();
+  }
+
+  // Where to save a replayed widget save/swap. null = take a live fix (the
+  // tap was recent enough that the user is still at the car); a location =
+  // the fix recorded at the tap; false = neither is trustworthy, so do not
+  // save rather than save in the wrong place (the v1.45.0 rule).
+  #tapLocation(a) {
+    const age = Date.now() - (a.timestamp || 0);
+    if (age <= CFG.btEventMaxAgeMs) {
+      DiagLog.log('WIDGET', `replay of ${a.action} is ${Math.round(age / 1000)}s after the tap — using a live fix`);
+      return null;
+    }
+    const hasFix = typeof a.lat === 'number' && typeof a.lng === 'number';
+    const fixAge = hasFix && a.fixTime ? a.timestamp - a.fixTime : Infinity;
+    if (hasFix && fixAge <= CFG.widgetFixMaxAgeMs) {
+      DiagLog.log('WIDGET', `replay of ${a.action} is ${Math.round(age / 60000)} min after the tap — saving at the location recorded at the tap (fix ${Math.round(fixAge / 1000)}s old, ±${Math.round(a.accuracy || 0)}m)`);
+      return { lat: a.lat, lng: a.lng, accuracy: a.accuracy || 0 };
+    }
+    DiagLog.log('WIDGET', `replay of ${a.action} REFUSED — ${Math.round(age / 60000)} min after the tap and ${hasFix ? `the recorded fix was ${Math.round(fixAge / 60000)} min old at the tap` : 'no location was recorded at the tap'}; a live fix now would be wherever the app was opened`);
+    return false;
   }
 
   // Merges NativeLogStore's native-only events — background-machinery

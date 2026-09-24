@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.47.0',
+  version: '1.48.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -53,7 +53,13 @@ export const CFG = Object.freeze({
   // Two minutes: within that you are still at the car; past it, defer to the
   // location native recorded at the moment of the disconnect.
   btEventMaxAgeMs:      120000,
-  widgetActionDedupeMs: 3000,   // ms — an identical widget/notification action repeated within this window is treated as one tap, not two (a duplicate broadcast saved two parkings and posted two notifications)
+  widgetActionDedupeMs: 3000,
+  // Must equal WidgetActionReceiver.ACK_TIMEOUT_MS: after that long the native
+  // side has queued the tap for replay, so a late live delivery is dropped.
+  widgetAckTimeoutMs:   2500,
+  // A queued widget save replayed after btEventMaxAgeMs uses the fix recorded
+  // at the tap — but only if that cached fix was this fresh at the time.
+  widgetFixMaxAgeMs:    600000,   // ms — an identical widget/notification action repeated within this window is treated as one tap, not two (a duplicate broadcast saved two parkings and posted two notifications)
   gpsDistanceThreshold: 300,    // meters from the saved parking spot before suggesting end (catches movement the speed check would miss, e.g. stop-and-go traffic)
   // How often the WEB (js/app.js) and SERVICE (ParkingForegroundService.kt)
   // heartbeats log to DiagLog's SERVICE category, proving each is
@@ -82,6 +88,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.48.0',
+      date: '2026-09-25',
+      items: Object.freeze([
+        'שמירה או החלפת חניה מהווידג\u05f3ט כשהאפליקציה סגורה נשמרת עכשיו במיקום שבו לחצת — ולא במיקום שבו אתה נמצא כשפותחים את האפליקציה',
+        'פעולת ווידג\u05f3ט שהמתינה מתבצעת גם בחזרה רגילה לאפליקציה, לא רק בהפעלה מחדש מלאה',
+        'אם המיקום בזמן הלחיצה לא היה ידוע, החניה לא נשמרת במקום שגוי — מוצגת הודעה במקום',
+      ]),
+    }),
     Object.freeze({
       version: '1.47.0',
       date: '2026-09-24',

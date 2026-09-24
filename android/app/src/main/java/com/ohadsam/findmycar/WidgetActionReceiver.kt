@@ -86,6 +86,12 @@ class WidgetActionReceiver : BroadcastReceiver() {
 
         val actionArg  = JSONObject.quote(action)
         val vehicleArg = if (vehicleId.isNullOrBlank()) "null" else JSONObject.quote(vehicleId)
+        // A frozen page runs this script only when it thaws — typically when
+        // the app is opened, long after ACK_TIMEOUT_MS made us queue the tap.
+        // Passing the tap time lets the page drop that late delivery, so the
+        // queued replay (with the location recorded at the tap) is the one
+        // that runs, not a second save at wherever the user is now.
+        val tappedAt = System.currentTimeMillis()
         // Returns a marker SYNCHRONOUSLY so evaluateJavascript's own callback
         // can tell "the page accepted this" from "the page could not take it".
         // The promise result still comes back separately via AndroidWidgetBridge.
@@ -93,8 +99,8 @@ class WidgetActionReceiver : BroadcastReceiver() {
             (function() {
               try {
                 if (!window.app || !window.app.performWidgetAction) return 'FMC_NOT_READY';
-                window.app.performWidgetAction($actionArg, $vehicleArg)
-                  .then(function(msg) { if (window.AndroidWidgetBridge) window.AndroidWidgetBridge.onResult(msg); })
+                window.app.performWidgetAction($actionArg, $vehicleArg, { tappedAt: $tappedAt })
+                  .then(function(msg) { if (msg && window.AndroidWidgetBridge) window.AndroidWidgetBridge.onResult(msg); })
                   .catch(function() { if (window.AndroidWidgetBridge) window.AndroidWidgetBridge.onResult('שגיאה בביצוע הפעולה'); });
                 return 'FMC_ACCEPTED';
               } catch (e) { return 'FMC_NOT_READY'; }
@@ -168,8 +174,21 @@ class WidgetActionReceiver : BroadcastReceiver() {
      */
     private fun queueForReplay(context: Context, action: String, vehicleId: String?, why: String) {
         try {
-            PendingWidgetActionStore.add(context, PendingWidgetAction(action, vehicleId, System.currentTimeMillis()))
-            NativeLogStore.add(context, TAG, "WIDGET", "queued widget action \"$action\" for replay on next app open ($why)")
+            val now = System.currentTimeMillis()
+            // Where the phone is NOW, at the tap — the replay may run much
+            // later, and a live fix taken then describes where the user opened
+            // the app, not where they parked.
+            val fix = if (action == "save" || action == "swap") LastKnownLocation.getFix(context) else null
+            PendingWidgetActionStore.add(
+                context,
+                PendingWidgetAction(action, vehicleId, now, fix?.lat, fix?.lng, fix?.accuracy, fix?.time),
+            )
+            val fixNote = when {
+                action != "save" && action != "swap" -> ""
+                fix == null -> ", no cached location to record"
+                else -> ", location recorded (fix ${(now - fix.time) / 1000}s old, ±${fix.accuracy.toInt()}m)"
+            }
+            NativeLogStore.add(context, TAG, "WIDGET", "queued widget action \"$action\" for replay on next app open ($why$fixNote)")
             // Queuing used to be the whole story, and it left every widget
             // showing the state the tap had already changed until the app was
             // next opened — 22 minutes, in the report that prompted this. The
