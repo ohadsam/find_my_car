@@ -128,7 +128,7 @@ class FindMyCarApp {
 
     // Bluetooth setup
     this.#bluetooth.init({
-      onDeviceConnected:    label => this.#onBtConnected(label),
+      onDeviceConnected:    (label, opts) => this.#onBtConnected(label, opts),
       onDeviceDisconnected: label => this.#onBtDisconnected(label),
     });
 
@@ -1039,6 +1039,12 @@ class FindMyCarApp {
           message = this.#state.current?.id !== prevId ? `🔄 החניה הוחלפה — ${vLabel}` : 'החלפת חניה נכשלה (בדוק מיקום GPS)';
         }
       } else if (action === 'end') {
+        // Ending from the shade or a widget makes an open "car moved?" or
+        // "you're back at the car?" question stale — including one raised by
+        // a native notification, whose button lands here, not in the
+        // local-notification listener.
+        this.#closeModal('gpsEndModal');
+        if (this.#state.btPendingVehicleId === this.#state.activeVehicleId) this.#closeModal('btParkingModal');
         const had = !!this.#state.current;
         this.#resetParking();
         message = had ? `✅ החניה הסתיימה — ${vLabel}` : 'אין חניה פעילה לסיום';
@@ -1744,11 +1750,6 @@ class FindMyCarApp {
       const vehicleId = extra?.vehicleId ?? null;
       DiagLog.log('NOTIFY', `notification action "${actionId}" (vehicleId=${vehicleId || '(active)'})`);
       if (actionId !== 'end') return; // 'dismiss' and a plain 'tap' just open/close
-      // The in-app modals become stale the moment the action is taken from
-      // the shade — close whichever one is showing so the user doesn't come
-      // back to a question they already answered.
-      this.#closeModal('gpsEndModal');
-      this.#closeModal('btParkingModal');
       try {
         await this.performWidgetAction('end', vehicleId);
       } catch (e) {
@@ -1762,8 +1763,23 @@ class FindMyCarApp {
     return Store.get(CFG.keys.bluetoothSettings, { enabled: true });
   }
 
-  #onBtConnected(label) {
-    DiagLog.log('BT', `connected event received, label=${label}`);
+  /**
+   * @param {object} [opts]
+   * @param {number|null} [opts.at] the native event's own timestamp.
+   *
+   * On native, BtPendingActionRecorder already notifies for both outcomes
+   * whenever the app is not in the foreground (since v1.48.0 including the
+   * "end the parking?" question), so this handler never notifies there — it
+   * would only duplicate the shade. And a connect delivered late (the page's
+   * JS was frozen) does not re-open the question as a modal: it was already
+   * asked in the shade at the moment it happened, possibly answered there.
+   */
+  #onBtConnected(label, { at = null } = {}) {
+    const native = !!window.Capacitor?.isNativePlatform?.();
+    const ageMs = at ? Date.now() - at : 0;
+    const stale = native && ageMs > CFG.btEventMaxAgeMs;
+    DiagLog.log('BT', `connected event received, label=${label}` +
+      (ageMs > 5000 ? ` (event is ${Math.round(ageMs / 1000)}s old)` : ''));
     const vehicles = this.#state.vehicles;
     let matched = false;
     for (const v of vehicles) {
@@ -1778,9 +1794,13 @@ class FindMyCarApp {
         this.#markBtEnd(v.id, label);
         this.#btEndParking(v.id);
         this.#ui.showToast(`🔵 ${v.icon} ${v.name} — חניה הסתיימה אוטומטית`, 'success');
-        this.#notifyIfBackground('🔵 חניה הסתיימה אוטומטית', `${v.icon} ${v.name} — זוהה חיבור Bluetooth`);
+        if (!native) this.#notifyIfBackground('🔵 חניה הסתיימה אוטומטית', `${v.icon} ${v.name} — זוהה חיבור Bluetooth`);
       } else {
         if (this.#state.btPendingVehicleId) continue; // confirm modal already open; keep processing autoEnd vehicles
+        if (stale) {
+          DiagLog.log('BT', `not re-asking in the app — the connect is ${Math.round(ageMs / 60000)} min old and was already asked in the shade`, { vehicleName: v.name, vehicleIcon: v.icon });
+          continue;
+        }
         DiagLog.log('BT', 'showing end-parking confirmation modal', { vehicleName: v.name, vehicleIcon: v.icon });
         this.#state.btPendingVehicleId = v.id;
         this.#state.btPendingLabel     = label;
@@ -1789,11 +1809,13 @@ class FindMyCarApp {
         if (title) title.textContent = `${v.icon} הגעת לרכב?`;
         if (desc)  desc.textContent  = `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`;
         this.#ui.openModal('btParkingModal');
-        this.#notifyIfBackground(
-          `${v.icon} הגעת לרכב?`,
-          `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`,
-          { actionTypeId: Notify.CONFIRM_END, extra: { vehicleId: v.id } },
-        );
+        if (!native) {
+          this.#notifyIfBackground(
+            `${v.icon} הגעת לרכב?`,
+            `זוהה חיבור Bluetooth — יש חניה פעילה של ${v.name}`,
+            { actionTypeId: Notify.CONFIRM_END, extra: { vehicleId: v.id } },
+          );
+        }
       }
     }
     if (!matched) DiagLog.log('BT', `no vehicle is linked to device label="${label}" — event ignored`);

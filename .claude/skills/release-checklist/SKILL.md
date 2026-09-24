@@ -503,6 +503,21 @@ step broken or skipped:
   mid-lookup — otherwise a moved parking keeps the old spot's address or its
   old "no address" marker.
 
+## 4d. Bluetooth connect question (v1.49.0)
+
+- Confirm `BtPendingActionRecorder.maybeRecord()`'s connected branch handles
+  `BtConnectDecision.SuggestEnd` by calling `suggestEnd()` (a notification with
+  `end`/`dismiss` buttons) and records nothing for it. Dropping it back to
+  "AutoEnd only" makes the question appear only when the page's JS is awake.
+- Confirm `#onBtConnected` does not call `#notifyIfBackground` on native (both
+  the auto-end and the suggest branch) — native already notified, and JS doing
+  it too produces a duplicate every time the page is alive in the background.
+- Confirm a connect older than `CFG.btEventMaxAgeMs` on native does NOT open
+  `btParkingModal`, and that `js/bluetooth-native.js` passes `at` for
+  `connected` (not only `disconnected`).
+- Confirm `performWidgetAction('end')` closes `gpsEndModal` and, when it is
+  about the same vehicle, `btParkingModal`.
+
 ## 4c. Queued widget saves (v1.48.0)
 
 - Confirm `WidgetActionReceiver.queueForReplay()` records

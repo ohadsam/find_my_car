@@ -17,10 +17,11 @@ import com.ohadsam.findmycar.core.VehicleJsonParser
  * resumes — see PendingBtActionStore. Deliberately a no-op when the WebView
  * IS reachable: the live listener path (BluetoothClassicPlugin, via
  * BtEventBus) already handles the event through the normal, unchanged flow,
- * so acting here too would double the action. Only ever records
- * AutoEnd/AutoStart — SuggestEnd needs a confirmation modal, which has no
- * meaning without a UI to show it in, so it stays JS/foreground-only exactly
- * like today.
+ * so acting here too would double the action. Records AutoEnd/AutoStart;
+ * SuggestEnd changes no state, so it is never recorded — but since v1.48.0 it
+ * IS asked from here, as a notification with end/ignore buttons (see
+ * suggestEnd below): leaving it to JS meant the question only appeared when
+ * the app's JS happened to be awake, i.e. "not always".
  *
  * Real, previously-shipped bug this object's extraction fixes (see
  * CLAUDE.md "Open investigation" resolution): this logic used to live
@@ -67,8 +68,11 @@ object BtPendingActionRecorder {
                 // record to history — it never needs a fresh location fix,
                 // unlike auto-start below.
                 for (decision in BtDecisionEngine.onConnected(vehicles, label, hasParking)) {
-                    if (decision !is BtConnectDecision.AutoEnd) continue
-                    record(context, direction, "autoEnd", decision.vehicle, label, lat = null, lng = null)
+                    when (decision) {
+                        is BtConnectDecision.AutoEnd ->
+                            record(context, direction, "autoEnd", decision.vehicle, label, lat = null, lng = null)
+                        is BtConnectDecision.SuggestEnd -> suggestEnd(context, decision.vehicle, label)
+                    }
                 }
             } else {
                 for (decision in BtDecisionEngine.onDisconnected(vehicles, label, hasParking)) {
@@ -80,6 +84,32 @@ object BtPendingActionRecorder {
         } catch (e: Exception) {
             Log.w(TAG, "maybeRecord failed (non-fatal)", e)
         }
+    }
+
+    /**
+     * "You're back at the car — end the parking?", asked natively. The same
+     * question js/app.js asks live, but a Bluetooth plugin event reaches a
+     * backgrounded page only when its JS engine resumes (CLAUDE.md, v1.45.0),
+     * which is usually when the app is next opened — long after the drive
+     * started. The buttons go through WidgetActionReceiver like every other
+     * shade button, so "end" works with the app alive, frozen or killed.
+     * Nothing is recorded: an unanswered question changes no state.
+     */
+    private fun suggestEnd(context: Context, vehicle: NativeVehicle, label: String) {
+        Log.i(TAG, "asking natively whether to end ${vehicle.name}'s parking (connected to $label)")
+        NativeLogStore.add(
+            context, TAG, "BT-PENDING",
+            "Bluetooth connected to ${vehicle.name} while the app was in the background — asked natively whether to end the parking",
+        )
+        BackgroundAlertNotifier.show(
+            context,
+            "${vehicle.icon.ifBlank { "🚗" }} הגעת לרכב?",
+            "זוהה חיבור Bluetooth — יש חניה פעילה של ${vehicle.name}",
+            listOf(
+                BackgroundAlertNotifier.Action("סיים חניה", "end", vehicle.id),
+                BackgroundAlertNotifier.Action("התעלם", WidgetActionReceiver.ACTION_DISMISS, null),
+            ),
+        )
     }
 
     private fun record(
