@@ -1,7 +1,7 @@
 import { CFG } from './config.js';
 import { Store } from './store.js';
 import { Utils } from './utils.js';
-import { reverseGeocode, normalizeAddress } from './geocoder.js';
+import { reverseGeocodeDetailed, normalizeAddress } from './geocoder.js';
 import { MapController } from './map.js';
 import { CameraController } from './camera.js';
 import { VoiceController } from './voice.js';
@@ -53,6 +53,9 @@ class FindMyCarApp {
   // duplicate-delivery guard: {key, at, message}.
   #lastWidgetAction = null;
   #reconcilingBt = false;
+  #geocoding = new Set();   // parking ids with an address lookup in flight
+  #fillingAddresses = false;
+  #mergingNativeLog = false;
   #ui;
   #returnModal;
 
@@ -200,9 +203,7 @@ class FindMyCarApp {
 
     this.#syncUI();
 
-    if (this.#state.current && !this.#state.current.address) {
-      this.#geocodeCurrentParking();
-    }
+    this.#fillMissingAddresses().catch(() => {});
 
     this.#startLocationWatch();
     this.#setupPWA();
@@ -356,7 +357,10 @@ class FindMyCarApp {
     });
 
     Utils.el('openDiagLogBtn')?.addEventListener('click',   () => this.#openDiagLogModal());
-    Utils.el('diagLogRefreshBtn')?.addEventListener('click', () => this.#refreshDiagLogView());
+    Utils.el('diagLogRefreshBtn')?.addEventListener('click', async () => {
+      await this.#reconcileNativeLog().catch(() => {});
+      this.#refreshDiagLogView();
+    });
     Utils.el('diagLogVehicleFilter')?.addEventListener('change', () => this.#refreshDiagLogView());
     Utils.el('diagLogCategoryFilter')?.addEventListener('change', () => this.#refreshDiagLogView());
     Utils.el('diagLogCopyBtn')?.addEventListener('click',   () => this.#copyDiagLog());
@@ -489,6 +493,7 @@ class FindMyCarApp {
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
+      this.#reconcileNativeLog().catch(() => {});
       if (this.#state.current) this.#acquireWakeLock();
       if (this.#getBtSettings().enabled) this.#bluetooth.checkNow();
       this.#reconcilePendingParkingSuggestion().catch(() => {});
@@ -497,6 +502,7 @@ class FindMyCarApp {
       // action recorded while the JS engine was frozen would otherwise sit
       // unreplayed until the next genuine cold start.
       this.#reconcilePendingBtActions().catch(() => {});
+      this.#fillMissingAddresses().catch(() => {});
     });
 
     document.addEventListener('keydown', e => {
@@ -655,21 +661,90 @@ class FindMyCarApp {
   }
 
   // ── GEOCODING ─────────────────────────────────────────────────
-  #geocodeCurrentParking() {
-    const p = this.#state.current;
-    if (!p) return;
-    reverseGeocode(p.location.lat, p.location.lng).then(addr => {
-      if (!this.#state.current || this.#state.current.id !== p.id) return;
-      if (addr) {
-        this.#state.current.address = addr;
-        VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
-        this.#syncUI();
-        this.#map.updateParkingMarkerPopup(addr);
-      } else {
-        const addrEl = Utils.el('parkingAddressDisplay');
-        if (addrEl) addrEl.textContent = `${p.location.lat.toFixed(5)}, ${p.location.lng.toFixed(5)}`;
+  // A parking saved from a widget or by Bluetooth is saved while the app is in
+  // the background, where the single lookup that used to run routinely timed
+  // out — and nothing ever retried it, so those parkings stayed bare
+  // coordinates for good. Addresses are now retried on failure, and whatever
+  // is still missing is filled in on the next resume or reconnect. A spot that
+  // genuinely has no address (an open field, a forest) is marked
+  // addressLookup:'none' and keeps its coordinates without further lookups.
+
+  #findParking(vehicleId, parkingId) {
+    const active = vehicleId === this.#state.activeVehicleId;
+    const cur = active ? this.#state.current : VehicleController.getCurrent(vehicleId);
+    if (cur?.id === parkingId) return cur;
+    const hist = active ? this.#state.history : VehicleController.getHistory(vehicleId);
+    return hist.find(h => h.id === parkingId) || null;
+  }
+
+  async #resolveAddress(vehicleId, parkingId) {
+    if (this.#geocoding.has(parkingId)) return;
+    const p = this.#findParking(vehicleId, parkingId);
+    if (!p || p.address || p.addressLookup === 'none') return;
+    const { lat, lng } = p.location;
+    this.#geocoding.add(parkingId);
+    try {
+      for (const delay of CFG.geocodeRetryDelaysMs) {
+        if (delay) await new Promise(r => setTimeout(r, delay));
+        const r = await reverseGeocodeDetailed(lat, lng, CFG.geocodeRetryTimeout);
+        if (r.status === 'failed') continue;
+        this.#applyAddress(vehicleId, parkingId, lat, lng, r.status === 'ok' ? r.addr : null);
+        return;
       }
-    });
+      DiagLog.log('GPS', `address lookup failed ${CFG.geocodeRetryDelaysMs.length} times — will retry on next resume/reconnect`);
+    } finally {
+      this.#geocoding.delete(parkingId);
+    }
+  }
+
+  #applyAddress(vehicleId, parkingId, lat, lng, addr) {
+    const patch = p => {
+      // The spot may have been moved ("update location") while this lookup
+      // was in flight — an address for the old coordinates would be wrong.
+      if (p.location.lat !== lat || p.location.lng !== lng) return false;
+      if (addr) { p.address = addr; delete p.addressLookup; } else { p.addressLookup = 'none'; }
+      return true;
+    };
+    const active = vehicleId === this.#state.activeVehicleId;
+    let isCurrent = false;
+    const cur = active ? this.#state.current : VehicleController.getCurrent(vehicleId);
+    if (cur?.id === parkingId) {
+      if (!patch(cur)) return;
+      VehicleController.setCurrent(vehicleId, cur);
+      isCurrent = true;
+    } else {
+      const hist = active ? this.#state.history : VehicleController.getHistory(vehicleId);
+      const h = hist.find(x => x.id === parkingId);
+      if (!h || !patch(h)) return;
+      VehicleController.setHistory(vehicleId, hist);
+    }
+    DiagLog.log('GPS', addr ? `address resolved: ${addr.display}` : 'no address at this spot (open area) — keeping coordinates');
+    this.#syncUI();
+    if (isCurrent && active && addr) {
+      this.#map.updateParkingMarkerPopup(addr);
+      this.#showParkingNotification(this.#state.current);
+    }
+  }
+
+  async #fillMissingAddresses() {
+    if (this.#fillingAddresses) return;
+    this.#fillingAddresses = true;
+    try {
+      const needs = p => p && !p.address && p.addressLookup !== 'none';
+      for (const v of VehicleController.getAll()) {
+        const active = v.id === this.#state.activeVehicleId;
+        const cur  = active ? this.#state.current : VehicleController.getCurrent(v.id);
+        const hist = active ? this.#state.history : VehicleController.getHistory(v.id);
+        const todo = [cur, ...hist.slice(0, 3)].filter(needs);
+        for (const p of todo) {
+          await this.#resolveAddress(v.id, p.id);
+          // Nominatim's usage policy allows one request per second.
+          await new Promise(r => setTimeout(r, 1100));
+        }
+      }
+    } finally {
+      this.#fillingAddresses = false;
+    }
   }
 
   // ── PARKING MANAGEMENT ────────────────────────────────────────
@@ -747,14 +822,7 @@ class FindMyCarApp {
       this.#showParkingNotification(parking);
     }
 
-    reverseGeocode(loc.lat, loc.lng).then(addr => {
-      if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
-      this.#state.current.address = addr;
-      VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
-      this.#syncUI();
-      this.#map.updateParkingMarkerPopup(addr);
-      this.#showParkingNotification(this.#state.current);
-    });
+    this.#resolveAddress(this.#state.activeVehicleId, parking.id).catch(() => {});
   }
 
   async #swapParking() {
@@ -822,14 +890,7 @@ class FindMyCarApp {
     this.#ui.showToast('🔄 מיקום החניה הוחלף!', 'success');
     this.#showParkingNotification(parking);
 
-    reverseGeocode(loc.lat, loc.lng).then(addr => {
-      if (!addr || !this.#state.current || this.#state.current.id !== parking.id) return;
-      this.#state.current.address = addr;
-      VehicleController.setCurrent(vehicleId, this.#state.current);
-      this.#syncUI();
-      this.#map.updateParkingMarkerPopup(addr);
-      this.#showParkingNotification(this.#state.current);
-    });
+    this.#resolveAddress(vehicleId, parking.id).catch(() => {});
   }
 
   async #updateCurrentLocation() {
@@ -839,6 +900,7 @@ class FindMyCarApp {
       const loc = await this.#getCurrentLocation();
       this.#state.current.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy || 0 };
       this.#state.current.address  = null;
+      delete this.#state.current.addressLookup;
       VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
       this.#syncUI();
 
@@ -852,13 +914,7 @@ class FindMyCarApp {
 
       this.#ui.showToast('✅ מיקום עודכן!', 'success');
 
-      reverseGeocode(loc.lat, loc.lng).then(addr => {
-        if (!addr || !this.#state.current) return;
-        this.#state.current.address = addr;
-        VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
-        this.#syncUI();
-        this.#map.updateParkingMarkerPopup(addr);
-      });
+      this.#resolveAddress(this.#state.activeVehicleId, this.#state.current.id).catch(() => {});
     } catch {
       this.#ui.showToast('לא ניתן לעדכן מיקום', 'error');
     }
@@ -1129,16 +1185,29 @@ class FindMyCarApp {
   // this session's — DiagLog stores entries in insertion order and only
   // reverses for display, it doesn't sort by timestamp. No-op in the
   // browser/PWA (getNativeLog() resolves to [] there).
+  //
+  // Also runs on every resume and whenever the diagnostic log is opened: the
+  // Activity usually survives the app being closed, so a cold #init() can be
+  // days apart, and until then every native decision (ACL broadcasts, WALK
+  // declines, heartbeats) stayed invisible — a real report showed nothing
+  // native after an update at 9:35 although the service ran all morning.
+  // The display sorts by `t`, so merging late no longer scrambles the order.
   async #reconcileNativeLog() {
-    const entries = await WidgetBridge.getNativeLog();
-    if (!entries.length) return;
-    for (const e of entries) {
-      // e.tag (e.g. "FMC-FgService") becomes DiagLog.log's `source` — the
-      // formatted line already gets a "[FMC-FgService]" prefix from that,
-      // so the message text itself no longer needs to repeat it.
-      DiagLog.log(e.category || 'SERVICE', e.message || '', null, e.timestamp || null, e.tag || 'native');
+    if (this.#mergingNativeLog) return;
+    this.#mergingNativeLog = true;
+    try {
+      const entries = await WidgetBridge.getNativeLog();
+      if (!entries.length) return;
+      for (const e of entries) {
+        // e.tag (e.g. "FMC-FgService") becomes DiagLog.log's `source` — the
+        // formatted line already gets a "[FMC-FgService]" prefix from that,
+        // so the message text itself no longer needs to repeat it.
+        DiagLog.log(e.category || 'SERVICE', e.message || '', null, e.timestamp || null, e.tag || 'native');
+      }
+      await WidgetBridge.clearNativeLog();
+    } finally {
+      this.#mergingNativeLog = false;
     }
-    await WidgetBridge.clearNativeLog();
   }
 
   // Logs a "heartbeat" entry to DiagLog's SERVICE category (source 'WEB')
@@ -2155,7 +2224,10 @@ class FindMyCarApp {
       this.#ui.showToast('✅ האפליקציה הותקנה!', 'success');
     });
 
-    window.addEventListener('online',  () => { Utils.el('offlineIndicator').style.display = 'none'; });
+    window.addEventListener('online',  () => {
+      Utils.el('offlineIndicator').style.display = 'none';
+      this.#fillMissingAddresses().catch(() => {});
+    });
     window.addEventListener('offline', () => { Utils.el('offlineIndicator').style.display = ''; });
   }
 
@@ -2351,6 +2423,9 @@ class FindMyCarApp {
     }
     this.#refreshDiagLogView();
     this.#ui.openModal('diagLogModal');
+    // Pull in whatever the native side logged since the last merge, then
+    // re-render — the modal opens instantly either way.
+    this.#reconcileNativeLog().then(() => this.#refreshDiagLogView()).catch(() => {});
   }
 
   #filteredDiagLogEntries() {
@@ -2359,7 +2434,9 @@ class FindMyCarApp {
     return DiagLog.getAll()
       .filter(e => !vehicleName || e.vehicleName === vehicleName)
       .filter(e => !category || e.category === category)
-      .reverse(); // newest first
+      // By event time, not insertion order: native entries are merged in
+      // whenever the app next resumes, which can be long after they happened.
+      .sort((a, b) => b.t - a.t);
   }
 
   #refreshDiagLogView() {

@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.46.0',
+  version: '1.47.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -73,10 +73,25 @@ export const CFG = Object.freeze({
   toastDuration:     3000,
   timerInterval:     1000,
   geocodeTimeout:    6000,
+  // A lookup made from the background (widget, Bluetooth) often stalls, so
+  // the address is retried rather than given up on after one attempt; what
+  // still fails is picked up again on the next resume or reconnect.
+  geocodeRetryDelaysMs: Object.freeze([0, 5000, 20000]),
+  geocodeRetryTimeout:  12000,
   defaultCenter:     [31.7767, 35.2345],
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.47.0',
+      date: '2026-09-24',
+      items: Object.freeze([
+        'שמירה מהווידג\u05f3ט (או אוטומטית מ-Bluetooth) שומרת עכשיו כתובת מלאה ולא רק קואורדינטות — חיפוש הכתובת נכשל כשהאפליקציה ברקע ולא נוסה שוב אף פעם',
+        'חיפוש כתובת שנכשל מנוסה שוב אוטומטית, וכל חניה שעדיין חסרה לה כתובת מקבלת אותה בפתיחה הבאה של האפליקציה או כשהאינטרנט חוזר',
+        'במקום פתוח בלי כתובת (שטח, יער) נשמרות קואורדינטות כמו קודם, עם הכיתוב "אין כתובת במקום זה"',
+        'יומן האבחון מושך עכשיו את רשומות השירות ברקע בכל חזרה לאפליקציה ובכל פתיחה של היומן — עד כה הן נכנסו רק בהפעלה מחדש מלאה, ולכן ניתוק Bluetooth לא הופיע ביומן בכלל',
+      ]),
+    }),
     Object.freeze({
       version: '1.46.0',
       date: '2026-09-23',

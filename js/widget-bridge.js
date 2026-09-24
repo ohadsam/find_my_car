@@ -7,6 +7,14 @@ import { Store } from './store.js';
 import { DiagLog } from './diag-log.js';
 import { normalizeAddress } from './geocoder.js';
 
+// Blank while a lookup is still pending (the widget shows "מיקום נשמר");
+// coordinates once it is known there is no address at this spot.
+function addressText(p) {
+  const addr = normalizeAddress(p.address);
+  if (addr) return addr;
+  return p.addressLookup === 'none' ? `${p.location.lat.toFixed(5)}, ${p.location.lng.toFixed(5)}` : '';
+}
+
 export class WidgetBridge {
   static #plugin = window.Capacitor?.Plugins?.WidgetData ?? null;
   static #shadowListenerInitialized = false;
@@ -130,7 +138,7 @@ export class WidgetBridge {
           bluetoothAutoStart:  !!v.bluetoothAutoStart,
           bluetoothStartPopup: v.bluetoothStartPopup !== false,
           hasParking:          !!parking,
-          address:             parking ? (normalizeAddress(parking.address) || '') : '',
+          address:             parking ? addressText(parking) : '',
           lat:                 parking?.location?.lat ?? null,
           lng:                 parking?.location?.lng ?? null,
           timestamp:           parking?.timestamp ?? null,
@@ -163,7 +171,7 @@ export class WidgetBridge {
     }
 
     this.#plugin.update({
-      address:   normalizeAddress(current.address) || '',
+      address:   addressText(current),
       lat:       current.location.lat,
       lng:       current.location.lng,
       timestamp: current.timestamp,

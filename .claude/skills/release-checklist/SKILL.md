@@ -481,6 +481,28 @@ step broken or skipped:
   importance would make an alerting sound/heads-up for what should be a silent,
   persistent-style notification matching the JS version's `silent: true`).
 
+## 4b. Addresses (v1.47.0)
+
+- Confirm no call site in `js/app.js` runs a one-shot geocode any more: grep
+  `reverseGeocode` — every parking-address lookup must go through
+  `#resolveAddress(vehicleId, parkingId)`. A single attempt from a backgrounded
+  page (widget, Bluetooth) routinely fails, and a one-shot call left those
+  parkings as bare coordinates forever — the reported bug.
+- Confirm `reverseGeocodeDetailed()` still distinguishes `ok`/`none`/`failed`,
+  treats a body with neither `address` nor `error` as `failed`, and that
+  `tests/unit/geocoder.test.js` covers all of them. Collapsing `failed` into
+  `none` marks a parking address-less permanently.
+- Confirm `sw.js`'s Nominatim branch answers a network failure with a non-2xx
+  status (503), never a synthetic 200 — a 200 `{}` is indistinguishable from
+  "no address here".
+- Confirm `#fillMissingAddresses()` is called from `#init()`, from
+  `visibilitychange` (visible) and from the `online` handler, and that it spaces
+  requests >= 1s apart (Nominatim usage policy).
+- Confirm `#updateCurrentLocation()` deletes `addressLookup` before re-resolving,
+  and `#applyAddress()` refuses to apply when the parking's coordinates changed
+  mid-lookup — otherwise a moved parking keeps the old spot's address or its
+  old "no address" marker.
+
 ## 5. Diagnostic log (Bluetooth/GPS/notifications)
 
 Background BT/GPS/notification behavior is otherwise unobservable without a connected
@@ -488,6 +510,12 @@ device and `adb logcat` — the in-app diagnostic log is the only way a user can
 back what actually happened. It must stay wired on every release that touches that
 pipeline (Bluetooth, GPS auto-end, or `Notify`):
 
+- Confirm `#reconcileNativeLog()` runs from `#init()`, on `visibilitychange`
+  (visible), and when the diagnostic-log modal opens or is refreshed, guarded by
+  `#mergingNativeLog`, and that `#filteredDiagLogEntries()` sorts by `t` (not
+  insertion order). A real report's log showed no native line for an entire
+  morning because the merge only ran on a cold start — whether a Bluetooth
+  disconnect was even received was unanswerable.
 - Confirm `js/diag-log.js` exists and exports `DiagLog` with `log`/`getAll`/`clear`/
   `formatText`.
 - Confirm `DiagLog` is imported and called from `js/bluetooth.js`,
