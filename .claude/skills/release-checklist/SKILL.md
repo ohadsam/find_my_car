@@ -518,6 +518,23 @@ step broken or skipped:
 - Confirm `performWidgetAction('end')` closes `gpsEndModal` and, when it is
   about the same vehicle, `btParkingModal`.
 
+- Confirm `#notifyIfBackground()` returns immediately on native. Every caller
+  is a background BT/GPS event that native already notifies; a JS notification
+  there duplicates it, or arrives late when a frozen page thaws.
+- Confirm the GPS and walk-away notifications use `ACTION_DISMISS_GPS` /
+  `ACTION_DISMISS_WALK` (not plain `ACTION_DISMISS`) and that
+  `WidgetActionReceiver` clears `PendingGpsSuggestionStore` /
+  `PendingParkingSuggestionStore` for them. Plain dismiss leaves the stored
+  question, and the app re-asks it on next open.
+- Confirm every `WidgetMirror.applyQueuedAction(...)` caller that knows the real
+  spot passes it (`atLat`/`atLng`): the BT disconnect fix, the walk-away
+  suggestion's spot, the widget tap fix. And confirm the mirror then calls
+  `NativeGeocoder.resolveForMirror`, which must no-op once
+  `WidgetMirror.hasPendingSync()` is false (JS owns the address after a sync).
+- Confirm `core/NominatimAddressJson` applies the same rules as
+  `js/geocoder.js` (street|locality required; empty body = Failed) and that
+  `NominatimAddressJsonTest` mirrors `tests/unit/geocoder.test.js`.
+
 ## 4c. Queued widget saves (v1.48.0)
 
 - Confirm `WidgetActionReceiver.queueForReplay()` records

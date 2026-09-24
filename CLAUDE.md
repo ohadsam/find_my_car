@@ -1313,6 +1313,38 @@ so late merges no longer scramble the order. This supersedes the "must run first
 in `#init()` for ordering" rationale in "Native background service log" above:
 it still runs first there, but ordering no longer depends on it.
 
+### Native owns everything that happens while the app is closed (v1.49.0)
+
+The rule, after an audit of every background path: **anything a user can see
+or answer while the app is not open is produced by native code**, never by the
+WebView's JS — which is frozen (or dead) exactly then. JS still owns the parking
+*records* (they live in WebView localStorage with photos/voice/history), so a
+queued action is written for real on the next resume; native owns everything
+visible in the meantime.
+
+| Background event | Detected by | Notification | Widget/notification display | Record written |
+|---|---|---|---|---|
+| BT connect, auto-end ON | `ParkingForegroundService` receiver | `BtPendingActionRecorder.record` | `WidgetMirror` | JS replay on resume |
+| BT connect, auto-end OFF | same | `BtPendingActionRecorder.suggestEnd` (end/ignore) | — (no change until answered) | on "end": widget-action path |
+| BT disconnect, auto-start ON | same | `BtPendingActionRecorder.record` | `WidgetMirror` at the disconnect fix + `NativeGeocoder` | JS replay with `presetLoc` |
+| BT disconnect, walk-away | `WalkAwayDetector` | `WalkAwayDetector.raise` | on "save": `WidgetMirror` at the disconnect fix | JS `saveAt` |
+| Drive-away | service `LocationManager` watch | `maybeRecordPendingGpsSuggestion` | — | on "end": widget-action path |
+| Widget / shade button, page unreachable | `WidgetActionReceiver` | Toast | `WidgetMirror` at the tap fix + `NativeGeocoder` | JS replay (`#tapLocation`) |
+
+`#notifyIfBackground()` is therefore a **no-op on native** — every caller is one
+of the rows above, and a JS notification there only ever duplicated the native
+one (or arrived late, when a frozen page thawed). JS notifications that remain
+on native are ones JS is itself executing at that moment (the result of a
+widget action it is performing, a failed save). **"Ignore" buttons clear their
+stored question** (`ACTION_DISMISS_GPS`/`ACTION_DISMISS_WALK`), or the app
+re-asks on its next open something the user already declined.
+
+`NativeGeocoder` resolves the address of a natively-queued parking with the
+same parsing rules as `js/geocoder.js` (`core/NominatimAddressJson`, tested) and
+the same retry schedule, and patches the mirror only while
+`WidgetMirror.hasPendingSync()` is still true for the same coordinates — once JS
+has synced, JS owns the address.
+
 ### "You're back at the car?" is asked natively (v1.49.0)
 
 **Real, previously-shipped bug**: reported as "the app doesn't always notice I

@@ -43,6 +43,11 @@ class WidgetActionReceiver : BroadcastReceiver() {
         // than in a second receiver, so every notification button goes through
         // exactly one path.
         const val ACTION_DISMISS = "dismiss"
+        // "Ignore" on a question that is also stored for the app to ask again
+        // on its next open. Dismissing must clear that store too, or the app
+        // re-asks in a modal something the user already declined in the shade.
+        const val ACTION_DISMISS_GPS = "dismissGps"
+        const val ACTION_DISMISS_WALK = "dismissWalk"
         // "Save the parking at the spot recorded in PendingParkingSuggestionStore"
         // — the walk-away suggestion's accept button. Deliberately carries no
         // coordinates of its own: the location lives in that store, which both
@@ -74,7 +79,19 @@ class WidgetActionReceiver : BroadcastReceiver() {
                 Log.w(TAG, "could not cancel notification $notifId (non-fatal)", e)
             }
         }
-        if (action == ACTION_DISMISS) return
+        when (action) {
+            ACTION_DISMISS -> return
+            ACTION_DISMISS_GPS -> {
+                PendingGpsSuggestionStore.clear(context)
+                NativeLogStore.add(context, TAG, "GPS-PENDING", "drive-away suggestion ignored from the notification — cleared, the app will not re-ask")
+                return
+            }
+            ACTION_DISMISS_WALK -> {
+                PendingParkingSuggestionStore.clear(context)
+                WalkAwayDetector.closeWindow(context, "suggestion declined from the notification")
+                return
+            }
+        }
         if (action == ACTION_REFRESH) { handleRefresh(context); return }
 
         val webView = MainActivity.getActiveWebView()
@@ -194,7 +211,15 @@ class WidgetActionReceiver : BroadcastReceiver() {
             // next opened — 22 minutes, in the report that prompted this. The
             // action is certain to happen; only its reconciliation with the real
             // parking records is deferred, so the display can follow it now.
-            WidgetMirror.applyQueuedAction(context, action, vehicleId)
+            // The mirror shows the parking where it really is: the fix recorded
+            // at this tap, or for a walk-away "save" the spot recorded when
+            // Bluetooth disconnected.
+            val suggestion = if (action == ACTION_SAVE_AT) PendingParkingSuggestionStore.get(context) else null
+            WidgetMirror.applyQueuedAction(
+                context, action, vehicleId,
+                atLat = suggestion?.lat ?: fix?.lat,
+                atLng = suggestion?.lng ?: fix?.lng,
+            )
             Toast.makeText(context, "יבוצע כשהאפליקציה תיפתח מחדש", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.w(TAG, "failed to record pending widget action (non-fatal)", e)

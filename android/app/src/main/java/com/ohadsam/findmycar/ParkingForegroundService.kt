@@ -1117,7 +1117,7 @@ class ParkingForegroundService : Service() {
                 this, "🚗 מזוהה נסיעה", "ייתכן שהרכב זז ממקום החניה.",
                 listOf(
                     BackgroundAlertNotifier.Action("סיים חניה", "end", activeVehicleId),
-                    BackgroundAlertNotifier.Action("התעלם", WidgetActionReceiver.ACTION_DISMISS, null),
+                    BackgroundAlertNotifier.Action("התעלם", WidgetActionReceiver.ACTION_DISMISS_GPS, null),
                 )
             )
         } catch (e: Exception) {

@@ -122,7 +122,7 @@ object BtPendingActionRecorder {
         // different path: a Bluetooth auto-end recorded here is certain to be
         // applied on the next app open, so leaving every widget showing the car
         // as parked until then is simply a wrong display, not caution.
-        WidgetMirror.applyQueuedAction(context, if (action == "autoEnd") "end" else "save", vehicle.id)
+        WidgetMirror.applyQueuedAction(context, if (action == "autoEnd") "end" else "save", vehicle.id, lat, lng)
         val title = if (action == "autoEnd") "🚗 חניה הסתיימה אוטומטית" else "🅿️ חניה חדשה תישמר בפתיחה הבאה"
         BackgroundAlertNotifier.show(context, title, "${vehicle.name} — יטופל כשהאפליקציה תיפתח מחדש")
     }
