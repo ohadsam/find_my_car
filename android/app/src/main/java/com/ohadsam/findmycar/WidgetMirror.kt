@@ -53,8 +53,13 @@ object WidgetMirror {
      *   guess at its effect.
      * @param vehicleId the vehicle the action targets, or null for "whichever
      *   is active" (Quick Save's main tap never names one).
+     * @param atLat/atLng where the parking actually is, when the caller knows
+     *   better than "the last known fix right now" — the Bluetooth disconnect
+     *   fix, the walk-away suggestion's spot, the fix recorded at a widget tap.
      */
-    fun applyQueuedAction(context: Context, action: String, vehicleId: String?) {
+    fun applyQueuedAction(
+        context: Context, action: String, vehicleId: String?, atLat: Double? = null, atLng: Double? = null,
+    ) {
         try {
             val parked = when (action) {
                 "end" -> false
@@ -69,7 +74,11 @@ object WidgetMirror {
             val targetId = if (vehicleId.isNullOrBlank()) activeId else vehicleId
             if (targetId.isBlank()) return
 
-            val (lat, lng) = if (parked) LastKnownLocation.get(context) else (null to null)
+            val (lat, lng) = when {
+                !parked -> null to null
+                atLat != null && atLng != null -> atLat to atLng
+                else -> LastKnownLocation.get(context)
+            }
             val updated = applyToVehiclesJson(
                 prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]",
                 targetId, parked, lat, lng,
@@ -111,6 +120,9 @@ object WidgetMirror {
 
             WidgetDataPlugin.refreshDataWidgets(context)
             WidgetStatusRefresher.refreshAll(context)
+            // The address is otherwise blank until the app is opened — resolve
+            // it natively so the widgets and notification show the street now.
+            if (parked && lat != null && lng != null) NativeGeocoder.resolveForMirror(context, targetId, lat, lng)
             NativeLogStore.add(
                 context, TAG, "WIDGET",
                 "mirror updated locally for queued action=\"$action\" (vehicle=$targetId, parked=$parked) — " +

@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.48.0',
+  version: '1.49.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -88,6 +88,18 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.49.0',
+      date: '2026-09-25',
+      items: Object.freeze([
+        'כשמתחברים ל-Bluetooth של הרכב ויש חניה פעילה, ההתראה "הגעת לרכב?" עם כפתורי "סיים חניה" / "התעלם" קופצת עכשיו תמיד — גם כשהאפליקציה ברקע',
+        'עד כה השאלה נשאלה רק מתוך האפליקציה, ולכן הופיעה רק כשהאפליקציה במקרה הייתה פעילה',
+        'אם כבר ענית בהתראה, האפליקציה לא תשאל שוב כשתיכנס אליה',
+        'כל ההתראות של Bluetooth ו-GPS נשלחות עכשיו מהצד הנייטיבי בלבד — הן לא תלויות באפליקציה פתוחה, ואין יותר התראות כפולות',
+        'חניה שנשמרה כשהאפליקציה סגורה מציגה בווידג\u05f3ט ובהתראה את הכתובת מיד, בלי לחכות לפתיחת האפליקציה',
+        '"התעלם" בהתראה מבטל את השאלה לגמרי — האפליקציה לא תשאל אותה שוב כשתיפתח',
+      ]),
+    }),
     Object.freeze({
       version: '1.48.0',
       date: '2026-09-25',

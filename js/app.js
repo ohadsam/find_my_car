@@ -128,7 +128,7 @@ class FindMyCarApp {
 
     // Bluetooth setup
     this.#bluetooth.init({
-      onDeviceConnected:    label => this.#onBtConnected(label),
+      onDeviceConnected:    (label, opts) => this.#onBtConnected(label, opts),
       onDeviceDisconnected: label => this.#onBtDisconnected(label),
     });
 
@@ -1039,6 +1039,12 @@ class FindMyCarApp {
           message = this.#state.current?.id !== prevId ? `🔄 החניה הוחלפה — ${vLabel}` : 'החלפת חניה נכשלה (בדוק מיקום GPS)';
         }
       } else if (action === 'end') {
+        // Ending from the shade or a widget makes an open "car moved?" or
+        // "you're back at the car?" question stale — including one raised by
+        // a native notification, whose button lands here, not in the
+        // local-notification listener.
+        this.#closeModal('gpsEndModal');
+        if (this.#state.btPendingVehicleId === this.#state.activeVehicleId) this.#closeModal('btParkingModal');
         const had = !!this.#state.current;
         this.#resetParking();
         message = had ? `✅ החניה הסתיימה — ${vLabel}` : 'אין חניה פעילה לסיום';
@@ -1721,7 +1727,15 @@ class FindMyCarApp {
   // Background-only system notification alongside an in-app toast/modal —
   // if the app is visible the on-screen UI already alerts the user, so a
   // notification would just be redundant noise.
+  //
+  // Never on native: every caller is a background Bluetooth/GPS event, and on
+  // native each of those is notified by the native side itself whenever the
+  // app is not in the foreground (BtPendingActionRecorder,
+  // ParkingForegroundService.maybeRecordPendingGpsSuggestion) — reliably,
+  // whereas this JS path only runs while the page's JS happens to be awake,
+  // and duplicates the native one when it is.
   #notifyIfBackground(title, body, opts) {
+    if (window.Capacitor?.isNativePlatform?.()) return;
     if (document.visibilityState === 'visible') return;
     Notify.show(title, body, opts);
   }
@@ -1744,11 +1758,6 @@ class FindMyCarApp {
       const vehicleId = extra?.vehicleId ?? null;
       DiagLog.log('NOTIFY', `notification action "${actionId}" (vehicleId=${vehicleId || '(active)'})`);
       if (actionId !== 'end') return; // 'dismiss' and a plain 'tap' just open/close
-      // The in-app modals become stale the moment the action is taken from
-      // the shade — close whichever one is showing so the user doesn't come
-      // back to a question they already answered.
-      this.#closeModal('gpsEndModal');
-      this.#closeModal('btParkingModal');
       try {
         await this.performWidgetAction('end', vehicleId);
       } catch (e) {
@@ -1762,8 +1771,22 @@ class FindMyCarApp {
     return Store.get(CFG.keys.bluetoothSettings, { enabled: true });
   }
 
-  #onBtConnected(label) {
-    DiagLog.log('BT', `connected event received, label=${label}`);
+  /**
+   * @param {object} [opts]
+   * @param {number|null} [opts.at] the native event's own timestamp.
+   *
+   * On native, BtPendingActionRecorder notifies for both outcomes whenever
+   * the app is not in the foreground (#notifyIfBackground is a no-op there).
+   * And a connect delivered late (the page's
+   * JS was frozen) does not re-open the question as a modal: it was already
+   * asked in the shade at the moment it happened, possibly answered there.
+   */
+  #onBtConnected(label, { at = null } = {}) {
+    const native = !!window.Capacitor?.isNativePlatform?.();
+    const ageMs = at ? Date.now() - at : 0;
+    const stale = native && ageMs > CFG.btEventMaxAgeMs;
+    DiagLog.log('BT', `connected event received, label=${label}` +
+      (ageMs > 5000 ? ` (event is ${Math.round(ageMs / 1000)}s old)` : ''));
     const vehicles = this.#state.vehicles;
     let matched = false;
     for (const v of vehicles) {
@@ -1781,6 +1804,10 @@ class FindMyCarApp {
         this.#notifyIfBackground('🔵 חניה הסתיימה אוטומטית', `${v.icon} ${v.name} — זוהה חיבור Bluetooth`);
       } else {
         if (this.#state.btPendingVehicleId) continue; // confirm modal already open; keep processing autoEnd vehicles
+        if (stale) {
+          DiagLog.log('BT', `not re-asking in the app — the connect is ${Math.round(ageMs / 60000)} min old and was already asked in the shade`, { vehicleName: v.name, vehicleIcon: v.icon });
+          continue;
+        }
         DiagLog.log('BT', 'showing end-parking confirmation modal', { vehicleName: v.name, vehicleIcon: v.icon });
         this.#state.btPendingVehicleId = v.id;
         this.#state.btPendingLabel     = label;

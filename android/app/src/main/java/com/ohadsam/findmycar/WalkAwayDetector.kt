@@ -169,7 +169,7 @@ object WalkAwayDetector {
                 "${window.vehicleName} — התנתקת מהרכב. לשמור את החניה כאן?",
                 listOf(
                     BackgroundAlertNotifier.Action("שמור חניה", WidgetActionReceiver.ACTION_SAVE_AT, window.vehicleId),
-                    BackgroundAlertNotifier.Action("לא עכשיו", WidgetActionReceiver.ACTION_DISMISS, null),
+                    BackgroundAlertNotifier.Action("לא עכשיו", WidgetActionReceiver.ACTION_DISMISS_WALK, null),
                 ),
             )
         } catch (e: Exception) {

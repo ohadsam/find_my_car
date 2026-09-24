@@ -30,9 +30,11 @@ export class NativeBluetoothController {
     }
     this.#listening = true; // guard before await so rapid calls don't attach two listener sets
 
-    const h1 = this.#plugin.addListener('connected', ({ label }) => {
-      DiagLog.log('BT-RAW', `native "connected" event received, label=${label || '(empty)'}`);
-      if (label) this.#onDeviceConnected?.(label);
+    const h1 = this.#plugin.addListener('connected', ({ label, at }) => {
+      const ageMs = at ? Date.now() - at : 0;
+      DiagLog.log('BT-RAW', `native "connected" event received, label=${label || '(empty)'}` +
+        (ageMs > 5000 ? ` — delivered ${Math.round(ageMs / 1000)}s after it happened (JS was frozen)` : ''));
+      if (label) this.#onDeviceConnected?.(label, { at: at ?? null });
     });
     const h2 = this.#plugin.addListener('disconnected', ({ label, at }) => {
       // `at` is the native event's own timestamp. It is NOT redundant with

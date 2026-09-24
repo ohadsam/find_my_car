@@ -1313,6 +1313,59 @@ so late merges no longer scramble the order. This supersedes the "must run first
 in `#init()` for ordering" rationale in "Native background service log" above:
 it still runs first there, but ordering no longer depends on it.
 
+### Native owns everything that happens while the app is closed (v1.49.0)
+
+The rule, after an audit of every background path: **anything a user can see
+or answer while the app is not open is produced by native code**, never by the
+WebView's JS — which is frozen (or dead) exactly then. JS still owns the parking
+*records* (they live in WebView localStorage with photos/voice/history), so a
+queued action is written for real on the next resume; native owns everything
+visible in the meantime.
+
+| Background event | Detected by | Notification | Widget/notification display | Record written |
+|---|---|---|---|---|
+| BT connect, auto-end ON | `ParkingForegroundService` receiver | `BtPendingActionRecorder.record` | `WidgetMirror` | JS replay on resume |
+| BT connect, auto-end OFF | same | `BtPendingActionRecorder.suggestEnd` (end/ignore) | — (no change until answered) | on "end": widget-action path |
+| BT disconnect, auto-start ON | same | `BtPendingActionRecorder.record` | `WidgetMirror` at the disconnect fix + `NativeGeocoder` | JS replay with `presetLoc` |
+| BT disconnect, walk-away | `WalkAwayDetector` | `WalkAwayDetector.raise` | on "save": `WidgetMirror` at the disconnect fix | JS `saveAt` |
+| Drive-away | service `LocationManager` watch | `maybeRecordPendingGpsSuggestion` | — | on "end": widget-action path |
+| Widget / shade button, page unreachable | `WidgetActionReceiver` | Toast | `WidgetMirror` at the tap fix + `NativeGeocoder` | JS replay (`#tapLocation`) |
+
+`#notifyIfBackground()` is therefore a **no-op on native** — every caller is one
+of the rows above, and a JS notification there only ever duplicated the native
+one (or arrived late, when a frozen page thawed). JS notifications that remain
+on native are ones JS is itself executing at that moment (the result of a
+widget action it is performing, a failed save). **"Ignore" buttons clear their
+stored question** (`ACTION_DISMISS_GPS`/`ACTION_DISMISS_WALK`), or the app
+re-asks on its next open something the user already declined.
+
+`NativeGeocoder` resolves the address of a natively-queued parking with the
+same parsing rules as `js/geocoder.js` (`core/NominatimAddressJson`, tested) and
+the same retry schedule, and patches the mirror only while
+`WidgetMirror.hasPendingSync()` is still true for the same coordinates — once JS
+has synced, JS owns the address.
+
+### "You're back at the car?" is asked natively (v1.49.0)
+
+**Real, previously-shipped bug**: reported as "the app doesn't always notice I
+connected to the car's Bluetooth and offer to end the parking". With
+`bluetoothAutoEnd` OFF, the connect produces `BtConnectDecision.SuggestEnd`,
+and `BtPendingActionRecorder` deliberately recorded only `AutoEnd` — the
+question itself was asked only by `js/app.js`'s `#onBtConnected`. A plugin event
+reaches a backgrounded page only when its JS engine resumes (the v1.45.0
+lesson), so the notification appeared only when the page happened to be awake.
+
+`BtPendingActionRecorder.suggestEnd()` now posts it natively whenever the
+Activity is not in the foreground, with `end`/`dismiss` buttons through
+`WidgetActionReceiver` — nothing is recorded, since an unanswered question
+changes no state. To avoid duplicates, `#onBtConnected` **never notifies on
+native** (both branches: native owns every background notification for a
+connect), and a connect delivered more than `CFG.btEventMaxAgeMs` late does not
+re-open `btParkingModal` — the shade already asked, and may already have been
+answered. `performWidgetAction('end')` now closes `gpsEndModal` and (for the
+same vehicle) `btParkingModal` itself, so a native button — which lands there,
+not in the local-notification listener — also clears the stale in-app question.
+
 ### A queued widget save uses the location of the tap (v1.48.0)
 
 **Real, previously-shipped bug — the widget twin of v1.45.0's Bluetooth one.**
@@ -2075,6 +2128,7 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (v1.38.1): install over an existing build (`MY_PACKAGE_REPLACED`, a background start → `type=16`, `NO-loc@start`), then open the app with a parking active. The `SERVICE` log must show "restarting service from the foreground to obtain background-location capability", followed by a fresh "onCreate succeeded — type=24", and subsequent heartbeats must read `+loc@start`. If it still reads `NO-loc@start` after that, the restart didn't take and background GPS cannot work
 - [ ] Android APK (v1.38.1): confirm the foreground restart happens at most ONCE per app run — repeated "restarting service from the foreground" entries in a single session mean `locationRestartAttempted` isn't holding, which would be a restart loop
 - [ ] Android APK (v1.39.0, notification buttons): with the app BACKGROUNDED (not killed) and a parking active, cross the GPS distance threshold — the "🚗 מזוהה נסיעה" notification must carry **סיים חניה** and **התעלם** buttons. Tapping סיים חניה must end the parking without opening the app, post a confirmation notification, and clear the original notification; reopening the app must NOT show a stale `gpsEndModal`
+- [ ] **Android APK (v1.49.0): with the app in the background (NOT open), connect to the car's Bluetooth with a parking active and auto-end OFF — "הגעת לרכב?" must pop up with סיים חניה / התעלם every time, and exactly once (no duplicate from JS). Open the app afterwards: the question must NOT appear again as an in-app modal.** The `BT-PENDING` log shows "asked natively whether to end the parking"
 - [ ] Android APK (v1.39.0): same for the Bluetooth "🚗 הגעת לרכב?" notification (connect to a linked device that has `bluetoothAutoEnd` OFF and an active parking) — buttons present, סיים חניה ends that specific vehicle's parking even if it isn't the active one
 - [ ] Android APK (v1.39.0): force-kill the app, then trigger the GPS suggestion — the native notification must still show both buttons, and סיים חניה must show the "יבוצע כשהאפליקציה תיפתח מחדש" Toast and actually apply on next open (diagnostic log `WIDGET` category shows the replay)
 - [ ] Android APK (v1.39.0): התעלם must clear the notification and do nothing else — no parking ended, no pending action recorded
