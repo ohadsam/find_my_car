@@ -1313,6 +1313,39 @@ so late merges no longer scramble the order. This supersedes the "must run first
 in `#init()` for ordering" rationale in "Native background service log" above:
 it still runs first there, but ordering no longer depends on it.
 
+### A queued widget save uses the location of the tap (v1.48.0)
+
+**Real, previously-shipped bug — the widget twin of v1.45.0's Bluetooth one.**
+A widget save/swap that could not be delivered live was queued and replayed on
+the next app open through `performWidgetAction()`, whose `#saveNewParking()`
+took a **live** fix — the spot where the app was opened, not where the car was.
+Two more gaps made it worse: `#reconcilePendingWidgetActions()` ran only from
+`#init()` (a resume never replayed the queue), and when the page was merely
+frozen, the original `evaluateJavascript` script ran once it thawed — at app
+open — and saved first with a live fix, after which the replay hit "already
+has a parking". The wrong location won.
+
+**The fix, in three parts:**
+
+1. `queueForReplay()` records `LastKnownLocation.getFix()` (lat/lng/accuracy and
+   the fix's own time) on the `PendingWidgetAction` for `save`/`swap`. Fields
+   are nullable with defaults, so entries queued by older builds still parse.
+2. `#tapLocation()` decides per replayed entry: within `CFG.btEventMaxAgeMs`
+   of the tap → live fix (the user is still at the car); later → the recorded
+   fix if it was at most `CFG.widgetFixMaxAgeMs` old at the tap; otherwise
+   **refuse** with a toast + notification rather than save somewhere wrong.
+   `performWidgetAction(action, vehicleId, { presetLoc })` threads it into
+   `#saveNewParking(presetLoc)` / `#swapParking(presetLoc)`.
+3. The live script now passes `{ tappedAt }`, and `performWidgetAction()` drops
+   (returns `null`) any delivery older than `CFG.widgetAckTimeoutMs` — which
+   must equal `WidgetActionReceiver.ACK_TIMEOUT_MS`, because past that point the
+   receiver has already queued the tap. The replay also runs on every resume,
+   guarded by `#reconcilingWidget`.
+
+`LastKnownLocation` now returns the **newest** of the GPS and network cached
+fixes rather than always preferring GPS — an hours-old GPS fix used to win over
+a fresh network one.
+
 ### The native mirror must follow an accepted action, not the replay (`WidgetMirror`)
 
 **Real, previously-shipped bug (v1.44.0).** The widgets and the Stage 9

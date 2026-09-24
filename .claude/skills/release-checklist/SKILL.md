@@ -503,6 +503,26 @@ step broken or skipped:
   mid-lookup — otherwise a moved parking keeps the old spot's address or its
   old "no address" marker.
 
+## 4c. Queued widget saves (v1.48.0)
+
+- Confirm `WidgetActionReceiver.queueForReplay()` records
+  `LastKnownLocation.getFix()` onto the `PendingWidgetAction` for `save` and
+  `swap`, and that `PendingWidgetActionJsonTest` covers both a recorded fix and
+  an old entry without one.
+- Confirm `#reconcilePendingWidgetActions()` routes save/swap through
+  `#tapLocation()` and passes `{ presetLoc }` into `performWidgetAction()`, and
+  that `#tapLocation()` REFUSES (returns false, toast + Notify) rather than
+  falling back to a live fix when the tap is old and no fresh fix was recorded.
+  A live fix at replay time is where the app was opened, not where the car is.
+- Confirm `#reconcilePendingWidgetActions()` is called from `visibilitychange`
+  as well as `#init()`, guarded by `#reconcilingWidget`.
+- Confirm the live script in `WidgetActionReceiver` passes `{ tappedAt }` and
+  that `performWidgetAction()` returns null for a delivery older than
+  `CFG.widgetAckTimeoutMs`. Confirm `CFG.widgetAckTimeoutMs` equals
+  `WidgetActionReceiver.ACK_TIMEOUT_MS` (2500) — hand-kept JS/Kotlin parity. If
+  they drift apart, either a thawed delivery saves at the wrong spot or a
+  legitimate slow delivery is silently dropped.
+
 ## 5. Diagnostic log (Bluetooth/GPS/notifications)
 
 Background BT/GPS/notification behavior is otherwise unobservable without a connected

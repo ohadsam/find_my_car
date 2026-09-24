@@ -20,6 +20,10 @@ object PendingWidgetActionJson {
             o.put("action", a.action)
             o.put("vehicleId", a.vehicleId ?: JSONObject.NULL)
             o.put("timestamp", a.timestamp)
+            o.put("lat", a.lat ?: JSONObject.NULL)
+            o.put("lng", a.lng ?: JSONObject.NULL)
+            o.put("accuracy", a.accuracy ?: JSONObject.NULL)
+            o.put("fixTime", a.fixTime ?: JSONObject.NULL)
             arr.put(o)
         }
         return arr.toString()
@@ -36,6 +40,11 @@ object PendingWidgetActionJson {
                     action = action,
                     vehicleId = if (o.isNull("vehicleId")) null else o.optString("vehicleId").ifBlank { null },
                     timestamp = o.optLong("timestamp", 0L),
+                    // Absent in entries queued before v1.48.0 — read as "no fix".
+                    lat = if (o.isNull("lat")) null else o.optDouble("lat"),
+                    lng = if (o.isNull("lng")) null else o.optDouble("lng"),
+                    accuracy = if (o.isNull("accuracy")) null else o.optDouble("accuracy"),
+                    fixTime = if (o.isNull("fixTime")) null else o.optLong("fixTime"),
                 )
             }
         } catch (e: Exception) {
