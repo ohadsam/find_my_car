@@ -1268,6 +1268,51 @@ specific condition that caused it** — a silent return would make a correct
 "nothing to do" identical to a broken detector, which is precisely what left
 one real report unanswerable from its log.
 
+### Addresses are retried, not attempted once (`#resolveAddress` + `#fillMissingAddresses`)
+
+**Real, previously-shipped bug (v1.47.0)**: reported as "saving from the widget
+stores only coordinates, not the address like saving from the app does". Every
+save ran exactly one reverse-geocode (6s timeout, no retry). From the app the
+page is foreground and the lookup succeeds; from a widget (or a Bluetooth
+auto-start) the page is backgrounded, the request stalls, and nothing ever tried
+again — `#init()` re-geocoded only the active vehicle, and only on a cold start,
+which can be days apart because the Activity survives the app being closed.
+
+**Three outcomes, not two** — `reverseGeocodeDetailed()` returns `ok` / `none` /
+`failed`. Only `failed` is retried. `none` (no street AND no locality — an open
+field or a forest, where Nominatim's display_name is just a regional council)
+sets `addressLookup: 'none'` on the parking, which renders as coordinates plus
+"אין כתובת במקום זה" in the app and as coordinates in the widgets
+(`widget-bridge.js`'s `addressText()`), and is never looked up again.
+
+**Two traps that turn a failure into a fake "none"**, each of which would mark a
+parking address-less for good: (1) `sw.js` used to answer a failed Nominatim
+request with a synthetic `{}` **200** — it now returns **503**; (2) independently,
+the parser treats a body with neither `address` nor `error` as `failed`, because
+a real Nominatim answer always carries one of them and an old cached service
+worker can outlive the fix.
+
+`#resolveAddress(vehicleId, parkingId)` works on any vehicle and finds the
+parking in either `current` or `history` (a parking can be ended before its
+lookup completes), refuses to apply an address if the parking's coordinates
+changed while the lookup was in flight, and is de-duplicated per parking id.
+`#fillMissingAddresses()` runs from `#init()`, every resume and the `online`
+event, covering each vehicle's current parking plus its 3 most recent history
+entries, one request per second (Nominatim's usage policy).
+
+### The diagnostic log merges native entries on every resume, not only on a cold start
+
+**Real, previously-shipped gap (v1.47.0)**: `#reconcileNativeLog()` ran only from
+`#init()`. Because the Activity normally survives the app being closed, a
+report's log showed no native line at all after a 9:35 update, even though the
+service ran all morning — so whether a Bluetooth disconnect was received, and
+why walk-away declined it, was simply not in the log. It now also runs on every
+`visibilitychange` to visible and whenever the diagnostic-log modal is opened or
+refreshed (guarded by `#mergingNativeLog`), and the modal sorts entries by `t`,
+so late merges no longer scramble the order. This supersedes the "must run first
+in `#init()` for ordering" rationale in "Native background service log" above:
+it still runs first there, but ordering no longer depends on it.
+
 ### The native mirror must follow an accepted action, not the replay (`WidgetMirror`)
 
 **Real, previously-shipped bug (v1.44.0).** The widgets and the Stage 9

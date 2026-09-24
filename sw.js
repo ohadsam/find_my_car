@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME      = 'findmycar-v1.46.0';
+const CACHE_NAME      = 'findmycar-v1.47.0';
 const TILES_CACHE     = 'findmycar-tiles-v1.0.0';
 const STATIC_ASSETS = [
   './',
@@ -61,11 +61,13 @@ self.addEventListener('fetch', (event) => {
   const isMapTile    = h.includes('tile.openstreetmap.org') || h.includes('a.tile.') || h.includes('b.tile.') || h.includes('c.tile.');
   const isCDN        = h.includes('unpkg.com') || h.includes('fonts.googleapis.com') || h.includes('fonts.gstatic.com');
 
-  // Nominatim: network-only (real-time geo data)
+  // Nominatim: network-only (real-time geo data). A failed request must stay
+  // a failure (503), never a synthetic 200 — the app retries failures but
+  // treats a successful empty answer as "no address here" and stops asking.
   if (isNominatim) {
     event.respondWith(
       fetch(event.request)
-        .catch(() => new Response('{}', { headers: { 'Content-Type': 'application/json' } }))
+        .catch(() => new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } }))
     );
     return;
   }

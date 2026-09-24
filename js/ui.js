@@ -600,8 +600,13 @@ export class UIController {
     if (!addrEl) return;
 
     if (!p.address) {
-      addrEl.textContent = 'מחשב כתובת...';
-      if (cityEl) cityEl.style.display = 'none';
+      if (p.addressLookup === 'none') {
+        addrEl.textContent = `${p.location.lat.toFixed(5)}, ${p.location.lng.toFixed(5)}`;
+        if (cityEl) { cityEl.textContent = 'אין כתובת במקום זה'; cityEl.style.display = ''; }
+      } else {
+        addrEl.textContent = 'מחשב כתובת...';
+        if (cityEl) cityEl.style.display = 'none';
+      }
       return;
     }
 
