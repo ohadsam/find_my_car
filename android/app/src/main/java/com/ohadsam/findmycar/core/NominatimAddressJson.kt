@@ -10,7 +10,7 @@ import org.json.JSONObject
  */
 object NominatimAddressJson {
     sealed class Result {
-        data class Found(val display: String) : Result()
+        data class Found(val address: NativeAddress) : Result()
         /** Answered, but there is no address here (open field, forest). */
         object None : Result()
         /** Not a real answer — worth retrying, never "no address". */
@@ -26,7 +26,9 @@ object NominatimAddressJson {
         val street = first("road", "pedestrian", "footway", "path")
         val houseNumber = first("house_number")
         val city = first("city", "town", "village", "hamlet", "municipality")
+        val neighborhood = first("suburb", "neighbourhood", "quarter")
         if (street == null && city == null) return Result.None
-        return Result.Found(listOfNotNull(street, houseNumber, city).joinToString(" "))
+        val display = listOfNotNull(street, houseNumber, city).joinToString(" ")
+        return Result.Found(NativeAddress(display, street, houseNumber, city, neighborhood))
     }
 }

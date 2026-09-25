@@ -61,7 +61,6 @@ object BtPendingActionRecorder {
                 .getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]"
             val vehicles = VehicleJsonParser.parse(json)
             val hasParking: (String) -> Boolean = { id -> vehicles.find { it.id == id }?.hasParking ?: false }
-            val direction = if (connected) "connected" else "disconnected"
 
             if (connected) {
                 // #btEndParking (js/app.js) just moves the EXISTING parking
@@ -69,16 +68,14 @@ object BtPendingActionRecorder {
                 // unlike auto-start below.
                 for (decision in BtDecisionEngine.onConnected(vehicles, label, hasParking)) {
                     when (decision) {
-                        is BtConnectDecision.AutoEnd ->
-                            record(context, direction, "autoEnd", decision.vehicle, label, lat = null, lng = null)
+                        is BtConnectDecision.AutoEnd -> autoEnd(context, decision.vehicle, label)
                         is BtConnectDecision.SuggestEnd -> suggestEnd(context, decision.vehicle, label)
                     }
                 }
             } else {
                 for (decision in BtDecisionEngine.onDisconnected(vehicles, label, hasParking)) {
                     if (decision !is BtDisconnectDecision.AutoStart) continue
-                    val (lat, lng) = LastKnownLocation.get(context)
-                    record(context, direction, "autoStart", decision.vehicle, label, lat, lng)
+                    autoStart(context, decision.vehicle, label)
                 }
             }
         } catch (e: Exception) {
@@ -112,18 +109,42 @@ object BtPendingActionRecorder {
         )
     }
 
-    private fun record(
-        context: Context, direction: String, action: String, vehicle: NativeVehicle, label: String, lat: Double?, lng: Double?,
-    ) {
-        val entry = PendingBtAction(direction, action, vehicle.id, vehicle.name, label, lat, lng, System.currentTimeMillis())
-        PendingBtActionStore.add(context, entry)
-        Log.i(TAG, "recorded pending BT action (WebView unreachable): $entry")
-        // Exactly the staleness a queued widget tap used to cause, reached by a
-        // different path: a Bluetooth auto-end recorded here is certain to be
-        // applied on the next app open, so leaving every widget showing the car
-        // as parked until then is simply a wrong display, not caution.
-        WidgetMirror.applyQueuedAction(context, if (action == "autoEnd") "end" else "save", vehicle.id, lat, lng)
-        val title = if (action == "autoEnd") "🚗 חניה הסתיימה אוטומטית" else "🅿️ חניה חדשה תישמר בפתיחה הבאה"
-        BackgroundAlertNotifier.show(context, title, "${vehicle.name} — יטופל כשהאפליקציה תיפתח מחדש")
+    /** Ends the parking natively, now — see NativeParkingCommitter. */
+    private fun autoEnd(context: Context, vehicle: NativeVehicle, label: String) {
+        val v = NativeParkingCommitter.commitEnd(context, vehicle.id, "bluetooth", btDevice = label) ?: return
+        NativeLogStore.add(context, TAG, "BT-PENDING", "auto-ended ${v.name}'s parking natively (Bluetooth connected to $label)")
+        BackgroundAlertNotifier.show(context, "🚗 חניה הסתיימה אוטומטית", "${v.label} — זוהה חיבור Bluetooth")
     }
+
+    /**
+     * Saves the parking natively, now, at the fix cached when the link dropped
+     * — that is the car. Only a fresh fix is trusted: the car was just moving,
+     * so an old cached one could be kilometres away. Without one it falls back
+     * to recording the event for the app, which takes a live fix only if it is
+     * opened within CFG.btEventMaxAgeMs and otherwise refuses — never a wrong
+     * spot — and the notification says so plainly.
+     */
+    private fun autoStart(context: Context, vehicle: NativeVehicle, label: String) {
+        val fix = LastKnownLocation.getFix(context)?.takeIf { System.currentTimeMillis() - it.time <= FIX_MAX_AGE_MS }
+        if (fix != null) {
+            val v = NativeParkingCommitter.commitStart(
+                context, vehicle.id, fix.lat, fix.lng, fix.accuracy, "bluetooth", btDevice = label,
+            ) ?: return
+            NativeLogStore.add(context, TAG, "BT-PENDING", "auto-started ${v.name}'s parking natively (Bluetooth disconnected from $label)")
+            BackgroundAlertNotifier.show(context, "🅿️ חניה נשמרה אוטומטית", "${v.label} — זוהה ניתוק Bluetooth")
+            return
+        }
+        PendingBtActionStore.add(
+            context,
+            PendingBtAction("disconnected", "autoStart", vehicle.id, vehicle.name, label, null, null, System.currentTimeMillis()),
+        )
+        NativeLogStore.add(context, TAG, "BT-PENDING", "auto-start for ${vehicle.name} NOT saved — no fresh location at the disconnect")
+        BackgroundAlertNotifier.show(
+            context, "⚠️ החניה לא נשמרה",
+            "${vehicle.name} — לא היה מיקום עדכני בניתוק. פתח את האפליקציה עכשיו כדי לשמור אותה.",
+        )
+    }
+
+    // Same bound as CFG.widgetFixMaxAgeMs.
+    private const val FIX_MAX_AGE_MS = 600_000L
 }

@@ -57,6 +57,7 @@ class FindMyCarApp {
   #geocoding = new Set();   // parking ids with an address lookup in flight
   #fillingAddresses = false;
   #mergingNativeLog = false;
+  #adoptingOps = false;
   #ui;
   #returnModal;
 
@@ -119,6 +120,10 @@ class FindMyCarApp {
     // and is itself a no-op in the browser/PWA, so this adds no meaningful
     // delay to the rest of init.
     await this.#reconcileNativeLog().catch(() => {});
+
+    // Parkings native saved or ended while the app was closed — adopted
+    // before anything renders, so the first screen already shows them.
+    await this.#adoptNativeParkingOps().catch(() => {});
 
     // Ask for everything the native app can possibly need right after
     // install, instead of only surprising the user with scattered
@@ -495,16 +500,20 @@ class FindMyCarApp {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
       this.#reconcileNativeLog().catch(() => {});
-      if (this.#state.current) this.#acquireWakeLock();
-      if (this.#getBtSettings().enabled) this.#bluetooth.checkNow();
-      this.#reconcilePendingParkingSuggestion().catch(() => {});
-      // Also on resume, not only from #init(): the Activity often stays alive
-      // while the app is closed, so a resume is NOT a fresh init — a pending
-      // action recorded while the JS engine was frozen would otherwise sit
-      // unreplayed until the next genuine cold start.
-      this.#reconcilePendingBtActions().catch(() => {});
-      this.#reconcilePendingWidgetActions().catch(() => {});
-      this.#fillMissingAddresses().catch(() => {});
+      // Adopt what native committed first, so the replays below (older
+      // queued actions) and the Bluetooth re-check see the real state.
+      this.#adoptNativeParkingOps().catch(() => {}).then(() => {
+        if (this.#state.current) this.#acquireWakeLock();
+        if (this.#getBtSettings().enabled) this.#bluetooth.checkNow();
+        this.#reconcilePendingParkingSuggestion().catch(() => {});
+        // Also on resume, not only from #init(): the Activity often stays alive
+        // while the app is closed, so a resume is NOT a fresh init — a pending
+        // action recorded while the JS engine was frozen would otherwise sit
+        // unreplayed until the next genuine cold start.
+        this.#reconcilePendingBtActions().catch(() => {});
+        this.#reconcilePendingWidgetActions().catch(() => {});
+        this.#fillMissingAddresses().catch(() => {});
+      });
     });
 
     document.addEventListener('keydown', e => {
@@ -1224,6 +1233,101 @@ class FindMyCarApp {
     }
     DiagLog.log('WIDGET', `replay of ${a.action} REFUSED — ${Math.round(age / 60000)} min after the tap and ${hasFix ? `the recorded fix was ${Math.round(fixAge / 60000)} min old at the tap` : 'no location was recorded at the tap'}; a live fix now would be wherever the app was opened`);
     return false;
+  }
+
+  // ── NATIVE PARKING ADOPTION ───────────────────────────────────
+  // While the app is closed, native saves and ends parkings itself
+  // (NativeParkingCommitter) — the real record: its id, the moment it
+  // happened, the location and, usually, the address. This writes each one
+  // into storage exactly as native decided it. Nothing is re-decided,
+  // re-located or re-timestamped here: each of those, done now, would
+  // describe the moment the app was opened instead of the moment of parking.
+  //
+  // Idempotent by parking id, and removes exactly the ops it adopted (never
+  // "clear all"), so an op native commits during adoption is kept for next time.
+  async #adoptNativeParkingOps() {
+    if (this.#adoptingOps) return;
+    this.#adoptingOps = true;
+    try {
+      const ops = await WidgetBridge.getNativeParkingOps();
+      if (!ops.length) return;
+      const adopted = [];
+      for (const op of ops) {
+        try {
+          if (op.type === 'start') this.#adoptStart(op);
+          else if (op.type === 'end') this.#adoptEnd(op);
+        } catch (e) {
+          DiagLog.log('WIDGET', `adopting native ${op.type} threw — ${e?.message || e}`);
+        }
+        adopted.push(op.opId);
+      }
+      await WidgetBridge.removeNativeParkingOps(adopted);
+      this.#syncUI();
+    } finally {
+      this.#adoptingOps = false;
+    }
+  }
+
+  #adoptStart(op) {
+    const v = VehicleController.getById(op.vehicleId);
+    if (!v) { DiagLog.log('WIDGET', `native parking for an unknown vehicle (${op.vehicleId}) — skipped`); return; }
+    const meta = { vehicleName: v.name, vehicleIcon: v.icon };
+    const cur = VehicleController.getCurrent(v.id);
+    if (cur?.id === op.parkingId || VehicleController.getHistory(v.id).some(h => h.id === op.parkingId)) return;
+    if (cur) {
+      // The same event may also have been handled live, if the page happened
+      // to be awake: keep that one rather than saving the parking twice.
+      if (Math.abs((Date.parse(cur.timestamp) || 0) - op.at) <= CFG.btEventMaxAgeMs) {
+        DiagLog.log('WIDGET', 'native parking already saved live by the app — keeping the live one', meta);
+        return;
+      }
+      this.#clearVehicleParking(v.id);
+    }
+    const parking = {
+      id:            op.parkingId,
+      timestamp:     new Date(op.at).toISOString(),
+      location:      { lat: op.lat, lng: op.lng, accuracy: op.accuracy || 0 },
+      address:       op.address || null,
+      description:   null,
+      photo:         null,
+      voice:         null,
+      voiceDuration: 0,
+      btStartDevice: op.btDevice || null,
+      btEndDevice:   null,
+      btEndTime:     null,
+    };
+    if (!op.address && op.noAddress) parking.addressLookup = 'none';
+    VehicleController.setCurrent(v.id, parking);
+    if (v.id === this.#state.activeVehicleId) {
+      this.#state.current = parking;
+      this.#resetGpsDetection();
+      this.#map.addParkingMarker(op.lat, op.lng, parking.address);
+      this.#startTimer();
+      this.#acquireWakeLock();
+    }
+    DiagLog.log('WIDGET', `adopted parking saved natively (${op.source}) at ${new Date(op.at).toLocaleTimeString('he-IL')}` +
+      (op.address ? ` — ${op.address.display}` : ''), meta);
+    if (!parking.address && !parking.addressLookup) this.#resolveAddress(v.id, parking.id).catch(() => {});
+  }
+
+  #adoptEnd(op) {
+    const v = VehicleController.getById(op.vehicleId);
+    if (!v) return;
+    const meta = { vehicleName: v.name, vehicleIcon: v.icon };
+    const cur = VehicleController.getCurrent(v.id);
+    if (!cur) return; // already ended
+    if (op.parkingId && cur.id !== op.parkingId) {
+      DiagLog.log('WIDGET', 'native end was for an earlier parking — the current one is left alone', meta);
+      return;
+    }
+    if (op.btDevice) {
+      cur.btEndDevice = op.btDevice;
+      cur.btEndTime   = new Date(op.at).toISOString();
+      VehicleController.setCurrent(v.id, cur);
+      if (v.id === this.#state.activeVehicleId) this.#state.current = cur;
+    }
+    this.#clearVehicleParking(v.id);
+    DiagLog.log('WIDGET', `adopted parking end done natively (${op.source}) at ${new Date(op.at).toLocaleTimeString('he-IL')}`, meta);
   }
 
   // Merges NativeLogStore's native-only events — background-machinery

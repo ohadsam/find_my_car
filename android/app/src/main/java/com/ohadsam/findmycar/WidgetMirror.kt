@@ -56,9 +56,13 @@ object WidgetMirror {
      * @param atLat/atLng where the parking actually is, when the caller knows
      *   better than "the last known fix right now" — the Bluetooth disconnect
      *   fix, the walk-away suggestion's spot, the fix recorded at a widget tap.
+     * @param parkingId/timestamp/opId for a parking native actually committed
+     *   (NativeParkingCommitter): its id and ISO time go into the mirror, and
+     *   the address lookup also fills in that journal record.
      */
     fun applyQueuedAction(
         context: Context, action: String, vehicleId: String?, atLat: Double? = null, atLng: Double? = null,
+        parkingId: String? = null, timestamp: String? = null, opId: String? = null,
     ) {
         try {
             val parked = when (action) {
@@ -81,7 +85,7 @@ object WidgetMirror {
             }
             val updated = applyToVehiclesJson(
                 prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]",
-                targetId, parked, lat, lng,
+                targetId, parked, lat, lng, parkingId, timestamp,
             )
 
             val edit = prefs.edit()
@@ -97,7 +101,7 @@ object WidgetMirror {
                     edit.putString(WidgetDataPlugin.KEY_ADDRESS, "")
                         .putFloat(WidgetDataPlugin.KEY_LAT, (lat ?: 0.0).toFloat())
                         .putFloat(WidgetDataPlugin.KEY_LNG, (lng ?: 0.0).toFloat())
-                        .putString(WidgetDataPlugin.KEY_TIMESTAMP, "")
+                        .putString(WidgetDataPlugin.KEY_TIMESTAMP, timestamp ?: "")
                     if (updated.name.isNotBlank()) edit.putString(WidgetDataPlugin.KEY_VEHICLE_NAME, updated.name)
                     if (updated.icon.isNotBlank()) edit.putString(WidgetDataPlugin.KEY_VEHICLE_ICON, updated.icon)
                 }
@@ -122,7 +126,7 @@ object WidgetMirror {
             WidgetStatusRefresher.refreshAll(context)
             // The address is otherwise blank until the app is opened — resolve
             // it natively so the widgets and notification show the street now.
-            if (parked && lat != null && lng != null) NativeGeocoder.resolveForMirror(context, targetId, lat, lng)
+            if (parked && lat != null && lng != null) NativeGeocoder.resolveForMirror(context, targetId, lat, lng, opId)
             NativeLogStore.add(
                 context, TAG, "WIDGET",
                 "mirror updated locally for queued action=\"$action\" (vehicle=$targetId, parked=$parked) — " +
@@ -165,6 +169,7 @@ object WidgetMirror {
      */
     private fun applyToVehiclesJson(
         json: String, vehicleId: String, parked: Boolean, lat: Double?, lng: Double?,
+        parkingId: String?, timestamp: String?,
     ): Updated {
         val arr = JSONArray(json)
         var name = ""
@@ -176,13 +181,15 @@ object WidgetMirror {
             icon = o.optString("icon", "🚗")
             o.put("hasParking", parked)
             if (parked) {
-                // Blank address on purpose: the real one only exists once
-                // reverse geocoding has run, which needs JS. The widget already
-                // renders a blank address as "מיקום נשמר".
+                // Blank until NativeGeocoder answers (seconds, normally) — never
+                // an invented one. The widget renders blank as "מיקום נשמר".
                 o.put("address", "")
                 o.put("lat", lat ?: JSONObject.NULL)
                 o.put("lng", lng ?: JSONObject.NULL)
-                o.put("timestamp", JSONObject.NULL)
+                o.put("timestamp", timestamp ?: JSONObject.NULL)
+                o.put("parkingId", parkingId ?: JSONObject.NULL)
+            } else {
+                o.put("parkingId", JSONObject.NULL)
             }
             break
         }

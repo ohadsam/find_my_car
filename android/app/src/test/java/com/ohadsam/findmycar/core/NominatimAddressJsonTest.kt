@@ -13,14 +13,17 @@ class NominatimAddressJsonTest {
     @Test
     fun `street address`() {
         assertEquals(
-            NominatimAddressJson.Result.Found("הרצל 12 תל אביב"),
-            parse("""{"address":{"road":"הרצל","house_number":"12","city":"תל אביב"}}"""),
+            NominatimAddressJson.Result.Found(NativeAddress("הרצל 12 תל אביב", "הרצל", "12", "תל אביב", "לב העיר")),
+            parse("""{"address":{"road":"הרצל","house_number":"12","city":"תל אביב","suburb":"לב העיר"}}"""),
         )
     }
 
     @Test
     fun `village with no street`() {
-        assertEquals(NominatimAddressJson.Result.Found("נהלל"), parse("""{"address":{"village":"נהלל"}}"""))
+        assertEquals(
+            NominatimAddressJson.Result.Found(NativeAddress("נהלל", null, null, "נהלל", null)),
+            parse("""{"address":{"village":"נהלל"}}"""),
+        )
     }
 
     @Test

@@ -61,6 +61,9 @@ class WidgetActionReceiver : BroadcastReceiver() {
         // How long the page gets to acknowledge before the tap is queued
         // instead. Comfortably inside a manifest receiver's ~10s budget.
         private const val ACK_TIMEOUT_MS = 2500L
+        // Same bound as CFG.widgetFixMaxAgeMs: an older cached fix may be from
+        // somewhere else entirely, so it is not trusted to place a parking.
+        private const val FIX_MAX_AGE_MS = 600_000L
         private const val TAG = "FMC-WidgetAction"
     }
 
@@ -184,17 +187,19 @@ class WidgetActionReceiver : BroadcastReceiver() {
     }
 
     /**
-     * The single "this tap will happen, just not now" path: persist it for
-     * js/app.js's #reconcilePendingWidgetActions() to replay on the next
-     * resume, and say so. Every branch that cannot deliver live ends here, so
-     * a widget tap can no longer be lost without a trace.
+     * The page could not take this action live, so native performs it itself,
+     * now: the parking is saved/ended by NativeParkingCommitter at the moment of
+     * the tap — its real time and the fix cached at the tap — and the app adopts
+     * that record verbatim when it next opens. Only when there is no trustworthy
+     * location for a save does it fall back to queueing the tap for the app,
+     * which then takes a live fix only if opened within a couple of minutes and
+     * otherwise refuses rather than saving the wrong spot. Every branch ends in
+     * a Toast and a log line, so a tap can never be lost without a trace.
      */
     private fun queueForReplay(context: Context, action: String, vehicleId: String?, why: String) {
         try {
+            if (commitNatively(context, action, vehicleId, why)) return
             val now = System.currentTimeMillis()
-            // Where the phone is NOW, at the tap — the replay may run much
-            // later, and a live fix taken then describes where the user opened
-            // the app, not where they parked.
             val fix = if (action == "save" || action == "swap") LastKnownLocation.getFix(context) else null
             PendingWidgetActionStore.add(
                 context,
@@ -202,28 +207,75 @@ class WidgetActionReceiver : BroadcastReceiver() {
             )
             val fixNote = when {
                 action != "save" && action != "swap" -> ""
-                fix == null -> ", no cached location to record"
-                else -> ", location recorded (fix ${(now - fix.time) / 1000}s old, ±${fix.accuracy.toInt()}m)"
+                fix == null -> ", no cached location"
+                else -> ", cached location too old to trust (${(now - fix.time) / 60000} min)"
             }
-            NativeLogStore.add(context, TAG, "WIDGET", "queued widget action \"$action\" for replay on next app open ($why$fixNote)")
-            // Queuing used to be the whole story, and it left every widget
-            // showing the state the tap had already changed until the app was
-            // next opened — 22 minutes, in the report that prompted this. The
-            // action is certain to happen; only its reconciliation with the real
-            // parking records is deferred, so the display can follow it now.
-            // The mirror shows the parking where it really is: the fix recorded
-            // at this tap, or for a walk-away "save" the spot recorded when
-            // Bluetooth disconnected.
-            val suggestion = if (action == ACTION_SAVE_AT) PendingParkingSuggestionStore.get(context) else null
-            WidgetMirror.applyQueuedAction(
-                context, action, vehicleId,
-                atLat = suggestion?.lat ?: fix?.lat,
-                atLng = suggestion?.lng ?: fix?.lng,
-            )
+            NativeLogStore.add(context, TAG, "WIDGET", "queued widget action \"$action\" for the app ($why$fixNote)")
             Toast.makeText(context, "יבוצע כשהאפליקציה תיפתח מחדש", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Log.w(TAG, "failed to record pending widget action (non-fatal)", e)
+            Log.w(TAG, "failed to handle widget action natively (non-fatal)", e)
         }
+    }
+
+    /** @return true when the action was fully handled here (performed or refused with a reason). */
+    private fun commitNatively(context: Context, action: String, vehicleId: String?, why: String): Boolean {
+        val now = System.currentTimeMillis()
+        val v = NativeParkingCommitter.vehicle(context, vehicleId)
+        if (v == null) {
+            NativeLogStore.add(context, TAG, "WIDGET", "widget action \"$action\" — vehicle not known natively, leaving it for the app")
+            return false
+        }
+        NativeLogStore.add(context, TAG, "WIDGET", "page unreachable ($why) — handling \"$action\" natively")
+        when (action) {
+            "end" -> {
+                val ended = NativeParkingCommitter.commitEnd(context, v.id, "widget")
+                done(context, if (ended != null) "✅ החניה הסתיימה — ${v.label}" else "אין חניה פעילה לסיום", notify = ended != null)
+                return true
+            }
+            ACTION_SAVE_AT -> {
+                val s = PendingParkingSuggestionStore.get(context)
+                val lat = s?.lat
+                val lng = s?.lng
+                if (s == null || lat == null || lng == null) return false // no recorded spot — let the app decide
+                if (v.parked) {
+                    done(context, "כבר קיימת חניה פעילה", notify = false)
+                    return true
+                }
+                NativeParkingCommitter.commitStart(context, s.vehicleId, lat, lng, null, "walkAway", btDevice = s.label.ifBlank { null })
+                PendingParkingSuggestionStore.clear(context)
+                WalkAwayDetector.closeWindow(context, "parking saved from the notification")
+                done(context, "🅿️ חניה נשמרה — ${v.label}", notify = true)
+                return true
+            }
+            "save", "swap" -> {
+                val fix = LastKnownLocation.getFix(context)?.takeIf { now - it.time <= FIX_MAX_AGE_MS } ?: return false
+                if (action == "save" && v.parked) {
+                    done(context, "יש כבר חניה פעילה — להחלפה השתמש ב\"החלף חניה\"", notify = false)
+                    return true
+                }
+                if (action == "swap") {
+                    if (!v.parked) {
+                        done(context, "אין חניה פעילה להחלפה", notify = false)
+                        return true
+                    }
+                    NativeParkingCommitter.commitEnd(context, v.id, "widget")
+                }
+                NativeParkingCommitter.commitStart(context, v.id, fix.lat, fix.lng, fix.accuracy, "widget")
+                done(
+                    context,
+                    if (action == "swap") "🔄 החניה הוחלפה — ${v.label}" else "🅿️ חניה נשמרה — ${v.label}",
+                    notify = true,
+                )
+                return true
+            }
+            else -> return false
+        }
+    }
+
+    private fun done(context: Context, message: String, notify: Boolean) {
+        NativeLogStore.add(context, TAG, "WIDGET", "widget action handled natively → $message")
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        if (notify) BackgroundAlertNotifier.show(context, "FindMyCar", message)
     }
 
     /**
