@@ -1315,21 +1315,20 @@ it still runs first there, but ordering no longer depends on it.
 
 ### Native owns everything that happens while the app is closed (v1.49.0)
 
-The rule, after an audit of every background path: **anything a user can see
-or answer while the app is not open is produced by native code**, never by the
-WebView's JS — which is frozen (or dead) exactly then. JS still owns the parking
-*records* (they live in WebView localStorage with photos/voice/history), so a
-queued action is written for real on the next resume; native owns everything
-visible in the meantime.
+The rule, after an audit of every background path: **anything that happens
+while the app is not open is decided, recorded and shown by native code**,
+never by the WebView's JS — which is frozen (or dead) exactly then. Since
+v1.50.0 that includes the parking record itself (see "The parking record is
+committed natively" below); JS adopts it on resume.
 
 | Background event | Detected by | Notification | Widget/notification display | Record written |
 |---|---|---|---|---|
-| BT connect, auto-end ON | `ParkingForegroundService` receiver | `BtPendingActionRecorder.record` | `WidgetMirror` | JS replay on resume |
+| BT connect, auto-end ON | `ParkingForegroundService` receiver | `BtPendingActionRecorder.autoEnd` | `WidgetMirror` | **native** `commitEnd` |
 | BT connect, auto-end OFF | same | `BtPendingActionRecorder.suggestEnd` (end/ignore) | — (no change until answered) | on "end": widget-action path |
-| BT disconnect, auto-start ON | same | `BtPendingActionRecorder.record` | `WidgetMirror` at the disconnect fix + `NativeGeocoder` | JS replay with `presetLoc` |
-| BT disconnect, walk-away | `WalkAwayDetector` | `WalkAwayDetector.raise` | on "save": `WidgetMirror` at the disconnect fix | JS `saveAt` |
+| BT disconnect, auto-start ON | same | `BtPendingActionRecorder.autoStart` | `WidgetMirror` at the disconnect fix + `NativeGeocoder` | **native** `commitStart` (no fresh fix → JS, may refuse) |
+| BT disconnect, walk-away | `WalkAwayDetector` | `WalkAwayDetector.raise` | on "save": `WidgetMirror` at the disconnect fix | **native** `commitStart` |
 | Drive-away | service `LocationManager` watch | `maybeRecordPendingGpsSuggestion` | — | on "end": widget-action path |
-| Widget / shade button, page unreachable | `WidgetActionReceiver` | Toast | `WidgetMirror` at the tap fix + `NativeGeocoder` | JS replay (`#tapLocation`) |
+| Widget / shade button, page unreachable | `WidgetActionReceiver` | Toast + result notification | `WidgetMirror` at the tap fix + `NativeGeocoder` | **native** commit (no fresh fix → JS `#tapLocation`) |
 
 `#notifyIfBackground()` is therefore a **no-op on native** — every caller is one
 of the rows above, and a JS notification there only ever duplicated the native
@@ -1344,6 +1343,44 @@ same parsing rules as `js/geocoder.js` (`core/NominatimAddressJson`, tested) and
 the same retry schedule, and patches the mirror only while
 `WidgetMirror.hasPendingSync()` is still true for the same coordinates — once JS
 has synced, JS owns the address.
+
+### The parking record is committed natively (v1.50.0)
+
+Before this, a background event produced only a queued *action*, which JS
+replayed on its next resume: it re-decided, took a live fix, and **stamped the
+parking with the time the app was opened** — so even a correctly-placed
+background parking showed the wrong start time and a wrong elapsed timer.
+
+`NativeParkingCommitter.commitStart/commitEnd` now create the record at the
+moment of the event — parking id, real time, the fix (only if at most 10 min
+old; an older one may be from somewhere else), the Bluetooth device — append it
+to the `NativeParkingStore` journal, and update the mirror/notification at once.
+`NativeGeocoder` fills the address into the journal record itself, not only the
+display. `js/app.js`'s `#adoptNativeParkingOps()` (awaited early in `#init()`,
+and first on every resume, before the older replays) writes each record into
+storage **verbatim**: no re-decision, no new fix, no new timestamp.
+
+The rules that make it safe, each load-bearing:
+
+- **Adoption is idempotent by parking id**, and the journal is trimmed by the
+  ids actually adopted (`removeNativeParkingOps(opIds)`), never cleared
+  wholesale — an op committed during adoption must survive to the next one.
+- **A start whose vehicle already has a parking within `CFG.btEventMaxAgeMs`
+  of the op's time is the same event handled live** (the page happened to be
+  awake) — keep the live one, never save twice. Any older open parking is moved
+  to history first.
+- **An end names the parking it ended** (`parkingId`, mirrored by
+  `widget-bridge.js`); if the current parking is a different one, it is left
+  alone.
+- **No fresh fix, no native save.** Bluetooth auto-start then records the old
+  `PendingBtAction` (JS saves live only if opened within 2 min, else refuses)
+  and says "⚠️ החניה לא נשמרה"; a widget save falls back to
+  `PendingWidgetActionStore` + `#tapLocation()`. Never a wrong spot.
+- **Save refuses when already parked**, exactly like `performWidgetAction('save')`;
+  swap is an explicit end + start.
+
+What stays JS-only is what is edited inside the app: photos, voice,
+description, history browsing.
 
 ### "You're back at the car?" is asked natively (v1.49.0)
 
@@ -2128,6 +2165,7 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (v1.38.1): install over an existing build (`MY_PACKAGE_REPLACED`, a background start → `type=16`, `NO-loc@start`), then open the app with a parking active. The `SERVICE` log must show "restarting service from the foreground to obtain background-location capability", followed by a fresh "onCreate succeeded — type=24", and subsequent heartbeats must read `+loc@start`. If it still reads `NO-loc@start` after that, the restart didn't take and background GPS cannot work
 - [ ] Android APK (v1.38.1): confirm the foreground restart happens at most ONCE per app run — repeated "restarting service from the foreground" entries in a single session mean `locationRestartAttempted` isn't holding, which would be a restart loop
 - [ ] Android APK (v1.39.0, notification buttons): with the app BACKGROUNDED (not killed) and a parking active, cross the GPS distance threshold — the "🚗 מזוהה נסיעה" notification must carry **סיים חניה** and **התעלם** buttons. Tapping סיים חניה must end the parking without opening the app, post a confirmation notification, and clear the original notification; reopening the app must NOT show a stale `gpsEndModal`
+- [ ] **Android APK (v1.50.0): close the app, park and let Bluetooth disconnect (auto-start ON). Wait 20+ minutes, then open the app: the parking time must be the DISCONNECT time (the elapsed timer counts from then, not from opening), the address must already be filled in, and the `WIDGET` log shows "adopted parking saved natively (bluetooth)". Same for a widget save and a widget/notification "end" while closed.** A parking whose time equals the app-open time is the old replay path returning
 - [ ] **Android APK (v1.49.0): with the app in the background (NOT open), connect to the car's Bluetooth with a parking active and auto-end OFF — "הגעת לרכב?" must pop up with סיים חניה / התעלם every time, and exactly once (no duplicate from JS). Open the app afterwards: the question must NOT appear again as an in-app modal.** The `BT-PENDING` log shows "asked natively whether to end the parking"
 - [ ] Android APK (v1.39.0): same for the Bluetooth "🚗 הגעת לרכב?" notification (connect to a linked device that has `bluetoothAutoEnd` OFF and an active parking) — buttons present, סיים חניה ends that specific vehicle's parking even if it isn't the active one
 - [ ] Android APK (v1.39.0): force-kill the app, then trigger the GPS suggestion — the native notification must still show both buttons, and סיים חניה must show the "יבוצע כשהאפליקציה תיפתח מחדש" Toast and actually apply on next open (diagnostic log `WIDGET` category shows the replay)

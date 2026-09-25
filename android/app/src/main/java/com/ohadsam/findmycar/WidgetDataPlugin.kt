@@ -23,6 +23,7 @@ import com.ohadsam.findmycar.core.NativeLogEntryJson
 import com.ohadsam.findmycar.core.PendingGpsSuggestionJson
 import com.ohadsam.findmycar.core.PendingParkingSuggestionJson
 import com.ohadsam.findmycar.core.PendingWidgetActionJson
+import com.ohadsam.findmycar.core.NativeParkingOpJson
 import com.ohadsam.findmycar.widgets.ActiveParkingWidgetProvider
 import com.ohadsam.findmycar.widgets.MiniMapWidgetProvider
 import com.ohadsam.findmycar.widgets.WidgetStatusRefresher
@@ -308,6 +309,24 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getPendingWidgetActions() called")
         val json = PendingWidgetActionJson.toJson(PendingWidgetActionStore.getAll(context))
         val ret = JSObject(); ret.put("actionsJson", json); call.resolve(ret)
+    }
+
+    // The native parking journal (NativeParkingStore): parkings native saved
+    // or ended while the app was closed, which js/app.js adopts verbatim.
+    // Removal is by id, so an op committed during adoption is never lost.
+    @PluginMethod
+    fun getNativeParkingOps(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getNativeParkingOps() called")
+        val json = NativeParkingOpJson.toJson(NativeParkingStore.getAll(context))
+        val ret = JSObject(); ret.put("opsJson", json); call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun removeNativeParkingOps(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: removeNativeParkingOps() called")
+        val ids = try { call.getArray("opIds")?.toList<String>() ?: emptyList() } catch (e: Exception) { emptyList() }
+        NativeParkingStore.remove(context, ids)
+        call.resolve()
     }
 
     @PluginMethod

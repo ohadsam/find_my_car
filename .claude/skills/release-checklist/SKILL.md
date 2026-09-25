@@ -535,6 +535,28 @@ step broken or skipped:
   `js/geocoder.js` (street|locality required; empty body = Failed) and that
   `NominatimAddressJsonTest` mirrors `tests/unit/geocoder.test.js`.
 
+## 4e. Native parking commit (v1.50.0)
+
+- Confirm `BtPendingActionRecorder.autoStart/autoEnd` and
+  `WidgetActionReceiver.commitNatively` go through `NativeParkingCommitter`
+  (not the old pending-action stores) whenever there is a fix no older than
+  10 min, and fall back to the old stores ONLY without one. A fallback that
+  saves anyway would place the parking at a stale cached spot.
+- Confirm `#adoptNativeParkingOps()` is awaited in `#init()` right after
+  `#reconcileNativeLog()`, and runs FIRST on `visibilitychange` (the other
+  reconcilers chained after it).
+- Confirm adoption never re-derives anything: the parking's `id`, `timestamp`
+  (from `op.at`), `location` and `address` come from the op verbatim. A
+  `new Date()` or a live fix there reintroduces the "parking time = app-open
+  time" bug.
+- Confirm `WidgetBridge.removeNativeParkingOps` removes by the adopted ids, and
+  `NativeParkingStore` has no "clear all" used by JS.
+- Confirm the live-duplicate rule (existing parking within
+  `CFG.btEventMaxAgeMs` of `op.at` → skip) and the end-for-a-different-parking
+  rule are both present in `#adoptStart`/`#adoptEnd`.
+- Confirm `widget-bridge.js` mirrors `parkingId`, and `NativeParkingOpJsonTest`
+  covers start/end/noAddress/order.
+
 ## 4c. Queued widget saves (v1.48.0)
 
 - Confirm `WidgetActionReceiver.queueForReplay()` records

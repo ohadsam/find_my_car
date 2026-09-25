@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.49.0',
+  version: '1.50.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -88,6 +88,16 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.50.0',
+      date: '2026-09-25',
+      items: Object.freeze([
+        'שמירת החניה עצמה עברה לצד הנייטיבי: כשהאפליקציה סגורה, חניה נשמרת או מסתיימת ברגע האירוע (Bluetooth, ווידג\u05f3ט או כפתור בהתראה) — לא רק כשפותחים את האפליקציה',
+        'שעת החניה היא עכשיו השעה האמיתית של האירוע. עד כה חניה שנשמרה ברקע קיבלה את שעת פתיחת האפליקציה',
+        'החניה נשמרת עם המיקום והכתובת שנקלטו באותו רגע, והאפליקציה מאמצת אותה כמו שהיא',
+        'אם לא היה מיקום עדכני בזמן האירוע, מתקבלת התראה ברורה שהחניה לא נשמרה — במקום לשמור במקום שגוי',
+      ]),
+    }),
     Object.freeze({
       version: '1.49.0',
       date: '2026-09-25',

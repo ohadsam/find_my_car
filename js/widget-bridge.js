@@ -87,6 +87,24 @@ export class WidgetBridge {
     }
   }
 
+  // Parkings native saved/ended while the app was closed — the real records,
+  // adopted verbatim by FindMyCarApp.#adoptNativeParkingOps().
+  static async getNativeParkingOps() {
+    if (!this.#plugin?.getNativeParkingOps) return [];
+    try {
+      const { opsJson } = await this.#plugin.getNativeParkingOps();
+      const parsed = JSON.parse(opsJson || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static async removeNativeParkingOps(opIds) {
+    if (!opIds?.length) return;
+    await this.#plugin?.removeNativeParkingOps?.({ opIds }).catch(() => {});
+  }
+
   static async clearPendingWidgetActions() {
     await this.#plugin?.clearPendingWidgetActions?.().catch(() => {});
   }
@@ -138,6 +156,9 @@ export class WidgetBridge {
           bluetoothAutoStart:  !!v.bluetoothAutoStart,
           bluetoothStartPopup: v.bluetoothStartPopup !== false,
           hasParking:          !!parking,
+          // Lets native end exactly this parking when it commits an end
+          // while the app is closed (NativeParkingCommitter.commitEnd).
+          parkingId:           parking?.id ?? null,
           address:             parking ? addressText(parking) : '',
           lat:                 parking?.location?.lat ?? null,
           lng:                 parking?.location?.lng ?? null,
