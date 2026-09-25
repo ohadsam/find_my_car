@@ -443,17 +443,12 @@ step broken or skipped:
   suggestions are never auto-performed even after this stage (unlike BT's
   `AutoEnd`/`AutoStart`) — `GpsDecisionEngine` only ever produces `SuggestEnd`, so
   there is no "real action" for this path to take beyond recording + notifying.
-- Confirm `js/app.js`'s `#reconcilePendingGpsSuggestion()` replays by calling the
-  real `#suggestGpsEnd()` (never `#resetParking()`/any auto-end call directly), and
-  enforces BOTH idempotency checks itself before calling it: the recorded
-  `vehicleId` must still equal the *current* `#state.activeVehicleId` (discard
-  otherwise — `#suggestGpsEnd()` always acts on whichever vehicle is active *now*,
-  so skipping this check could show a suggestion for the wrong vehicle), and
-  `#state.current` must still be truthy (discard otherwise). Unlike Bluetooth's
-  replay, `#suggestGpsEnd()` has no precondition checks of its own (its real
-  callers `#checkGpsSpeed`/`#checkGpsDistance` already checked before calling it) —
-  a regression that drops either check here is not caught by `#suggestGpsEnd()`
-  itself.
+- Confirm `js/app.js`'s `#reconcilePendingGpsSuggestion()` replays by calling
+  `#showGpsEndSuggestion(vehicleId)` for the RECORDED vehicle (never
+  `#resetParking()`/any auto-end call directly), and enforces both checks itself:
+  the vehicle still exists, and that vehicle (not necessarily the active one —
+  since v1.51.0 suggestions can be about any parked vehicle) still has a parking.
+  `#showGpsEndSuggestion()` has no precondition of its own.
 - Confirm `core/PendingGpsSuggestion.kt` has zero `org.json`/Android framework
   imports, and `PendingGpsSuggestionJson.kt` round-trips both a real suggestion and
   `null` (it serializes to/from a single JSON value, not a list, since at most one
@@ -556,6 +551,29 @@ step broken or skipped:
   rule are both present in `#adoptStart`/`#adoptEnd`.
 - Confirm `widget-bridge.js` mirrors `parkingId`, and `NativeParkingOpJsonTest`
   covers start/end/noAddress/order.
+
+## 4f. Every parked vehicle (v1.51.0)
+
+- Confirm `ParkingForegroundService.onLocationShadow` builds its targets from
+  `parkedSpots()` (the `vehicles_json` mirror — every parked vehicle), NOT from
+  `KEY_HAS_PARKING`/`KEY_LAT`/`KEY_LNG` (the active vehicle's snapshot). A
+  regression there silently makes a second vehicle's parking invisible to
+  drive-away detection.
+- Confirm `DriveVehiclePicker.pick` returns a vehicle whenever at least one is
+  parked (the fallback to nearest must stay) — a picker that can return null for
+  a real drive is the v1.41.0 "gate that disarms detection" mistake.
+  `DriveVehiclePickerTest` covers this; it must pass in CI.
+- Confirm the GPS notification's title/body name the vehicle and its "סיים חניה"
+  button carries `target.vehicleId`, not `KEY_ACTIVE_VEHICLE_ID`.
+- Confirm `js/app.js`'s `#onPosition` skips `#checkGpsSpeed/#checkGpsDistance` on
+  native (native decides and hands over via `gpsSuggestion`) — deciding in both
+  places asks twice.
+- Confirm the `"parking"` keep-alive reason is `anyParked` in
+  `WidgetDataPlugin.syncVehicles/clear` and `restoreReasons` — `clear()` setting it
+  to plain `false` stops GPS watching while another vehicle is still parked.
+- Confirm every writer of the mirror calls `ParkingNotifications.sync(context)`
+  (JS `syncVehicles/update/clear`, `WidgetMirror`, `NativeGeocoder`), and that no
+  code posts the old untagged id-4202 notification any more.
 
 ## 4c. Queued widget saves (v1.48.0)
 

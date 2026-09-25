@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.50.0',
+  version: '1.51.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -88,6 +88,17 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.51.0',
+      date: '2026-09-25',
+      items: Object.freeze([
+        'זיהוי נסיעה (סיום חניה לפי GPS) עובד עכשיו על כל הרכבים החונים — לא רק על הרכב הפעיל',
+        'כשיש כמה רכבים חונים, הנסיעה משויכת לרכב שהיית לידו לאחרונה, וההצעה לסיים חניה מתייחסת רק אליו',
+        'כל רכב חונה מקבל התראת "חניה פעילה" משלו, עם שם הרכב והכתובת',
+        'כל ההתראות (Bluetooth, נסיעה, שמירה מהווידג\u05f3ט, הצעת חניה בניתוק) מציינות על איזה רכב מדובר',
+        'השירות ברקע ממשיך לפעול כל עוד יש חניה פעילה לרכב כלשהו, גם אם לרכב הפעיל אין חניה',
+      ]),
+    }),
     Object.freeze({
       version: '1.50.0',
       date: '2026-09-25',

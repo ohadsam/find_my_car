@@ -14,6 +14,8 @@ import com.ohadsam.findmycar.core.GpsDecision
 object GpsShadowEventBus {
     interface Listener {
         fun onGpsShadowDecision(trigger: String, decision: GpsDecision)
+        /** A real drive-away suggestion for [vehicleId], raised while the app is open. */
+        fun onGpsSuggestion(vehicleId: String) {}
     }
 
     private val listeners = mutableListOf<Listener>()
@@ -31,5 +33,10 @@ object GpsShadowEventBus {
     @Synchronized
     fun emit(trigger: String, decision: GpsDecision) {
         listeners.toList().forEach { it.onGpsShadowDecision(trigger, decision) }
+    }
+
+    @Synchronized
+    fun emitSuggestion(vehicleId: String) {
+        listeners.toList().forEach { it.onGpsSuggestion(vehicleId) }
     }
 }

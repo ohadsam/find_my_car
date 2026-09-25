@@ -108,13 +108,11 @@ object WidgetMirror {
             }
             edit.apply()
 
-            if (targetId == activeId) {
-                // Keep the shade consistent with the widgets — a parking
-                // notification left standing after the parking was ended from
-                // that very notification is the same staleness by another route.
-                if (parked) WidgetDataPlugin.showParkingNotification(context, "")
-                else WidgetDataPlugin.cancelParkingNotification(context)
-            }
+            // Keep the shade consistent with the widgets — a parking
+            // notification left standing after the parking was ended from that
+            // very notification is the same staleness by another route. Every
+            // vehicle has its own (v1.51.0), so this is no longer active-only.
+            ParkingNotifications.sync(context)
             // Safe to call from a broadcast receiver: Android grants a
             // short-lived foreground-service-start exemption when the user has
             // just acted on a widget or a notification button, which is the
@@ -198,7 +196,7 @@ object WidgetMirror {
 
     /** True while any mirrored vehicle still has a parking — the foreground
      *  service's "parking" reason tracks that, not just the active vehicle. */
-    private fun anyParked(json: String): Boolean = try {
+    fun anyParked(json: String): Boolean = try {
         val arr = JSONArray(json)
         (0 until arr.length()).any { arr.optJSONObject(it)?.optBoolean("hasParking", false) == true }
     } catch (e: Exception) {
