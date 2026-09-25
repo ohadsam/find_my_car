@@ -33,6 +33,17 @@ export class WidgetBridge {
     });
   }
 
+  // A drive-away suggestion native raised while the app is open (v1.51.0) —
+  // native decides for every parked vehicle, so the page no longer decides
+  // itself. The callback reads the recorded suggestion, which also covers a
+  // hand-off lost in transit. No-op in the browser/PWA.
+  static onGpsSuggestion(cb) {
+    this.#plugin?.addListener?.('gpsSuggestion', ({ vehicleId } = {}) => {
+      DiagLog.log('GPS-PENDING', `native drive-away suggestion received live (vehicle=${vehicleId || '?'})`);
+      cb(vehicleId);
+    });
+  }
+
   // Stage 7 of the native background-detection migration (see CLAUDE.md):
   // reads/clears the GPS end-suggestion ParkingForegroundService recorded
   // while the WebView was unreachable — js/app.js replays it as the same

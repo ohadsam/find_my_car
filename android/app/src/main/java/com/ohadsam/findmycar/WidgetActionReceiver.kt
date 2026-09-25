@@ -229,7 +229,7 @@ class WidgetActionReceiver : BroadcastReceiver() {
         when (action) {
             "end" -> {
                 val ended = NativeParkingCommitter.commitEnd(context, v.id, "widget")
-                done(context, if (ended != null) "✅ החניה הסתיימה — ${v.label}" else "אין חניה פעילה לסיום", notify = ended != null)
+                done(context, v.label, if (ended != null) "✅ החניה הסתיימה — ${v.label}" else "אין חניה פעילה לסיום — ${v.label}", notify = ended != null)
                 return true
             }
             ACTION_SAVE_AT -> {
@@ -238,31 +238,31 @@ class WidgetActionReceiver : BroadcastReceiver() {
                 val lng = s?.lng
                 if (s == null || lat == null || lng == null) return false // no recorded spot — let the app decide
                 if (v.parked) {
-                    done(context, "כבר קיימת חניה פעילה", notify = false)
+                    done(context, v.label, "כבר קיימת חניה פעילה — ${v.label}", notify = false)
                     return true
                 }
                 NativeParkingCommitter.commitStart(context, s.vehicleId, lat, lng, null, "walkAway", btDevice = s.label.ifBlank { null })
                 PendingParkingSuggestionStore.clear(context)
                 WalkAwayDetector.closeWindow(context, "parking saved from the notification")
-                done(context, "🅿️ חניה נשמרה — ${v.label}", notify = true)
+                done(context, v.label, "🅿️ חניה נשמרה — ${v.label}", notify = true)
                 return true
             }
             "save", "swap" -> {
                 val fix = LastKnownLocation.getFix(context)?.takeIf { now - it.time <= FIX_MAX_AGE_MS } ?: return false
                 if (action == "save" && v.parked) {
-                    done(context, "יש כבר חניה פעילה — להחלפה השתמש ב\"החלף חניה\"", notify = false)
+                    done(context, v.label, "יש כבר חניה פעילה — ${v.label} (להחלפה השתמש ב\"החלף חניה\")", notify = false)
                     return true
                 }
                 if (action == "swap") {
                     if (!v.parked) {
-                        done(context, "אין חניה פעילה להחלפה", notify = false)
+                        done(context, v.label, "אין חניה פעילה להחלפה — ${v.label}", notify = false)
                         return true
                     }
                     NativeParkingCommitter.commitEnd(context, v.id, "widget")
                 }
                 NativeParkingCommitter.commitStart(context, v.id, fix.lat, fix.lng, fix.accuracy, "widget")
                 done(
-                    context,
+                    context, v.label,
                     if (action == "swap") "🔄 החניה הוחלפה — ${v.label}" else "🅿️ חניה נשמרה — ${v.label}",
                     notify = true,
                 )
@@ -272,10 +272,12 @@ class WidgetActionReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun done(context: Context, message: String, notify: Boolean) {
+    // Titled with the vehicle (v1.51.0): with several vehicles, "FindMyCar"
+    // alone left the shade unable to say which car an action was about.
+    private fun done(context: Context, vehicleLabel: String, message: String, notify: Boolean) {
         NativeLogStore.add(context, TAG, "WIDGET", "widget action handled natively → $message")
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-        if (notify) BackgroundAlertNotifier.show(context, "FindMyCar", message)
+        if (notify) BackgroundAlertNotifier.show(context, vehicleLabel.ifBlank { "FindMyCar" }, message)
     }
 
     /**

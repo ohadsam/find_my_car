@@ -38,6 +38,8 @@ class FindMyCarApp {
     gpsPrevFix:           null,  // {lat, lng, at} of the previous position fix, for deriving speed
     gpsLastAboveAt:       null,  // Date.now() of the last above-threshold sample, for CFG.gpsEvidenceTtlMs expiry
     gpsEndSuggested:      false, // true after GPS end suggestion shown this session
+    gpsCandidateId:       null,  // vehicle the current drive was attributed to (PWA path; native decides itself)
+    gpsEndVehicleId:      null,  // vehicle the open gpsEndModal is asking about
   };
 
   #swapping  = false;  // guard against concurrent #swapParking() calls
@@ -142,6 +144,10 @@ class FindMyCarApp {
     // diagnostic log alongside the real BT-SHADOW entries — no-op in the
     // browser/PWA.
     WidgetBridge.initShadowListener();
+    // Native decides drive-away for every parked vehicle, including while the
+    // app is open (v1.51.0); it hands a suggestion over live, and the recorded
+    // entry it leaves behind is what the reconcile below actually shows.
+    WidgetBridge.onGpsSuggestion(() => this.#reconcilePendingGpsSuggestion().catch(() => {}));
 
     // Shade buttons for the confirmation notifications — see
     // #initNotificationActions(). Not awaited: it only registers listeners.
@@ -423,8 +429,10 @@ class FindMyCarApp {
 
     // GPS auto-end
     Utils.el('gpsEndConfirmBtn')?.addEventListener('click', () => {
+      // The vehicle the question was about — not necessarily the active one.
+      const vid = this.#state.gpsEndVehicleId ?? this.#state.activeVehicleId;
       this.#closeModal('gpsEndModal');
-      this.#resetParking();
+      if (vid) this.#btEndParking(vid);
     });
     Utils.el('gpsEndDismissBtn')?.addEventListener('click', () => this.#closeModal('gpsEndModal'));
     Utils.el('gpsAutoEndToggle')?.addEventListener('change', e => {
@@ -512,6 +520,7 @@ class FindMyCarApp {
         // unreplayed until the next genuine cold start.
         this.#reconcilePendingBtActions().catch(() => {});
         this.#reconcilePendingWidgetActions().catch(() => {});
+        this.#reconcilePendingGpsSuggestion().catch(() => {});
         this.#fillMissingAddresses().catch(() => {});
       });
     });
@@ -588,6 +597,10 @@ class FindMyCarApp {
     this.#state.userPos = { lat, lng, accuracy };
     this.#map.updateUserMarker(lat, lng);
     this.#ui.updateDistance(this.#state);
+    // On native, drive-away is decided by ParkingForegroundService for every
+    // parked vehicle (v1.51.0) and handed to the page via 'gpsSuggestion' —
+    // deciding here too would ask twice, and could only ever see one vehicle.
+    if (window.Capacitor?.isNativePlatform?.()) return;
     this.#checkGpsSpeed(this.#effectiveSpeed(speed, lat, lng), lat, lng);
     this.#checkGpsDistance(lat, lng);
   }
@@ -622,15 +635,18 @@ class FindMyCarApp {
     } catch { /* fall back to the browser's own error code below */ }
 
     const denied = granted === false || (granted === null && err?.code === 1);
+    // The vehicle it was for — with several, "FindMyCar" alone says nothing.
+    const fv = VehicleController.getById(this.#state.activeVehicleId);
+    const title = fv ? `${fv.icon} ${fv.name}` : 'FindMyCar';
     if (denied) {
       DiagLog.log('GPS', 'location permission is NOT granted — the parking could not be saved');
       this.#ui.showToast('אין הרשאת מיקום — החניה לא נשמרה. פתח הגדרות ואשר מיקום.', 'error');
-      Notify.show('FindMyCar', '⚠️ החניה לא נשמרה — חסרה הרשאת מיקום');
+      Notify.show(title, '⚠️ החניה לא נשמרה — חסרה הרשאת מיקום');
       this.#bluetooth.openAppSettings?.();
       return;
     }
     this.#ui.showToast('לא ניתן לאתר מיקום כרגע — החניה לא נשמרה. נסה שוב בחוץ.', 'error');
-    Notify.show('FindMyCar', '⚠️ החניה לא נשמרה — לא התקבל מיקום GPS');
+    Notify.show(title, '⚠️ החניה לא נשמרה — לא התקבל מיקום GPS');
   }
 
   static describeGeoError(err) {
@@ -842,7 +858,9 @@ class FindMyCarApp {
     this.#swapping = true;
 
     // Close modals that could end the new parking if confirmed after the swap
-    this.#closeModal('gpsEndModal');
+    if ((this.#state.gpsEndVehicleId ?? this.#state.activeVehicleId) === this.#state.activeVehicleId) {
+      this.#closeModal('gpsEndModal');
+    }
     if (this.#state.btPendingVehicleId === this.#state.activeVehicleId) {
       this.#closeModal('btParkingModal');
     }
@@ -1052,7 +1070,9 @@ class FindMyCarApp {
         // "you're back at the car?" question stale — including one raised by
         // a native notification, whose button lands here, not in the
         // local-notification listener.
-        this.#closeModal('gpsEndModal');
+        if ((this.#state.gpsEndVehicleId ?? this.#state.activeVehicleId) === this.#state.activeVehicleId) {
+          this.#closeModal('gpsEndModal');
+        }
         if (this.#state.btPendingVehicleId === this.#state.activeVehicleId) this.#closeModal('btParkingModal');
         const had = !!this.#state.current;
         this.#resetParking();
@@ -1091,7 +1111,9 @@ class FindMyCarApp {
       // state, and its whole result is visible on the widget the user just
       // tapped — a heads-up notification per refresh would be pure noise, and
       // noise is what teaches people to swipe these away unread.
-      if (action !== 'refresh') Notify.show('FindMyCar', message);
+      // Titled with the vehicle: with several of them, "FindMyCar" alone left
+      // the shade unable to say which car the action was about.
+      if (action !== 'refresh') Notify.show(vLabel || 'FindMyCar', message);
       return message;
     } catch (e) {
       const errMsg = 'שגיאה בביצוע הפעולה';
@@ -1201,7 +1223,8 @@ class FindMyCarApp {
           if (presetLoc === false) {
             const msg = 'החניה לא נשמרה — המיקום בזמן הלחיצה על הווידג\u05f3ט לא היה ידוע';
             this.#ui.showToast(msg, 'error');
-            Notify.show('FindMyCar', `⚠️ ${msg}`);
+            const qv = VehicleController.getById(a.vehicleId ?? this.#state.activeVehicleId);
+            Notify.show(qv ? `${qv.icon} ${qv.name}` : 'FindMyCar', `⚠️ ${msg}`);
             continue;
           }
           await this.performWidgetAction(a.action, a.vehicleId ?? null, { presetLoc });
@@ -1669,6 +1692,31 @@ class FindMyCarApp {
     this.#state.gpsPrevFix           = null;
     this.#state.gpsLastAboveAt       = null;
     this.#state.gpsEndSuggested      = false;
+    this.#state.gpsCandidateId       = null;
+  }
+
+  // Every vehicle with an active parking, with that parking — drive-away
+  // watches all of them, not only the active one (v1.51.0).
+  #parkedSpots() {
+    return this.#state.vehicles
+      .map(v => ({ v, p: v.id === this.#state.activeVehicleId ? this.#state.current : VehicleController.getCurrent(v.id) }))
+      .filter(s => s.p?.location);
+  }
+
+  // The parking the current drive is measured against: the vehicle it was
+  // attributed to once one is, else (before any vehicle-speed evidence, when
+  // nothing can fire anyway) the nearest parked one. Null when the attributed
+  // vehicle's parking has since ended — another parked car must not inherit
+  // the question. Mirrors ParkingForegroundService's candidate/target.
+  #gpsTarget(lat, lng) {
+    const spots = this.#parkedSpots();
+    if (this.#state.gpsCandidateId) return spots.find(s => s.v.id === this.#state.gpsCandidateId) ?? null;
+    let best = null, bestD = Infinity;
+    for (const s of spots) {
+      const d = Utils.distance(lat, lng, s.p.location.lat, s.p.location.lng);
+      if (d < bestD) { best = s; bestD = d; }
+    }
+    return best;
   }
 
   // Straight-line distance in metres from the active parking spot, or null if
@@ -1676,9 +1724,9 @@ class FindMyCarApp {
   // decide whether vehicle speed counts as THIS car departing) and
   // #checkGpsDistance, so both read one definition of "how far from the car".
   #distanceFromParking(lat, lng) {
-    const p = this.#state.current;
-    if (!p) return null;
-    return Utils.distance(lat, lng, p.location.lat, p.location.lng);
+    const t = this.#gpsTarget(lat, lng);
+    if (!t) return null;
+    return Utils.distance(lat, lng, t.p.location.lat, t.p.location.lng);
   }
 
   // ── DAILY STATUS NOTIFICATION ───────────────────────────────────
@@ -1723,7 +1771,7 @@ class FindMyCarApp {
   // The threshold is deliberately only just above running, not at a "real
   // driving speed" — see CLAUDE.md "Vehicle-movement detection" (v1.42.0).
   #checkGpsSpeed(speed, lat, lng) {
-    if (!this.#state.current || this.#state.gpsEndSuggested) return;
+    if (!this.#gpsTarget(lat, lng) || this.#state.gpsEndSuggested) return;
     if (!this.#getGpsSettings().enabled) return;
 
     const now = Date.now();
@@ -1755,6 +1803,17 @@ class FindMyCarApp {
     // does not make the preceding driving un-happen.
     if (speed < CFG.gpsSpeedThreshold) return;
 
+    // Attribute the drive to one parked vehicle the moment it starts: the
+    // nearest parked car to where the phone is when it first moves at vehicle
+    // speed. Never a gate — with any vehicle parked there is always a pick.
+    if (!this.#state.gpsCandidateId) {
+      const t = this.#gpsTarget(lat, lng);
+      if (t) {
+        this.#state.gpsCandidateId = t.v.id;
+        DiagLog.log('GPS', `drive detected — attributed to ${t.v.icon} ${t.v.name}`, { vehicleName: t.v.name, vehicleIcon: t.v.icon });
+      }
+    }
+
     const before = this.#state.gpsSpeedAccumMs;
     this.#state.gpsSpeedAccumMs = before + delta;
     this.#state.gpsLastAboveAt  = now;
@@ -1772,7 +1831,7 @@ class FindMyCarApp {
   // distance says how FAR, never HOW, so walking 300m from the car used to
   // produce a "your car seems to have moved" suggestion.
   #checkGpsDistance(lat, lng) {
-    if (!this.#state.current || this.#state.gpsEndSuggested) return;
+    if (this.#state.gpsEndSuggested) return;
     if (!this.#getGpsSettings().enabled) return;
     const fromCar = this.#distanceFromParking(lat, lng);
     if (fromCar === null || fromCar < CFG.gpsDistanceThreshold) return;
@@ -1784,14 +1843,30 @@ class FindMyCarApp {
 
   #suggestGpsEnd() {
     if (this.#state.gpsEndSuggested) return; // race guard: speed+distance can both fire on the same position update
+    const vehicleId = this.#state.gpsCandidateId ?? this.#state.activeVehicleId;
     this.#resetGpsDetection();
     this.#state.gpsEndSuggested = true;
     DiagLog.log('GPS', 'showing end-parking suggestion (speed or distance threshold crossed)');
+    this.#showGpsEndSuggestion(vehicleId);
+  }
+
+  // Opens gpsEndModal about one specific vehicle (v1.51.0), named in the
+  // modal, so a drive-away question about a non-active vehicle is both
+  // understandable and ends the right parking. Shared by the PWA's live path
+  // and the native hand-off (#reconcilePendingGpsSuggestion).
+  #showGpsEndSuggestion(vehicleId) {
+    const v = VehicleController.getById(vehicleId);
+    const label = v ? `${v.icon} ${v.name}` : 'הרכב';
+    this.#state.gpsEndVehicleId = vehicleId;
+    const title = Utils.el('gpsEndTitle');
+    if (title) title.textContent = `זוהתה נסיעה — ${label}`;
+    const desc = Utils.el('gpsEndDesc');
+    if (desc) desc.textContent = `זוהתה נסיעה הרחק מהחניה של ${label} — לסיים אותה?`;
     this.#ui.openModal('gpsEndModal');
     this.#notifyIfBackground(
-      '🚗 מזוהה נסיעה',
-      'ייתכן שהרכב זז ממקום החניה.',
-      { actionTypeId: Notify.CONFIRM_END, extra: { vehicleId: this.#state.activeVehicleId } },
+      `🚗 מזוהה נסיעה — ${label}`,
+      `ייתכן שהרכב ${label} זז ממקום החניה.`,
+      { actionTypeId: Notify.CONFIRM_END, extra: { vehicleId } },
     );
   }
 
@@ -1811,21 +1886,24 @@ class FindMyCarApp {
     const pending = await WidgetBridge.getPendingGpsSuggestion();
     if (!pending) return;
     await WidgetBridge.clearPendingGpsSuggestion();
-    if (pending.vehicleId !== this.#state.activeVehicleId) {
-      DiagLog.log('GPS-PENDING', `pending GPS suggestion discarded — active vehicle changed since (was ${pending.vehicleName})`);
+    // Any vehicle, not only the active one (v1.51.0) — the suggestion names
+    // the vehicle the drive was attributed to, and the modal ends that one.
+    const v = VehicleController.getById(pending.vehicleId);
+    if (!v) {
+      DiagLog.log('GPS-PENDING', `pending GPS suggestion discarded — vehicle no longer exists (was ${pending.vehicleName})`);
       return;
     }
-    // #suggestGpsEnd() has no precondition of its own — its real callers
-    // (#checkGpsSpeed/#checkGpsDistance) only ever reach it once they've
-    // already confirmed #state.current exists. Replay must enforce that
-    // same precondition itself, or it could open gpsEndModal with no
-    // active parking to show (e.g. the user already ended it manually).
-    if (!this.#state.current) {
-      DiagLog.log('GPS-PENDING', `pending GPS suggestion discarded — no active parking for ${pending.vehicleName}`);
+    const parking = v.id === this.#state.activeVehicleId ? this.#state.current : VehicleController.getCurrent(v.id);
+    // #showGpsEndSuggestion() has no precondition of its own, so replay must
+    // enforce this itself, or it could ask about a parking the user already
+    // ended (from the shade, a widget, or by hand).
+    if (!parking) {
+      DiagLog.log('GPS-PENDING', `pending GPS suggestion discarded — no active parking for ${v.name}`,
+        { vehicleName: v.name, vehicleIcon: v.icon });
       return;
     }
-    DiagLog.log('GPS-PENDING', `replaying pending GPS suggestion for ${pending.vehicleName}`);
-    this.#suggestGpsEnd();
+    DiagLog.log('GPS-PENDING', `showing drive-away suggestion for ${v.name}`, { vehicleName: v.name, vehicleIcon: v.icon });
+    this.#showGpsEndSuggestion(v.id);
   }
 
   // Background-only system notification alongside an in-app toast/modal —
@@ -2352,7 +2430,7 @@ class FindMyCarApp {
     if (id === 'voiceModal')        this.#voice.close();
     if (id === 'detailModal')       this.#map.destroyDetailMap();
     if (id === 'btParkingModal') { this.#state.btPendingVehicleId = null; this.#state.btPendingLabel = null; }
-    if (id === 'gpsEndModal')    this.#state.gpsEndSuggested = true;
+    if (id === 'gpsEndModal')  { this.#state.gpsEndSuggested = true; this.#state.gpsEndVehicleId = null; }
     if (id === 'walkAwayModal') WidgetBridge.clearPendingParkingSuggestion().catch(() => {});
     if (id === 'settingsView')      return; // views are not modals
     this.#ui.closeModal(id);

@@ -167,8 +167,9 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | `#markBtEnd(vehicleId, label)` | Annotate current parking with BT end device + timestamp before it moves to history |
 | `#getGpsSettings()` | Read GPS auto-end setting from localStorage |
 | `#checkGpsSpeed(speed)` | Called on each GPS position update; suggests end if speed sustained ≥ `gpsSpeedThreshold` |
-| `#checkGpsDistance(lat, lng)` | Called on each GPS position update; suggests end if distance from the saved parking spot ≥ `gpsDistanceThreshold` (300m) — catches movement speed alone misses (e.g. unreliable `coords.speed`) |
+| `#checkGpsDistance(lat, lng)` | PWA only since v1.51.0 (native decides itself). Called on each GPS position update; suggests end if distance from the saved parking spot ≥ `gpsDistanceThreshold` (300m) — catches movement speed alone misses (e.g. unreliable `coords.speed`) |
 | `#suggestGpsEnd()` | Shared by speed/distance checks: opens `gpsEndModal` (a suggestion requiring confirmation, never auto-ends) + background notification |
+| `#showGpsEndSuggestion(vehicleId)` | Opens `gpsEndModal` about one specific vehicle (named in the modal; confirm ends that vehicle via `#btEndParking`). Used by the PWA live path and by the native `gpsSuggestion` hand-off (v1.51.0) |
 | `#notifyIfBackground(title, body)` | `Notify.show()` only when `document.visibilityState !== 'visible'` — avoids duplicating an on-screen toast/modal the user can already see |
 | `#btEndParking(vehicleId)` | End parking for a vehicle (active or background) |
 | `#btScanDevices()` | Scan audio devices; prompt mic permission if labels hidden |
@@ -1344,6 +1345,56 @@ the same retry schedule, and patches the mirror only while
 `WidgetMirror.hasPendingSync()` is still true for the same coordinates — once JS
 has synced, JS owns the address.
 
+### Every parked vehicle is watched, and every notification names its vehicle (v1.51.0)
+
+**Real, previously-shipped gap**: reported as "listening only ever happens for
+one vehicle, and the notification doesn't say which car it's about". Bluetooth
+decisions already looped every vehicle (`BtDecisionEngine`), but three things
+were active-vehicle-only:
+
+1. **Drive-away detection** read `KEY_HAS_PARKING`/`KEY_LAT`/`KEY_LNG` — the
+   single-vehicle snapshot of the ACTIVE vehicle. A second vehicle's parking was
+   never checked at all.
+2. **The `"parking"` keep-alive reason** followed only the active vehicle:
+   `WidgetDataPlugin.clear()` set it to `false` whenever the active vehicle had
+   no parking, stopping the GPS watch while another vehicle was still parked.
+   `restoreReasons()` had the same blind spot after a reboot.
+3. **The persistent "חניה פעילה" notification** was a single notification for
+   the active vehicle; other notifications (drive-away, widget results) were
+   titled "FindMyCar" or "🚗 מזוהה נסיעה" with no vehicle.
+
+**Now**: `ParkingForegroundService.onLocationShadow()` evaluates every parked
+vehicle from the `vehicles_json` mirror (`parkedSpots()`). The phone cannot say
+which car it is in, so each drive is attributed to ONE vehicle by
+`core/DriveVehiclePicker`: every fix records which parkings it was within
+`GPS_NEAR_CAR_RADIUS_M` (150m) of, and at the first vehicle-speed sample the
+parking the phone was most recently at wins — falling back to the nearest
+parked one. **It never returns nothing while a vehicle is parked** (the
+v1.41.0/v1.42.0 lesson: no gate that can disarm detection); with one parked
+vehicle it is exactly the old behaviour. A drive is an *episode* (starts at the
+first vehicle-speed sample, ends `GPS_EVIDENCE_TTL_MS` after the last one, or
+when a new parking appears) with at most one suggestion — two cars parked side
+by side must not both be asked about. If the attributed vehicle's parking ends
+mid-drive, that drive asks nothing more; another parked car never inherits it.
+
+The suggestion names the vehicle ("🚗 מזוהה נסיעה — 🚙 name") and its "סיים
+חניה" button ends **that** vehicle. Native now decides **even while the app is
+open**: `MainActivity.isForeground()` only chooses the delivery — a notification
+when the app isn't in front, otherwise a live `gpsSuggestion` plugin event, on
+which `js/app.js` reads the recorded `PendingGpsSuggestion` and opens
+`gpsEndModal` for that vehicle (`#showGpsEndSuggestion`, confirm → `#btEndParking`
+for `gpsEndVehicleId`). `#onPosition` therefore skips `#checkGpsSpeed`/
+`#checkGpsDistance` on native; they remain the PWA's path, where the drive is
+attributed to the nearest parked vehicle at its first vehicle-speed sample.
+
+The `"parking"` reason is `anyParked` (any vehicle) in `syncVehicles()`,
+`clear()` and `restoreReasons()`. `ParkingNotifications.sync()` rebuilds one
+tagged notification per parked vehicle from the mirror, and is called by every
+mirror writer (`syncVehicles`/`update`/`clear`, `WidgetMirror`,
+`NativeGeocoder`). Result notifications (native `done()`, JS
+`performWidgetAction`, location failures, Bluetooth, walk-away) are titled with
+the vehicle.
+
 ### The parking record is committed natively (v1.50.0)
 
 Before this, a background event produced only a queued *action*, which JS
@@ -1905,7 +1956,8 @@ small, independently-tested, non-breaking stages:
    when the WebView is reclaimed (the scenario this whole migration exists to fix).
    `WidgetDataPlugin.update()`/`.clear()` — the same choke point every real
    parking-state change already goes through, live or replayed on resume — now
-   posts/cancels it directly via plain `NotificationCompat` (its own dedicated
+   posts/cancels it directly via plain `NotificationCompat` (one per parked
+   vehicle since v1.51.0 — `ParkingNotifications`; its own dedicated
    `findmycar_parking_active` channel, `IMPORTANCE_LOW` + `setSilent(true)` to match
    the JS version's quiet, non-alerting style), using the same `POST_NOTIFICATIONS`
    permission check already primed at first launch. `js/app.js`'s
@@ -2165,6 +2217,8 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (v1.38.1): install over an existing build (`MY_PACKAGE_REPLACED`, a background start → `type=16`, `NO-loc@start`), then open the app with a parking active. The `SERVICE` log must show "restarting service from the foreground to obtain background-location capability", followed by a fresh "onCreate succeeded — type=24", and subsequent heartbeats must read `+loc@start`. If it still reads `NO-loc@start` after that, the restart didn't take and background GPS cannot work
 - [ ] Android APK (v1.38.1): confirm the foreground restart happens at most ONCE per app run — repeated "restarting service from the foreground" entries in a single session mean `locationRestartAttempted` isn't holding, which would be a restart loop
 - [ ] Android APK (v1.39.0, notification buttons): with the app BACKGROUNDED (not killed) and a parking active, cross the GPS distance threshold — the "🚗 מזוהה נסיעה" notification must carry **סיים חניה** and **התעלם** buttons. Tapping סיים חניה must end the parking without opening the app, post a confirmation notification, and clear the original notification; reopening the app must NOT show a stale `gpsEndModal`
+- [ ] **Android APK (v1.51.0): park TWO vehicles (switch the active vehicle between saves), then drive off in the NON-active one with the app closed. A "🚗 מזוהה נסיעה — <that vehicle>" notification must arrive, and "סיים חניה" must end THAT vehicle's parking, not the active one's. Only one suggestion per drive. Each parked vehicle shows its own "<icon> <name> — חניה פעילה" notification in the shade.** The `GPS` log shows "drive detected — attributed to vehicle ..."
+- [ ] Android APK (v1.51.0): end the ACTIVE vehicle's parking while another vehicle is still parked — the `SERVICE` heartbeat must keep showing `gpsFixes=` (the watch keeps running), not `gpsWatch=off`
 - [ ] **Android APK (v1.50.0): close the app, park and let Bluetooth disconnect (auto-start ON). Wait 20+ minutes, then open the app: the parking time must be the DISCONNECT time (the elapsed timer counts from then, not from opening), the address must already be filled in, and the `WIDGET` log shows "adopted parking saved natively (bluetooth)". Same for a widget save and a widget/notification "end" while closed.** A parking whose time equals the app-open time is the old replay path returning
 - [ ] **Android APK (v1.49.0): with the app in the background (NOT open), connect to the car's Bluetooth with a parking active and auto-end OFF — "הגעת לרכב?" must pop up with סיים חניה / התעלם every time, and exactly once (no duplicate from JS). Open the app afterwards: the question must NOT appear again as an in-app modal.** The `BT-PENDING` log shows "asked natively whether to end the parking"
 - [ ] Android APK (v1.39.0): same for the Bluetooth "🚗 הגעת לרכב?" notification (connect to a linked device that has `bluetoothAutoEnd` OFF and an active parking) — buttons present, סיים חניה ends that specific vehicle's parking even if it isn't the active one

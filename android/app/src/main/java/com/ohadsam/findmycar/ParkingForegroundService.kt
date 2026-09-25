@@ -23,15 +23,19 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.ohadsam.findmycar.core.DriveVehiclePicker
 import com.ohadsam.findmycar.core.GpsDecision
 import com.ohadsam.findmycar.core.GpsDecisionEngine
 import com.ohadsam.findmycar.core.GpsDecisionState
 import com.ohadsam.findmycar.core.GpsMath
+import com.ohadsam.findmycar.core.NearSeen
+import com.ohadsam.findmycar.core.ParkedSpot
 import com.ohadsam.findmycar.core.PendingGpsSuggestion
 import com.ohadsam.findmycar.core.VehicleJsonParser
 import com.ohadsam.findmycar.core.WalkAwayDecision
 import com.ohadsam.findmycar.core.WalkAwayEngine
 import com.ohadsam.findmycar.core.WalkAwayState
+import com.ohadsam.findmycar.widgets.ParkedVehicles
 import com.ohadsam.findmycar.widgets.WidgetStatusRefresher
 import java.lang.ref.WeakReference
 
@@ -70,6 +74,11 @@ class ParkingForegroundService : Service() {
         private const val GPS_DERIVED_SPEED_MIN_INTERVAL_MS = 5000L
         private const val GPS_EVIDENCE_TTL_MS = 600_000L
         private const val GPS_DISTANCE_THRESHOLD_M = 300.0
+        // A fix within this of a parked car counts as "the phone was at that
+        // car" — what DriveVehiclePicker uses to tell which of several parked
+        // vehicles a drive belongs to. Native-only: the PWA path picks the
+        // nearest parked car instead (it has no background fixes to record).
+        private const val GPS_NEAR_CAR_RADIUS_M = 150.0
         // Walk-away detection thresholds, mirroring js/config.js's
         // CFG.walkMinSpeed/walkMaxSpeed/walkAbortSpeed/walkRequiredMs/
         // walkMinDisplacement/walkWindowMs — same hand-kept JS<->Kotlin parity
@@ -174,7 +183,10 @@ class ParkingForegroundService : Service() {
         fun restoreReasons(context: Context) {
             try {
                 val prefs = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
-                if (prefs.getBoolean(WidgetDataPlugin.KEY_HAS_PARKING, false)) activeReasons.add("parking")
+                // Any vehicle, not only the active one (v1.51.0).
+                if (prefs.getBoolean(WidgetDataPlugin.KEY_HAS_PARKING, false) ||
+                    WidgetDataPlugin.anyParked(context)
+                ) activeReasons.add("parking")
                 if (prefs.getBoolean(WidgetDataPlugin.KEY_BT_ENABLED, false)) activeReasons.add("bluetooth")
             } catch (e: Exception) {
                 Log.w(TAG, "restoreReasons failed (non-fatal)", e)
@@ -225,6 +237,16 @@ class ParkingForegroundService : Service() {
     private var locationManager: LocationManager? = null
     private var locationListener: LocationListener? = null
     private var gpsShadowState = GpsDecisionState()
+    // Multi-vehicle drive-away (v1.51.0). One drive is one "episode": it starts
+    // at the first vehicle-speed sample, is attributed to ONE parked vehicle
+    // (gpsCandidate, chosen by DriveVehiclePicker), and ends once no vehicle
+    // speed has been seen for GPS_EVIDENCE_TTL_MS. At most one suggestion per
+    // episode — two cars parked side by side must not both be asked about
+    // when only one of them drove off.
+    private var gpsCandidate: ParkedSpot? = null
+    private var gpsLastVehicleSpeedAt: Long? = null
+    private var gpsNearSeen: Map<String, NearSeen> = emptyMap()
+    private var gpsKnownParkingKeys: Set<String> = emptySet()
     private var walkAwayState = WalkAwayState()
     // The window the current walkAwayState belongs to, so a NEW disconnect
     // (a different window) resets the accumulator instead of inheriting the
@@ -823,7 +845,7 @@ class ParkingForegroundService : Service() {
     }
 
     private fun resetGpsDecisionState() {
-        gpsShadowState = GpsDecisionState()
+        resetGpsEpisode()
         prevFixLat = null
         prevFixLng = null
         prevFixAt = null
@@ -921,6 +943,22 @@ class ParkingForegroundService : Service() {
         }
     }
 
+    private fun resetGpsEpisode() {
+        gpsShadowState = GpsDecisionState()
+        gpsCandidate = null
+        gpsLastVehicleSpeedAt = null
+    }
+
+    /**
+     * Every parked vehicle with a known spot, from the same vehicles_json
+     * mirror the widgets render — not only the active vehicle's snapshot, which
+     * is all drive-away detection used to look at.
+     */
+    private fun parkedSpots(prefs: android.content.SharedPreferences): List<ParkedSpot> =
+        ParkedVehicles.parse(prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]")
+            .filter { !(it.lat == 0.0 && it.lng == 0.0) }
+            .map { ParkedSpot(it.id, "${it.id}@${it.lat},${it.lng}", it.lat, it.lng) }
+
     private fun onLocationShadow(location: Location) {
         try {
             // Counted for the heartbeat's GPS summary. "GPS watch started" only
@@ -930,12 +968,22 @@ class ParkingForegroundService : Service() {
             gpsUpdatesSinceHeartbeat++
             lastFixAt = System.currentTimeMillis()
             val prefs = getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
-            val hasParking = prefs.getBoolean(WidgetDataPlugin.KEY_HAS_PARKING, false)
             val gpsEnabled = prefs.getBoolean(WidgetDataPlugin.KEY_GPS_AUTO_END_ENABLED, false)
-            val parkLat = prefs.getFloat(WidgetDataPlugin.KEY_LAT, 0f).toDouble()
-            val parkLng = prefs.getFloat(WidgetDataPlugin.KEY_LNG, 0f).toDouble()
-
+            val spots = parkedSpots(prefs)
             val now = System.currentTimeMillis()
+
+            // A parking that did not exist on the previous fix starts a fresh
+            // episode, exactly like a new parking always reset detection.
+            val keys = spots.map { it.parkingKey }.toSet()
+            if ((keys - gpsKnownParkingKeys).isNotEmpty()) resetGpsEpisode()
+            gpsKnownParkingKeys = keys
+            gpsNearSeen = DriveVehiclePicker.recordNear(
+                gpsNearSeen, spots, location.latitude, location.longitude, GPS_NEAR_CAR_RADIUS_M, now,
+            )
+            // The drive is over: the next one may be a different car.
+            val lastVehicleSpeed = gpsLastVehicleSpeedAt
+            if (lastVehicleSpeed != null && now - lastVehicleSpeed >= GPS_EVIDENCE_TTL_MS) resetGpsEpisode()
+
             val reported = if (location.hasSpeed()) location.speed.toDouble() else null
             val prevLat = prevFixLat
             val prevLng = prevFixLng
@@ -957,8 +1005,34 @@ class ParkingForegroundService : Service() {
                 prevFixAt = now
             }
 
-            val distance = GpsMath.distanceMeters(location.latitude, location.longitude, parkLat, parkLng)
-            lastFixDistanceM = distance
+            // Attribute the drive the moment it starts — before checkSpeed()
+            // below credits this very sample to it.
+            if (speed != null && !speed.isNaN() && speed >= GPS_SPEED_THRESHOLD_MPS) {
+                if (gpsCandidate == null) {
+                    gpsCandidate = DriveVehiclePicker.pick(spots, gpsNearSeen, location.latitude, location.longitude)
+                    gpsCandidate?.let { c ->
+                        NativeLogStore.add(
+                            this, TAG, "GPS",
+                            "drive detected — attributed to vehicle ${vehicleLabel(prefs, c.vehicleId)} " +
+                                "(${spots.size} parked)",
+                        )
+                    }
+                }
+                gpsLastVehicleSpeedAt = now
+            }
+            // Until a drive is attributed, detection runs against the nearest
+            // parked car (it cannot fire without vehicle-speed evidence, which
+            // attributes it). Once attributed, a candidate whose parking has
+            // since ended — the user ended it by hand mid-drive — means there
+            // is nothing left to ask this drive about; another parked car must
+            // not inherit the question.
+            val candidate = gpsCandidate
+            val target = candidate ?: DriveVehiclePicker.pick(spots, emptyMap(), location.latitude, location.longitude)
+            val hasParking = target != null && keys.contains(target.parkingKey)
+            val distance = if (target != null) {
+                GpsMath.distanceMeters(location.latitude, location.longitude, target.lat, target.lng)
+            } else 0.0
+            lastFixDistanceM = if (target != null) distance else -1.0
 
             val (afterSpeed, speedDecision) = GpsDecisionEngine.checkSpeed(
                 gpsShadowState, hasParking, gpsEnabled, speed,
@@ -967,7 +1041,7 @@ class ParkingForegroundService : Service() {
             )
             gpsShadowState = afterSpeed
             emitGpsShadowDecision("speed", speedDecision)
-            maybeRecordPendingGpsSuggestion(speedDecision)
+            maybeRecordPendingGpsSuggestion(speedDecision, target)
 
             val (afterDistance, distanceDecision) = GpsDecisionEngine.checkDistance(
                 gpsShadowState, hasParking, gpsEnabled, distance,
@@ -975,7 +1049,7 @@ class ParkingForegroundService : Service() {
             )
             gpsShadowState = afterDistance
             emitGpsShadowDecision("distance", distanceDecision)
-            maybeRecordPendingGpsSuggestion(distanceDecision)
+            maybeRecordPendingGpsSuggestion(distanceDecision, target)
 
             // Independent of everything above, and wrapped separately so a bug
             // in the newer feature can never break drive-away detection.
@@ -1092,37 +1166,55 @@ class ParkingForegroundService : Service() {
     // throttling) kept deciding SuggestEnd correctly the whole time, visible
     // only in the GPS-SHADOW diagnostic-log category, while the user got no
     // notification at all until they physically reopened the app — sometimes
-    // long after actually leaving the vehicle. Deliberately a no-op only when
-    // the Activity is genuinely foregrounded right now: the live
-    // #suggestGpsEnd() path is reliable in that case. Wrapped in its own
+    // long after actually leaving the vehicle. isForeground() now only picks
+    // HOW the suggestion is delivered (in-app vs. notification) — see below.
+    // Wrapped in its own
     // try/catch backstop, independent of emitGpsShadowDecision (which must
     // stay strictly log-only).
-    private fun maybeRecordPendingGpsSuggestion(decision: GpsDecision?) {
-        if (decision == null) return
+    //
+    // Multi-vehicle (v1.51.0): the suggestion is about [target] — the parked
+    // vehicle this drive was attributed to — not whichever vehicle happens to
+    // be active, and the notification names it. And since the in-page GPS
+    // check could only ever see the active vehicle, native now decides for the
+    // foreground case too: it records the suggestion and hands it to the page
+    // live (GpsShadowEventBus.emitSuggestion → js/app.js opens gpsEndModal for
+    // that vehicle) instead of posting a notification over an open app. The
+    // recorded entry is the fallback if that live hand-off is lost.
+    private fun maybeRecordPendingGpsSuggestion(decision: GpsDecision?, target: ParkedSpot?) {
+        if (decision == null || target == null) return
         try {
-            if (MainActivity.isForeground()) return // live path already handles it
             val prefs = getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
-            val activeVehicleId = prefs.getString(WidgetDataPlugin.KEY_ACTIVE_VEHICLE_ID, "") ?: ""
-            if (activeVehicleId.isBlank()) return
             val vehicles = VehicleJsonParser.parse(prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]")
-            val vehicleName = vehicles.find { it.id == activeVehicleId }?.name ?: ""
-            PendingGpsSuggestionStore.set(this, PendingGpsSuggestion(activeVehicleId, vehicleName, System.currentTimeMillis()))
-            Log.i(TAG, "recorded pending GPS suggestion (WebView unreachable) for vehicle=$vehicleName")
+            val vehicleName = vehicles.find { it.id == target.vehicleId }?.name ?: ""
+            val label = vehicleLabel(prefs, target.vehicleId)
+            PendingGpsSuggestionStore.set(this, PendingGpsSuggestion(target.vehicleId, vehicleName, System.currentTimeMillis()))
+            if (MainActivity.isForeground()) {
+                NativeLogStore.add(this, TAG, "GPS-PENDING", "drive-away suggestion for $label — app is open, asking in-app")
+                GpsShadowEventBus.emitSuggestion(target.vehicleId)
+                return
+            }
+            NativeLogStore.add(this, TAG, "GPS-PENDING", "drive-away suggestion for $label — notified (app not in front)")
             // Buttons, not "open the app": this fires while the user is
             // driving, and ending the parking is a one-tap decision that
             // belongs in the shade. Routed through WidgetActionReceiver, the
             // same headless path the widgets use — including its
             // PendingWidgetActionStore fallback if the WebView is gone.
             BackgroundAlertNotifier.show(
-                this, "🚗 מזוהה נסיעה", "ייתכן שהרכב זז ממקום החניה.",
+                this, "🚗 מזוהה נסיעה — $label", "ייתכן שהרכב $label זז ממקום החניה. לסיים את החניה שלו?",
                 listOf(
-                    BackgroundAlertNotifier.Action("סיים חניה", "end", activeVehicleId),
+                    BackgroundAlertNotifier.Action("סיים חניה", "end", target.vehicleId),
                     BackgroundAlertNotifier.Action("התעלם", WidgetActionReceiver.ACTION_DISMISS_GPS, null),
                 )
             )
         } catch (e: Exception) {
             Log.w(TAG, "maybeRecordPendingGpsSuggestion failed (non-fatal)", e)
         }
+    }
+
+    private fun vehicleLabel(prefs: android.content.SharedPreferences, vehicleId: String): String {
+        val v = ParkedVehicles.parse(prefs.getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]")
+            .find { it.id == vehicleId }
+        return if (v == null) vehicleId else "${v.icon.ifBlank { "🚗" }} ${v.name}".trim()
     }
 
     private fun createChannel() {

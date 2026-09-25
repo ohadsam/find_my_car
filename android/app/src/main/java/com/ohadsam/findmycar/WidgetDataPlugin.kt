@@ -83,8 +83,6 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         const val KEY_SVC_HEARTBEAT_AT = "svc_heartbeat_at"
 
         private const val TAG = "FMC-WidgetData"
-        private const val PARKING_NOTIF_CHANNEL_ID = "findmycar_parking_active"
-        private const val PARKING_NOTIF_ID = 4202
 
         /**
          * Repaints the two data-driven widgets. On the companion because
@@ -105,40 +103,10 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
             }
         }
 
-        // Stage 9's parking notification, on the companion for the same reason
-        // as refreshDataWidgets: WidgetMirror posts/cancels it when an action is
-        // accepted while no Plugin instance is alive.
-        fun showParkingNotification(context: Context, address: String) {
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-                        PackageManager.PERMISSION_GRANTED
-                    if (!granted) return
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val channel = NotificationChannel(PARKING_NOTIF_CHANNEL_ID, "חניה פעילה", NotificationManager.IMPORTANCE_LOW)
-                    context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
-                }
-                val notification = NotificationCompat.Builder(context, PARKING_NOTIF_CHANNEL_ID)
-                    .setContentTitle("FindMyCar — חניה פעילה 🅿️")
-                    .setContentText(address.ifBlank { "מיקום נשמר" })
-                    .setSmallIcon(R.drawable.ic_stat_car)
-                    .setColor(0xFF5B8BF5.toInt())
-                    .setSilent(true)
-                    .build()
-                NotificationManagerCompat.from(context).notify(PARKING_NOTIF_ID, notification)
-            } catch (e: Exception) {
-                Log.w(TAG, "showParkingNotification failed (non-fatal)", e)
-            }
-        }
-
-        fun cancelParkingNotification(context: Context) {
-            try {
-                NotificationManagerCompat.from(context).cancel(PARKING_NOTIF_ID)
-            } catch (e: Exception) {
-                Log.w(TAG, "cancelParkingNotification failed (non-fatal)", e)
-            }
-        }
+        /** True while any mirrored vehicle has a parking (not only the active one). */
+        fun anyParked(context: Context): Boolean = WidgetMirror.anyParked(
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_VEHICLES_JSON, "[]") ?: "[]"
+        )
     }
 
     override fun load() {
@@ -157,6 +125,13 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         data.put("decision", "suggestEnd") // the only GpsDecision variant today
         NativeLogStore.add(context, TAG, "BRIDGE", "→ JS: notifyListeners(gpsShadowDecision, trigger=$trigger)")
         notifyListeners("gpsShadowDecision", data)
+    }
+
+    override fun onGpsSuggestion(vehicleId: String) {
+        val data = JSObject()
+        data.put("vehicleId", vehicleId)
+        NativeLogStore.add(context, TAG, "BRIDGE", "→ JS: notifyListeners(gpsSuggestion, vehicle=$vehicleId)")
+        notifyListeners("gpsSuggestion", data)
     }
 
     // Mirrors the full vehicle list (BT-relevant fields + hasParking) + active
@@ -202,6 +177,11 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         // "applied locally, not yet reconciled" marker WidgetMirror sets when
         // an action is accepted while the page is unreachable.
         WidgetMirror.clearPendingSync(context)
+        // Every vehicle, not only the active one (v1.51.0): the service keeps
+        // watching while ANY vehicle is parked, and each parked vehicle has
+        // its own notification. A no-op when nothing changed.
+        ParkingForegroundService.setReasonActive(context, "parking", anyParked(context))
+        ParkingNotifications.sync(context)
         WidgetStatusRefresher.refreshAll(context)
         call.resolve()
     }
@@ -225,7 +205,7 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         // an action is accepted while the page is unreachable.
         WidgetMirror.clearPendingSync(context)
         ParkingForegroundService.setReasonActive(context, "parking", true)
-        showParkingNotification(address)
+        ParkingNotifications.sync(context)
         refreshWidgets()
         call.resolve()
     }
@@ -239,30 +219,19 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
         // "applied locally, not yet reconciled" marker WidgetMirror sets when
         // an action is accepted while the page is unreachable.
         WidgetMirror.clearPendingSync(context)
-        ParkingForegroundService.setReasonActive(context, "parking", false)
-        cancelParkingNotification()
+        // The active vehicle has no parking — but another vehicle may, and the
+        // watch must keep running for it.
+        ParkingForegroundService.setReasonActive(context, "parking", anyParked(context))
+        ParkingNotifications.sync(context)
         refreshWidgets()
         call.resolve()
     }
 
-    // Stage 9 of the native background-detection migration (see CLAUDE.md):
-    // the persistent "active parking" notification (address + icon) used to
-    // be JS/Service-Worker-only (#showParkingNotification in js/app.js) —
-    // reliable only while the WebView is alive, so it could go stale (still
-    // showing an old address, or not disappearing) exactly when the WebView
-    // is reclaimed, the scenario this whole migration exists to fix. Posted
-    // here instead, from the SAME choke point (WidgetDataPlugin.update/clear)
-    // every real parking-state change already goes through, whether
-    // triggered live or replayed on resume (Stages 6/7). js/app.js's own
-    // #showParkingNotification/#cancelParkingNotification now skip
-    // themselves on native to avoid posting a duplicate — this is native's
-    // equivalent, not an addition alongside it. Distinct from
-    // ParkingForegroundService's own foreground-service notification (a
-    // required, generic "active in background" notice serving a different
-    // technical purpose — keeping the process alive — not parking-specific).
-    private fun showParkingNotification(address: String) = showParkingNotification(context, address)
-
-    private fun cancelParkingNotification() = cancelParkingNotification(context)
+    // Stage 9: the persistent "active parking" notification is posted natively
+    // (ParkingNotifications — one per parked vehicle since v1.51.0) from the
+    // same choke points every parking-state change goes through, so it cannot
+    // go stale when the WebView is reclaimed. js/app.js's
+    // #showParkingNotification skips itself on native.
 
     // Stage 7 of the native background-detection migration (see CLAUDE.md):
     // lets JS read/clear the GPS end-suggestion ParkingForegroundService

@@ -100,8 +100,8 @@ object BtPendingActionRecorder {
         )
         BackgroundAlertNotifier.show(
             context,
-            "${vehicle.icon.ifBlank { "🚗" }} הגעת לרכב?",
-            "זוהה חיבור Bluetooth — יש חניה פעילה של ${vehicle.name}",
+            "${vehicle.icon.ifBlank { "🚗" }} ${vehicle.name} — הגעת לרכב?",
+            "זוהה חיבור Bluetooth ל-${vehicle.name}, שיש לו חניה פעילה. לסיים אותה?",
             listOf(
                 BackgroundAlertNotifier.Action("סיים חניה", "end", vehicle.id),
                 BackgroundAlertNotifier.Action("התעלם", WidgetActionReceiver.ACTION_DISMISS, null),
@@ -113,7 +113,7 @@ object BtPendingActionRecorder {
     private fun autoEnd(context: Context, vehicle: NativeVehicle, label: String) {
         val v = NativeParkingCommitter.commitEnd(context, vehicle.id, "bluetooth", btDevice = label) ?: return
         NativeLogStore.add(context, TAG, "BT-PENDING", "auto-ended ${v.name}'s parking natively (Bluetooth connected to $label)")
-        BackgroundAlertNotifier.show(context, "🚗 חניה הסתיימה אוטומטית", "${v.label} — זוהה חיבור Bluetooth")
+        BackgroundAlertNotifier.show(context, "${v.label} — חניה הסתיימה אוטומטית", "זוהה חיבור Bluetooth ($label)")
     }
 
     /**
@@ -131,7 +131,7 @@ object BtPendingActionRecorder {
                 context, vehicle.id, fix.lat, fix.lng, fix.accuracy, "bluetooth", btDevice = label,
             ) ?: return
             NativeLogStore.add(context, TAG, "BT-PENDING", "auto-started ${v.name}'s parking natively (Bluetooth disconnected from $label)")
-            BackgroundAlertNotifier.show(context, "🅿️ חניה נשמרה אוטומטית", "${v.label} — זוהה ניתוק Bluetooth")
+            BackgroundAlertNotifier.show(context, "${v.label} — חניה נשמרה אוטומטית 🅿️", "זוהה ניתוק Bluetooth ($label)")
             return
         }
         PendingBtActionStore.add(
@@ -140,8 +140,8 @@ object BtPendingActionRecorder {
         )
         NativeLogStore.add(context, TAG, "BT-PENDING", "auto-start for ${vehicle.name} NOT saved — no fresh location at the disconnect")
         BackgroundAlertNotifier.show(
-            context, "⚠️ החניה לא נשמרה",
-            "${vehicle.name} — לא היה מיקום עדכני בניתוק. פתח את האפליקציה עכשיו כדי לשמור אותה.",
+            context, "⚠️ ${vehicle.icon.ifBlank { "🚗" }} ${vehicle.name} — החניה לא נשמרה",
+            "לא היה מיקום עדכני בניתוק. פתח את האפליקציה עכשיו כדי לשמור אותה.",
         )
     }
 

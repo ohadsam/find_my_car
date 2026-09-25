@@ -107,7 +107,7 @@ object NativeGeocoder {
         if (activeSnapshot) edit.putString(WidgetDataPlugin.KEY_ADDRESS, text)
         if (!changed && !activeSnapshot) return
         edit.apply()
-        if (activeSnapshot) WidgetDataPlugin.showParkingNotification(context, text)
+        ParkingNotifications.sync(context)
         WidgetDataPlugin.refreshDataWidgets(context)
     }
 }
