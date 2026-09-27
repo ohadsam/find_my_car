@@ -507,6 +507,9 @@ class FindMyCarApp {
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
+      // Back from a Settings screen the guide opened (e.g. "Allow all the
+      // time") — re-read the real state so the step flips to done by itself.
+      if (Utils.el('oemSetupModal')?.style.display === 'flex') this.#refreshOemSetupView().catch(() => {});
       this.#reconcileNativeLog().catch(() => {});
       // Adopt what native committed first, so the replays below (older
       // queued actions) and the Bluetooth re-check see the real state.
@@ -2657,7 +2660,9 @@ class FindMyCarApp {
         // A vendor screen that doesn't exist on this ROM silently falls back
         // to the generic app-settings page — say so, or the user is left
         // wondering why the screen they were promised never appeared.
-        if (result === 'fallback') {
+        if (result === 'needsForeground') {
+          this.#ui.showToast('קודם אשר הרשאת מיקום רגילה, ואז "אפשר כל הזמן"', 'warning');
+        } else if (result === 'fallback') {
           this.#ui.showToast('מסך היצרן לא זמין במכשיר הזה — נפתחו הגדרות האפליקציה במקום', 'warning');
         } else if (result === 'failed' || result === null) {
           this.#ui.showToast('לא ניתן היה לפתוח את המסך — פתח אותו ידנית בהגדרות המכשיר', 'error');

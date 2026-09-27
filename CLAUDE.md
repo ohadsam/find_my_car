@@ -1345,6 +1345,28 @@ the same retry schedule, and patches the mirror only while
 `WidgetMirror.hasPendingSync()` is still true for the same coordinates — once JS
 has synced, JS owns the address.
 
+### Background location is now requested ("Allow all the time", v1.53.0)
+
+This supersedes every "`ACCESS_BACKGROUND_LOCATION` is deliberately not
+declared" statement further down. The v1.38.1 foreground-restart fix only helps
+once the app is opened; a production log then showed a service alive all day
+after an update with `fgsType=16 NO-loc@start, gpsFixes=0` — drive-away
+detection dead from the update until the user happened to open the app. The
+permission is now declared, and `canStartLocationType()` is
+`isForeground() || hasBackgroundLocation()`, so a boot/update restart comes up
+with the location type (`+loc@start`) and receives fixes immediately. The
+restart-from-foreground path stays as the fallback for users who have not
+granted it.
+
+**It is requested only from the setup guide**, never at first launch: from
+Android 11 it cannot be granted from a dialog at all — the request opens the
+app's location page in Settings. `OemSetupPlugin.requestBackgroundLocation()`
+returns `needsForeground` when foreground location is not granted yet (Android
+ignores the request then), `status()` reports `backgroundLocationGranted`
+truthfully, the guide re-reads state on `visibilitychange` when it is open, and
+it auto-opens **once** for this step (`bgLocationOffered`) even for users who
+dismissed the guide before the step existed.
+
 ### ACL broadcasts need an EXPORTED receiver (v1.52.0) — the real root cause
 
 **Real, previously-shipped bug, and the answer to every earlier "Bluetooth
@@ -2257,6 +2279,7 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (v1.38.1): install over an existing build (`MY_PACKAGE_REPLACED`, a background start → `type=16`, `NO-loc@start`), then open the app with a parking active. The `SERVICE` log must show "restarting service from the foreground to obtain background-location capability", followed by a fresh "onCreate succeeded — type=24", and subsequent heartbeats must read `+loc@start`. If it still reads `NO-loc@start` after that, the restart didn't take and background GPS cannot work
 - [ ] Android APK (v1.38.1): confirm the foreground restart happens at most ONCE per app run — repeated "restarting service from the foreground" entries in a single session mean `locationRestartAttempted` isn't holding, which would be a restart loop
 - [ ] Android APK (v1.39.0, notification buttons): with the app BACKGROUNDED (not killed) and a parking active, cross the GPS distance threshold — the "🚗 מזוהה נסיעה" notification must carry **סיים חניה** and **התעלם** buttons. Tapping סיים חניה must end the parking without opening the app, post a confirmation notification, and clear the original notification; reopening the app must NOT show a stale `gpsEndModal`
+- [ ] **Android APK (v1.53.0): the setup guide opens by itself once with a "מיקום ברקע — אפשר כל הזמן" step; its button opens the location permission screen (a dialog on Android 10). After choosing "Allow all the time" and returning, the step flips to ✓ by itself. Then install a new build over it (or reboot) WITHOUT opening the app — the next `SERVICE` heartbeat must read `+loc@start` and `gpsFixes` must be non-zero while moving.** `NO-loc@start` after a background start with the permission granted means `canStartLocationType()` regressed
 - [ ] **Android APK (v1.52.0): with the app CLOSED, disconnect the car's Bluetooth (for EVERY linked vehicle, the secondary one too). The `SERVICE` log must show "ACL broadcast: ...ACL_DISCONNECTED label=..." at the real time, followed by a `BT-PENDING` line (the decision, or the reason nothing was done).** Zero ACL lines alongside "adapter state changed" lines is the NOT_EXPORTED regression. A "missed ACL broadcast — the poll found ..." line means the safety net caught what the broadcast missed
 - [ ] Android APK (v1.52.0): in the diagnostic log, filter by each vehicle — lines naming it or its Bluetooth device appear (including `[FMC-...]` native lines), never an empty log when that vehicle had activity
 - [ ] **Android APK (v1.51.0): park TWO vehicles (switch the active vehicle between saves), then drive off in the NON-active one with the app closed. A "🚗 מזוהה נסיעה — <that vehicle>" notification must arrive, and "סיים חניה" must end THAT vehicle's parking, not the active one's. Only one suggestion per drive. Each parked vehicle shows its own "<icon> <name> — חניה פעילה" notification in the shade.** The `GPS` log shows "drive detected — attributed to vehicle ..."

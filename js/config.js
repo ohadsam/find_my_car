@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.52.0',
+  version: '1.53.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -88,6 +88,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.53.0',
+      date: '2026-09-27',
+      items: Object.freeze([
+        'הרשאת מיקום ברקע ("אפשר כל הזמן"): זיהוי הנסיעה עובד עכשיו גם אחרי הפעלה מחדש של הטלפון או עדכון האפליקציה — בלי צורך לפתוח את האפליקציה קודם',
+        'שלב חדש במדריך "הגדרת זיהוי ברקע" פותח את מסך ההרשאה ישירות; בחר שם "אפשר כל הזמן". המדריך נפתח פעם אחת מעצמו כדי להציע את זה',
+        'המדריך מתעדכן מעצמו כשחוזרים אליו ממסך ההגדרות',
+      ]),
+    }),
     Object.freeze({
       version: '1.52.0',
       date: '2026-09-27',
