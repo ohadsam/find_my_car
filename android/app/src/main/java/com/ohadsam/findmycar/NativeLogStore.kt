@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.ohadsam.findmycar.core.NativeLogEntry
 import com.ohadsam.findmycar.core.NativeLogEntryJson
+import com.ohadsam.findmycar.core.NativeLogRetention
 
 /**
  * SharedPreferences-backed log of native-only events that never generate a
@@ -39,15 +40,20 @@ import com.ohadsam.findmycar.core.NativeLogEntryJson
 object NativeLogStore {
     private const val PREFS = WidgetDataPlugin.PREFS
     private const val KEY_JSON = "native_log_json"
-    private const val MAX_ENTRIES = 200
+    private const val MAX_ENTRIES = 400
+    private const val MAX_HEARTBEATS = 100
 
     @Synchronized
     fun add(context: Context, tag: String, category: String, message: String) {
         try {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val current = NativeLogEntryJson.parse(prefs.getString(KEY_JSON, "[]") ?: "[]")
-            val updated = (current + NativeLogEntry(System.currentTimeMillis(), tag, category, message))
-                .takeLast(MAX_ENTRIES)
+            // Heartbeats get their own allowance so they cannot push real
+            // events out (see NativeLogRetention).
+            val updated = NativeLogRetention.trim(
+                current + NativeLogEntry(System.currentTimeMillis(), tag, category, message),
+                MAX_ENTRIES, MAX_HEARTBEATS,
+            )
             prefs.edit().putString(KEY_JSON, NativeLogEntryJson.toJson(updated)).apply()
         } catch (e: Exception) {
             // Logging itself must never crash the caller.

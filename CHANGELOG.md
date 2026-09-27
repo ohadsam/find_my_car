@@ -5,6 +5,32 @@ Format: `[version] YYYY-MM-DD`
 
 ---
 
+## [1.52.0] — 2026-09-27
+
+### Bluetooth ברקע עבד רק כשפותחים את האפליקציה — תוקן השורש
+
+**מה היה**: ה-receiver של `ParkingForegroundService` נרשם עם
+`RECEIVER_NOT_EXPORTED`. ב-Android 14 receiver כזה מקבל שידורים רק מהאפליקציה
+עצמה ומ-uid ‏SYSTEM. `ACTION_STATE_CHANGED` נשלח מ-system_server ולכן הגיע
+(ביומן: "adapter state changed: ON"), אבל `ACL_CONNECTED`/`ACL_DISCONNECTED`
+נשלחים מאפליקציית ה-Bluetooth ‏(uid 1002) — ונזרקו כולם, בשקט. כל זיהוי
+Bluetooth שהאפליקציה עשתה אי פעם הגיע מ-`checkNow()` בפתיחת האפליקציה. בדוח:
+שירות חי כל היום, אפס שורות "ACL broadcast", ואף התראה על ניתוק מהסיטרואן.
+
+**מה עכשיו**:
+- ה-receiver רשום `RECEIVER_EXPORTED` (בטוח: אלה protected broadcasts שרק
+  המערכת יכולה לשלוח).
+- רשת ביטחון: בכל heartbeat השירות שואל את שירותי ה-A2DP/HFP מה מחובר
+  (`BtConnectedDevices`) ומטפל במעבר שלא דווח ב-broadcast ("missed ACL
+  broadcast — the poll found ..."). משווה רק לתשובה הקודמת של עצמו ומדלג על
+  מעבר שכבר דווח — כדי לא "לגלות" ניתוק שלא קרה.
+- כל התעלמות מאירוע Bluetooth נרשמת עם הסיבה (`BT-PENDING`).
+- יומן האבחון: סינון לפי רכב כולל שורות שמזכירות את שמו או את מכשיר ה-Bluetooth
+  שלו (כולל שורות נייטיב, שמקבלות שיוך לרכב במיזוג); heartbeats מוגבלים בנפרד
+  (`NativeLogRetention`) ולא דוחקים אירועים.
+
+---
+
 ## [1.51.0] — 2026-09-25
 
 ### כל הרכבים, כל האירועים, והתראות לפי רכב

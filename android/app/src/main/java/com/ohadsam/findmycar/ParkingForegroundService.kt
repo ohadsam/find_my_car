@@ -237,6 +237,15 @@ class ParkingForegroundService : Service() {
     private var locationManager: LocationManager? = null
     private var locationListener: LocationListener? = null
     private var gpsShadowState = GpsDecisionState()
+    // The poll compares only with its own previous answer (null until the
+    // first one), and skips a transition an ACL broadcast already reported
+    // since then. It deliberately does NOT fold ACL events into its baseline:
+    // a car raises ACL a moment before its audio profile connects, and a
+    // watch raises ACL with no audio profile at all — mixing the two would
+    // make the poll "discover" a disconnect that never happened.
+    private val btLock = Any()
+    private var polledConnected: Set<String>? = null
+    private val aclSeenSincePoll = mutableMapOf<String, Boolean>()
     // Multi-vehicle drive-away (v1.51.0). One drive is one "episode": it starts
     // at the first vehicle-speed sample, is attributed to ONE parked vehicle
     // (gpsCandidate, chosen by DriveVehiclePicker), and ends once no vehicle
@@ -637,6 +646,7 @@ class ParkingForegroundService : Service() {
         stopHeartbeat()
         receiver?.let { try { unregisterReceiver(it) } catch (e: IllegalArgumentException) { /* already gone */ } }
         receiver = null
+        synchronized(btLock) { polledConnected = null; aclSeenSincePoll.clear() }
         updateLocationWatch(false)
         if (instanceRef?.get() === this) instanceRef = null
         super.onDestroy()
@@ -683,6 +693,7 @@ class ParkingForegroundService : Service() {
                 NativeLogStore.add(ctx, TAG, "SERVICE", heartbeatMessage())
                 recordHeartbeatAt()
                 scheduleNextHeartbeat()
+                if (this@ParkingForegroundService.receiver != null) pollBtConnections("heartbeat")
             }
         }
         ContextCompat.registerReceiver(this, receiver, IntentFilter(ACTION_HEARTBEAT), ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -773,51 +784,97 @@ class ParkingForegroundService : Service() {
                     return
                 }
                 Log.i(TAG, "ACL broadcast: ${intent.action} label=$label")
-                // Logged regardless of whether anything downstream ends up
-                // acting on it (e.g. no vehicle linked to this label) — this
-                // is proof the OS receiver itself is alive and receiving real
-                // broadcasts, independent of WebView reachability or of
-                // whether the event turns into a decision worth its own
-                // BT/BT-SHADOW/BT-PENDING entry.
                 NativeLogStore.add(context, TAG, "SERVICE", "ACL broadcast: ${intent.action} label=$label")
-                // BtEventBus still delivers to a live BluetoothClassicPlugin
-                // listener when the Activity is alive (the normal foregrounded
-                // case) — but that listener is torn down exactly when the
-                // Activity is destroyed, so BtPendingActionRecorder is called
-                // directly here too, unconditionally, since THIS receiver (owned
-                // by the Service, not the Activity) is what's actually alive
-                // independent of Activity lifecycle. It no-ops itself via its own
-                // MainActivity.getActiveWebView() check when the live path is
-                // the one handling the event, so this never double-acts.
-                when (intent.action) {
-                    BluetoothDevice.ACTION_ACL_CONNECTED -> {
-                        BtEventBus.emitConnected(label)
-                        BtPendingActionRecorder.maybeRecord(context, label, connected = true)
-                        // Reconnected — they got back in, so there is nothing
-                        // left to ask about the spot they walked away from.
-                        // Withdraws the notification too, not just the window,
-                        // since it may already be showing (raised immediately
-                        // on the disconnect that preceded this reconnect).
-                        WalkAwayDetector.cancelOnReconnect(context)
-                    }
-                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
-                        BtEventBus.emitDisconnected(label)
-                        BtPendingActionRecorder.maybeRecord(context, label, connected = false)
-                        // Opt-in, and only for vehicles with auto-start OFF —
-                        // see WalkAwayDetector.eligible().
-                        WalkAwayDetector.maybeOpenWindow(context, label)
-                    }
-                }
+                val connected = intent.action == BluetoothDevice.ACTION_ACL_CONNECTED
+                synchronized(btLock) { aclSeenSincePoll[label] = connected }
+                handleBtTransition(context, label, connected)
             }
         }
-        // RECEIVER_NOT_EXPORTED is required on API 33+ for dynamically registered
-        // receivers with no permission; this receiver only reacts to system BT
-        // broadcasts and never needs to be reachable from other apps.
-        ContextCompat.registerReceiver(this, r, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        // EXPORTED, not NOT_EXPORTED — the root cause of v1.52.0's "Bluetooth
+        // disconnect produced nothing at all". On Android 14, a NOT_EXPORTED
+        // receiver only gets broadcasts from its own app and from uid
+        // SYSTEM. ACTION_STATE_CHANGED is sent by BluetoothManagerService,
+        // inside system_server, so it arrived (the production log shows
+        // "adapter state changed: ON"); ACL_CONNECTED/DISCONNECTED are sent by
+        // the Bluetooth app (com.android.bluetooth, uid 1002 — not SYSTEM), so
+        // they were silently dropped, every one, for as long as this flag was
+        // here. Every Bluetooth detection the app ever made came from
+        // checkNow()'s re-scan when the app was opened — which is why each
+        // one arrived late, at app-open time. Exporting is safe: all three
+        // actions are protected broadcasts that only the system may send.
+        ContextCompat.registerReceiver(this, r, filter, ContextCompat.RECEIVER_EXPORTED)
         receiver = r
+        // Baseline for the poll below, so a device already connected when the
+        // service starts is not reported as a fresh connect.
+        pollBtConnections("baseline")
         Log.i(TAG, "BT ACL receiver registered")
         NativeLogStore.add(this, TAG, "SERVICE", "BT ACL receiver registered")
         setStatusFlag(WidgetDataPlugin.KEY_BT_RECEIVER_ACTIVE, true)
+    }
+
+    /**
+     * One Bluetooth connect/disconnect, however it was noticed — a live ACL
+     * broadcast or the poll. Everything downstream (the live JS event, the
+     * native decision and notification, walk-away) is identical either way.
+     */
+    private fun handleBtTransition(context: Context, label: String, connected: Boolean) {
+        // BtEventBus still delivers to a live BluetoothClassicPlugin listener
+        // when the Activity is alive — but that listener is torn down exactly
+        // when the Activity is destroyed, so BtPendingActionRecorder is called
+        // directly here too, unconditionally, since THIS service is what's
+        // actually alive independent of Activity lifecycle. It no-ops itself
+        // when the app is in the foreground, so this never double-acts.
+        if (connected) {
+            BtEventBus.emitConnected(label)
+            BtPendingActionRecorder.maybeRecord(context, label, connected = true)
+            // Reconnected — they got back in, so there is nothing left to ask
+            // about the spot they walked away from.
+            WalkAwayDetector.cancelOnReconnect(context)
+        } else {
+            BtEventBus.emitDisconnected(label)
+            BtPendingActionRecorder.maybeRecord(context, label, connected = false)
+            // Opt-in, and only for vehicles with auto-start OFF — see
+            // WalkAwayDetector.eligible().
+            WalkAwayDetector.maybeOpenWindow(context, label)
+        }
+    }
+
+    /**
+     * Safety net for a missed ACL broadcast (v1.52.0): asks the Bluetooth
+     * profile services what is connected right now and treats any difference
+     * from what this service last knew as the transition it never heard about.
+     * Runs at every heartbeat — so a missed event costs minutes, never the
+     * whole event — and on a background thread, since the profile answers
+     * arrive on the main looper.
+     */
+    private fun pollBtConnections(reason: String) {
+        Thread {
+            try {
+                val now = BtConnectedDevices.labels(this) ?: return@Thread // unknown: never guess
+                val (appeared, gone) = synchronized(btLock) {
+                    val prev = polledConnected
+                    val seen = aclSeenSincePoll.toMap()
+                    polledConnected = now
+                    aclSeenSincePoll.clear()
+                    if (prev == null) return@synchronized emptySet<String>() to emptySet<String>()
+                    (now - prev).filter { seen[it] != true }.toSet() to
+                        (prev - now).filter { seen[it] != false }.toSet()
+                }
+                if (reason == "baseline") {
+                    NativeLogStore.add(this, TAG, "SERVICE", "Bluetooth baseline: connected=${now.ifEmpty { setOf("none") }}")
+                }
+                for (label in appeared) {
+                    NativeLogStore.add(this, TAG, "SERVICE", "missed ACL broadcast — the poll found $label CONNECTED")
+                    handleBtTransition(this, label, connected = true)
+                }
+                for (label in gone) {
+                    NativeLogStore.add(this, TAG, "SERVICE", "missed ACL broadcast — the poll found $label DISCONNECTED")
+                    handleBtTransition(this, label, connected = false)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "pollBtConnections failed (non-fatal)", e)
+            }
+        }.start()
     }
 
     /**

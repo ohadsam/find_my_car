@@ -1345,6 +1345,46 @@ the same retry schedule, and patches the mirror only while
 `WidgetMirror.hasPendingSync()` is still true for the same coordinates — once JS
 has synced, JS owns the address.
 
+### ACL broadcasts need an EXPORTED receiver (v1.52.0) — the real root cause
+
+**Real, previously-shipped bug, and the answer to every earlier "Bluetooth
+does nothing in the background" report.** `ParkingForegroundService`
+registered its receiver with `RECEIVER_NOT_EXPORTED`. On Android 14 such a
+receiver only gets broadcasts from its own app and from uid SYSTEM.
+`BluetoothAdapter.ACTION_STATE_CHANGED` comes from `BluetoothManagerService`
+inside system_server, so it arrived; `ACTION_ACL_CONNECTED`/`DISCONNECTED` come
+from the Bluetooth app (`com.android.bluetooth`, uid 1002), so every one of
+them was dropped. The production log showed exactly the signature the
+`ACTION_STATE_CHANGED` diagnostic had been added to catch: "adapter state
+changed: ON" entries, zero "ACL broadcast" entries, a service alive all day.
+Every Bluetooth detection the app ever made came from `checkNow()`'s re-scan
+on app open — which is why each one arrived late, at app-open time, and why
+several earlier fixes (v1.45.0's timestamps, v1.49.0/v1.50.0's native
+handling) never visibly helped: the event never reached any of them.
+
+**Fix**: `RECEIVER_EXPORTED` — safe, because all three actions are protected
+broadcasts only the system may send. **Never switch it back to NOT_EXPORTED.**
+
+**Safety net**: `pollBtConnections()` runs at every heartbeat (and once as a
+baseline when the receiver registers), asks the A2DP/HFP profile services what
+is connected (`BtConnectedDevices.labels()` — off the main thread, since the
+proxy callbacks arrive there; `null` = unknown, never diffed), and hands any
+transition to the same `handleBtTransition()` a broadcast uses. It compares
+only with **its own previous answer** and skips a transition an ACL broadcast
+already reported since then; it must not fold ACL events into its baseline —
+a car raises ACL a moment before its audio profile connects, and a watch raises
+ACL with no audio profile at all, so mixing them "discovers" disconnects that
+never happened. `BtPendingActionRecorder.maybeRecord()` now logs every decline
+with its reason (no linked vehicle / already parked / auto-start off / app
+open), and `NativeLogStore` gives heartbeats their own allowance
+(`core/NativeLogRetention`, 100 of 400) — a plain last-200 cap had let
+heartbeats push every real event out of the log.
+
+**Diagnostic log vehicle filter**: native lines carry no vehicle meta, so the
+filter showed an empty log. It now also matches lines that name the vehicle or
+its linked Bluetooth device, and `#reconcileNativeLog()` tags a merged line
+with a vehicle when exactly one is named in it.
+
 ### Every parked vehicle is watched, and every notification names its vehicle (v1.51.0)
 
 **Real, previously-shipped gap**: reported as "listening only ever happens for
@@ -2217,6 +2257,8 @@ round-trip, before the next stage builds on it.
 - [ ] Android APK (v1.38.1): install over an existing build (`MY_PACKAGE_REPLACED`, a background start → `type=16`, `NO-loc@start`), then open the app with a parking active. The `SERVICE` log must show "restarting service from the foreground to obtain background-location capability", followed by a fresh "onCreate succeeded — type=24", and subsequent heartbeats must read `+loc@start`. If it still reads `NO-loc@start` after that, the restart didn't take and background GPS cannot work
 - [ ] Android APK (v1.38.1): confirm the foreground restart happens at most ONCE per app run — repeated "restarting service from the foreground" entries in a single session mean `locationRestartAttempted` isn't holding, which would be a restart loop
 - [ ] Android APK (v1.39.0, notification buttons): with the app BACKGROUNDED (not killed) and a parking active, cross the GPS distance threshold — the "🚗 מזוהה נסיעה" notification must carry **סיים חניה** and **התעלם** buttons. Tapping סיים חניה must end the parking without opening the app, post a confirmation notification, and clear the original notification; reopening the app must NOT show a stale `gpsEndModal`
+- [ ] **Android APK (v1.52.0): with the app CLOSED, disconnect the car's Bluetooth (for EVERY linked vehicle, the secondary one too). The `SERVICE` log must show "ACL broadcast: ...ACL_DISCONNECTED label=..." at the real time, followed by a `BT-PENDING` line (the decision, or the reason nothing was done).** Zero ACL lines alongside "adapter state changed" lines is the NOT_EXPORTED regression. A "missed ACL broadcast — the poll found ..." line means the safety net caught what the broadcast missed
+- [ ] Android APK (v1.52.0): in the diagnostic log, filter by each vehicle — lines naming it or its Bluetooth device appear (including `[FMC-...]` native lines), never an empty log when that vehicle had activity
 - [ ] **Android APK (v1.51.0): park TWO vehicles (switch the active vehicle between saves), then drive off in the NON-active one with the app closed. A "🚗 מזוהה נסיעה — <that vehicle>" notification must arrive, and "סיים חניה" must end THAT vehicle's parking, not the active one's. Only one suggestion per drive. Each parked vehicle shows its own "<icon> <name> — חניה פעילה" notification in the shade.** The `GPS` log shows "drive detected — attributed to vehicle ..."
 - [ ] Android APK (v1.51.0): end the ACTIVE vehicle's parking while another vehicle is still parked — the `SERVICE` heartbeat must keep showing `gpsFixes=` (the watch keeps running), not `gpsWatch=off`
 - [ ] **Android APK (v1.50.0): close the app, park and let Bluetooth disconnect (auto-start ON). Wait 20+ minutes, then open the app: the parking time must be the DISCONNECT time (the elapsed timer counts from then, not from opening), the address must already be filled in, and the `WIDGET` log shows "adopted parking saved natively (bluetooth)". Same for a widget save and a widget/notification "end" while closed.** A parking whose time equals the app-open time is the old replay path returning
