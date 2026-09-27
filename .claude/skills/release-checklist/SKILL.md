@@ -75,7 +75,7 @@ available, report that check as a explicit FAIL/UNKNOWN with the reason, not omi
   - Permissions: `BLUETOOTH_CONNECT`, `FOREGROUND_SERVICE`,
     `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `POST_NOTIFICATIONS`,
     `ACCESS_FINE_LOCATION`, `CAMERA`, `RECORD_AUDIO`,
-    `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `RECEIVE_BOOT_COMPLETED` — a permission missing here
+    `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `RECEIVE_BOOT_COMPLETED`, `ACCESS_BACKGROUND_LOCATION` (v1.53.0) — a permission missing here
     isn't caught by any build step (the app compiles fine and only fails at
     runtime when that specific feature is used), so check this list literally
     every release, not just when a new native feature is added
@@ -574,6 +574,22 @@ step broken or skipped:
 - Confirm every writer of the mirror calls `ParkingNotifications.sync(context)`
   (JS `syncVehicles/update/clear`, `WidgetMirror`, `NativeGeocoder`), and that no
   code posts the old untagged id-4202 notification any more.
+
+## 4h. Background location (v1.53.0)
+
+- Confirm `AndroidManifest.xml` declares `ACCESS_BACKGROUND_LOCATION` and
+  `ParkingForegroundService.canStartLocationType()` returns true when it is
+  granted (not only when `MainActivity.isForeground()`), guarded to API 29+.
+  Without the second half the permission changes nothing: a boot/update restart
+  still comes up without the location type and gets zero fixes.
+- Confirm it is requested ONLY from the setup guide step
+  (`requestBackgroundLocation`), never from `#primeNativePermissions()` — on
+  Android 11+ the request navigates to Settings, which must not happen
+  unprompted at launch.
+- Confirm `OemSetupPlugin.status()` reports `backgroundLocationGranted` from a
+  real permission check, and `requestBackgroundLocation()` reports
+  `needsForeground` (surfaced as a toast) instead of silently doing nothing when
+  foreground location is missing.
 
 ## 4g. Bluetooth broadcasts actually arrive (v1.52.0)
 

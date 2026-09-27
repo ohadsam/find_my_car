@@ -36,6 +36,9 @@ export class OemSetup {
       oemBattery:  !!v?.oemBattery,
       recentsLock: !!v?.recentsLock,
       dismissed:   !!v?.dismissed,
+      // v1.53.0: the guide opens once more by itself for the new "allow all
+      // the time" step, even for users who dismissed it before that existed.
+      bgLocationOffered: !!v?.bgLocationOffered,
     };
   }
 
@@ -93,6 +96,21 @@ export class OemSetup {
         : 'נדרשת כדי לזהות שהרכב התרחק ממקום החניה.',
       action: s.locationGranted && s.locationPrecise ? null : 'openAppSettings',
       actionLabel: 'פתח הרשאות אפליקציה',
+    });
+    // "Allow all the time" (v1.53.0). Without it, a background start of the
+    // service — every reboot and every app update — gets no location fixes at
+    // all until the app is opened by hand, so drive-away detection is dead.
+    steps.push({
+      id: 'backgroundLocation',
+      kind: 'auto',
+      state: s.backgroundLocationGranted ? 'ok' : 'todo',
+      icon: '🛰️',
+      title: 'מיקום ברקע — "אפשר כל הזמן"',
+      desc: s.backgroundLocationGranted
+        ? 'זיהוי הנסיעה עובד גם כשהאפליקציה סגורה, גם אחרי הפעלה מחדש או עדכון.'
+        : 'בלי זה, אחרי הפעלה מחדש של הטלפון או עדכון, זיהוי הנסיעה כבוי עד שפותחים את האפליקציה. במסך שייפתח בחר "אפשר כל הזמן".',
+      action: s.backgroundLocationGranted ? null : 'requestBackgroundLocation',
+      actionLabel: 'אפשר מיקום כל הזמן',
     });
     steps.push({
       id: 'notifications',
@@ -163,6 +181,7 @@ export class OemSetup {
         openAutostart:   () => this.#plugin.openAutostart(),
         openOemBattery:  () => this.#plugin.openOemBattery(),
         openAppSettings: () => this.#plugin.openAppSettings(),
+        requestBackgroundLocation: () => this.#plugin.requestBackgroundLocation(),
       }[action];
       if (!fn) return null;
       const { result } = (await fn()) ?? {};
@@ -181,8 +200,14 @@ export class OemSetup {
    */
   static async shouldAutoShow() {
     if (!this.#plugin) return false;
-    if (this.getManual().dismissed) return false;
+    const manual = this.getManual();
     const steps = await this.buildSteps();
+    const bgTodo = steps.some(st => st.id === 'backgroundLocation' && st.state !== 'ok');
+    if (bgTodo && !manual.bgLocationOffered) {
+      this.setManual({ bgLocationOffered: true });
+      return true;
+    }
+    if (manual.dismissed) return false;
     return steps.some(st => st.state !== 'ok');
   }
 }

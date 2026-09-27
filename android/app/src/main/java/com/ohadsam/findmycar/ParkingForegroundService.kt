@@ -404,17 +404,21 @@ class ParkingForegroundService : Service() {
      * while foreground keeps delivering updates after the app is backgrounded,
      * which is the entire point.
      */
+    private fun hasBackgroundLocation(context: Context): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
     private fun canStartLocationType(): Boolean {
         // The eligibility rule arrived in Android 14; below that, a granted
         // location permission is enough.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
-        // ACCESS_BACKGROUND_LOCATION would make the app permanently eligible,
-        // but this app deliberately never declares it (see CLAUDE.md) — so it
-        // is not checked here: an undeclared permission can never be granted,
-        // and checking for it would be dead code implying an option the user
-        // does not actually have. Eligibility therefore reduces to: is the
-        // Activity genuinely visible right now.
-        return MainActivity.isForeground()
+        // ACCESS_BACKGROUND_LOCATION ("Allow all the time", declared since
+        // v1.53.0) makes the app permanently eligible — which is what lets a
+        // boot/update restart come up WITH the location type and receive fixes
+        // before the app is ever opened. Without it, eligibility reduces to:
+        // is the Activity genuinely visible right now.
+        return MainActivity.isForeground() || hasBackgroundLocation(this)
     }
 
     /**

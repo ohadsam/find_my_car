@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -57,6 +58,12 @@ class OemSetupPlugin : Plugin() {
         ret.put("locationGranted", granted(Manifest.permission.ACCESS_FINE_LOCATION) ||
             granted(Manifest.permission.ACCESS_COARSE_LOCATION))
         ret.put("locationPrecise", granted(Manifest.permission.ACCESS_FINE_LOCATION))
+        // "Allow all the time" — only a separate permission from API 29; below
+        // that, a granted foreground permission already covers the background.
+        ret.put("backgroundLocationGranted",
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            else granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION))
         // POST_NOTIFICATIONS only exists from API 33 — before that, notifications
         // are granted by default and there is nothing to request.
         ret.put("notificationsGranted",
@@ -106,6 +113,37 @@ class OemSetupPlugin : Plugin() {
         NativeLogStore.add(context, TAG, "PERM", "requested battery-optimization exemption → $ok")
         val ret = JSObject()
         ret.put("result", if (ok) OemSettingsIntents.RESULT_OPENED else OemSettingsIntents.RESULT_FAILED)
+        call.resolve(ret)
+    }
+
+    /**
+     * Asks for "Allow all the time". On Android 10 this is a dialog; from
+     * Android 11 the system never shows one — the same request opens the app's
+     * location-permission page in Settings, where the user picks it. Only
+     * meaningful once foreground location is granted (Android ignores it
+     * otherwise), so that is checked first and reported rather than silently
+     * doing nothing. The guide re-reads the real state when the app resumes.
+     */
+    @PluginMethod
+    fun requestBackgroundLocation(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: requestBackgroundLocation() called")
+        val ret = JSObject()
+        val act = activity
+        val result = when {
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q -> OemSettingsIntents.RESULT_OPENED
+            granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION) -> OemSettingsIntents.RESULT_OPENED
+            !granted(Manifest.permission.ACCESS_FINE_LOCATION) && !granted(Manifest.permission.ACCESS_COARSE_LOCATION) ->
+                "needsForeground"
+            act == null -> if (OemSettingsIntents.openAppSettings(context)) OemSettingsIntents.RESULT_FALLBACK else OemSettingsIntents.RESULT_FAILED
+            else -> try {
+                ActivityCompat.requestPermissions(act, arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 7301)
+                OemSettingsIntents.RESULT_OPENED
+            } catch (e: Exception) {
+                if (OemSettingsIntents.openAppSettings(context)) OemSettingsIntents.RESULT_FALLBACK else OemSettingsIntents.RESULT_FAILED
+            }
+        }
+        NativeLogStore.add(context, TAG, "PERM", "requested background location (\"allow all the time\") → $result")
+        ret.put("result", result)
         call.resolve(ret)
     }
 

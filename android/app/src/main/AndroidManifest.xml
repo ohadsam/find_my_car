@@ -150,6 +150,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- v1.53.0: "Allow all the time". Without it, location is a foreground-only
+         permission, and a foreground service started from the background (boot,
+         app update) never receives a single fix until the app is next opened —
+         a production log showed gpsFixes=0 for an entire day. Requested from the
+         setup guide, never on first launch (Android 11+ can only grant it in
+         Settings). -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
