@@ -1387,7 +1387,11 @@ class FindMyCarApp {
         // e.tag (e.g. "FMC-FgService") becomes DiagLog.log's `source` — the
         // formatted line already gets a "[FMC-FgService]" prefix from that,
         // so the message text itself no longer needs to repeat it.
-        DiagLog.log(e.category || 'SERVICE', e.message || '', null, e.timestamp || null, e.tag || 'native');
+        // Native lines carry no vehicle meta of their own; attribute one when
+        // exactly one vehicle is named in the message, so the vehicle filter
+        // and the "[🚗 name]" tag work for them too.
+        DiagLog.log(e.category || 'SERVICE', e.message || '', this.#vehicleMetaFor(e.message || ''),
+          e.timestamp || null, e.tag || 'native');
       }
       await WidgetBridge.clearNativeLog();
     } finally {
@@ -2689,11 +2693,27 @@ class FindMyCarApp {
     this.#reconcileNativeLog().then(() => this.#refreshDiagLogView()).catch(() => {});
   }
 
+  // Everything a log line can name a vehicle by: its name, and the Bluetooth
+  // device linked to it (native lines only know the device label).
+  #vehicleMentions(v, message) {
+    if (!message) return false;
+    return message.includes(v.name) || (!!v.bluetoothDevice && message.includes(v.bluetoothDevice));
+  }
+
+  #vehicleMetaFor(message) {
+    const hits = this.#state.vehicles.filter(v => this.#vehicleMentions(v, message));
+    return hits.length === 1 ? { vehicleName: hits[0].name, vehicleIcon: hits[0].icon } : null;
+  }
+
   #filteredDiagLogEntries() {
     const vehicleName = Utils.el('diagLogVehicleFilter')?.value || '';
     const category     = Utils.el('diagLogCategoryFilter')?.value || '';
+    const v = vehicleName ? this.#state.vehicles.find(x => x.name === vehicleName) : null;
     return DiagLog.getAll()
-      .filter(e => !vehicleName || e.vehicleName === vehicleName)
+      // A line belongs to a vehicle if it was tagged with it OR names it (or
+      // its Bluetooth device) — most lines, all native ones included, were
+      // never tagged, which is why the filter used to show an empty log.
+      .filter(e => !vehicleName || e.vehicleName === vehicleName || (v && this.#vehicleMentions(v, e.message)))
       .filter(e => !category || e.category === category)
       // By event time, not insertion order: native entries are merged in
       // whenever the app next resumes, which can be long after they happened.

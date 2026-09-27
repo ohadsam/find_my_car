@@ -575,6 +575,29 @@ step broken or skipped:
   (JS `syncVehicles/update/clear`, `WidgetMirror`, `NativeGeocoder`), and that no
   code posts the old untagged id-4202 notification any more.
 
+## 4g. Bluetooth broadcasts actually arrive (v1.52.0)
+
+- Confirm `ParkingForegroundService.registerBtReceiver()` registers with
+  `ContextCompat.RECEIVER_EXPORTED`, NOT `RECEIVER_NOT_EXPORTED`. With NOT_EXPORTED,
+  Android 14 drops every `ACL_CONNECTED`/`ACL_DISCONNECTED` (sent by the Bluetooth
+  app, uid 1002) while still delivering `ACTION_STATE_CHANGED` (system_server) —
+  background Bluetooth detection silently never works. This one flag was the root
+  cause of every "Bluetooth does nothing until I open the app" report.
+- Confirm `pollBtConnections()` runs from the heartbeat receiver and at receiver
+  registration, runs off the main thread, skips a `null` answer from
+  `BtConnectedDevices.labels()`, compares only with its own previous poll, and
+  skips transitions already reported by an ACL broadcast since the last poll.
+- Confirm both the broadcast and the poll go through `handleBtTransition()` — one
+  path for BtEventBus, `BtPendingActionRecorder.maybeRecord` and `WalkAwayDetector`.
+- Confirm `BtPendingActionRecorder.maybeRecord()` logs a `BT-PENDING` line for
+  every decline (including "app is open") — a silent return is indistinguishable
+  from the event never arriving.
+- Confirm `NativeLogStore` trims through `NativeLogRetention.trim` (heartbeats
+  capped separately) and `js/diag-log.js`'s `#prune` caps heartbeats too, and that
+  `NativeLogRetentionTest` passes in CI.
+- Confirm the diagnostic-log vehicle filter matches lines that name the vehicle or
+  its `bluetoothDevice`, not only lines tagged with `vehicleName`.
+
 ## 4c. Queued widget saves (v1.48.0)
 
 - Confirm `WidgetActionReceiver.queueForReplay()` records

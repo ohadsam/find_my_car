@@ -56,11 +56,32 @@ object BtPendingActionRecorder {
             // Real log: disconnect handled 20+ minutes late, one second after
             // the user opened the app, saving the parking where they were
             // standing rather than where the car was.
-            if (MainActivity.isForeground()) return // live path genuinely handles it
+            val dir = if (connected) "connect" else "disconnect"
+            if (MainActivity.isForeground()) { // live path genuinely handles it
+                NativeLogStore.add(context, TAG, "BT-PENDING", "Bluetooth $dir from $label — app is open, handled in-app")
+                return
+            }
             val json = context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
                 .getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]"
             val vehicles = VehicleJsonParser.parse(json)
             val hasParking: (String) -> Boolean = { id -> vehicles.find { it.id == id }?.hasParking ?: false }
+            // Every decline is logged with its reason — a silent return reads,
+            // in the log, exactly like the event never arriving (v1.52.0).
+            val linked = vehicles.filter { it.bluetoothDevice == label }
+            if (linked.isEmpty()) {
+                NativeLogStore.add(context, TAG, "BT-PENDING", "Bluetooth $dir from $label — no vehicle is linked to this device")
+            }
+            for (v in linked) {
+                val why = when {
+                    connected && !v.hasParking -> "no active parking to end"
+                    !connected && v.hasParking -> "already has an active parking"
+                    !connected && !v.bluetoothAutoStart && !v.walkAwaySuggest ->
+                        "auto-start and the on-disconnect suggestion are both off"
+                    !connected && !v.bluetoothAutoStart -> "auto-start is off — the on-disconnect suggestion handles it"
+                    else -> null
+                }
+                if (why != null) NativeLogStore.add(context, TAG, "BT-PENDING", "Bluetooth $dir from $label — ${v.name}: $why")
+            }
 
             if (connected) {
                 // #btEndParking (js/app.js) just moves the EXISTING parking

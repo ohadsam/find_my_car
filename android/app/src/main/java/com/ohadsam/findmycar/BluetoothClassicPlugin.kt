@@ -2,7 +2,6 @@ package com.ohadsam.findmycar
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -21,8 +20,6 @@ import com.ohadsam.findmycar.core.BtDecisionEngine
 import com.ohadsam.findmycar.core.BtShadowFormatter
 import com.ohadsam.findmycar.core.PendingBtActionJson
 import com.ohadsam.findmycar.core.VehicleJsonParser
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /**
  * Drop-in native replacement for the web BluetoothController (js/bluetooth.js)
@@ -177,12 +174,12 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
             BtEventBus.addListener(this)
             ParkingForegroundService.setReasonActive(context, "bluetooth", true)
             // Seed prevLabels with currently-connected devices. This scan
-            // (connectedDeviceLabels()) can take up to ~1.5s waiting on the
+            // (BtConnectedDevices.labels()) can take up to ~1.5s waiting on the
             // async profile-proxy callbacks, and BtEventBus.addListener()
             // above is already active — so a real ACL event can land on the
             // main thread while this runs on the plugin's background thread.
             // Merge instead of overwrite so that event isn't lost.
-            val seeded = connectedDeviceLabels()
+            val seeded = BtConnectedDevices.labels(context) ?: emptySet()
             synchronized(labelsLock) { prevLabels = (prevLabels + seeded).toMutableSet() }
         }
         call.resolve()
@@ -203,7 +200,10 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
     fun checkNow(call: PluginCall) {
         NativeLogStore.add(context, TAG, "BRIDGE", "← JS: checkNow() called")
         if (!watching) { call.resolve(); return }
-        val current = connectedDeviceLabels()
+        // Unknown (a profile service did not answer) is not "nothing
+        // connected" — diffing it would emit a false disconnect for every
+        // tracked device.
+        val current = BtConnectedDevices.labels(context) ?: run { call.resolve(); return }
         val prev = synchronized(labelsLock) { prevLabels.toSet() }
         for (label in current) if (!prev.contains(label)) emitAndTrack(label, connected = true)
         for (label in prev) if (!current.contains(label)) emitAndTrack(label, connected = false)
@@ -314,31 +314,5 @@ class BluetoothClassicPlugin : Plugin(), BtEventBus.Listener {
         // next open the app instead of where the car is. See CLAUDE.md.
         val data = JSObject(); data.put("label", label); data.put("at", System.currentTimeMillis())
         notifyListeners(eventName, data)
-    }
-
-    /** Currently-connected classic audio devices (A2DP/HFP), the car-BT use case. */
-    private fun connectedDeviceLabels(): MutableSet<String> {
-        val labels = mutableSetOf<String>()
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return labels
-        val profiles = intArrayOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET)
-        val latch = CountDownLatch(profiles.size)
-        for (profile in profiles) {
-            adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
-                override fun onServiceConnected(p: Int, proxy: BluetoothProfile) {
-                    try {
-                        proxy.connectedDevices.forEach { d ->
-                            d.name?.let { synchronized(labels) { labels.add(it) } }
-                        }
-                    } catch (e: SecurityException) {
-                        // Missing permission — leave labels as-is for this profile.
-                    }
-                    adapter.closeProfileProxy(p, proxy)
-                    latch.countDown()
-                }
-                override fun onServiceDisconnected(p: Int) { latch.countDown() }
-            }, profile)
-        }
-        try { latch.await(1500, TimeUnit.MILLISECONDS) } catch (e: InterruptedException) { /* use what we have */ }
-        return labels
     }
 }

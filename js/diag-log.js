@@ -6,6 +6,9 @@ import { Store } from './store.js';
 const KEY = 'findmycar_diag_log_v1';
 const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 const MAX_ENTRIES = 800; // hard cap so a noisy loop can't grow this unbounded
+// Heartbeats (web + native, every 5 min each) are ~580 lines a day — without
+// their own allowance they pushed every real event out of the log (v1.52.0).
+const MAX_HEARTBEATS = 150;
 
 // In-app diagnostic log for Bluetooth/GPS/notification background events —
 // added because none of that is otherwise observable without a connected
@@ -72,6 +75,15 @@ export class DiagLog {
 
   static #prune(entries) {
     const cutoff = Date.now() - MAX_AGE_MS;
-    return Array.isArray(entries) ? entries.filter(e => e && e.t >= cutoff) : [];
+    const fresh = Array.isArray(entries) ? entries.filter(e => e && e.t >= cutoff) : [];
+    // Drop only the oldest HEARTBEATS beyond their allowance; order is kept.
+    let dropBeats = fresh.filter(DiagLog.isHeartbeat).length - MAX_HEARTBEATS;
+    return dropBeats > 0
+      ? fresh.filter(e => !(DiagLog.isHeartbeat(e) && dropBeats-- > 0))
+      : fresh;
+  }
+
+  static isHeartbeat(e) {
+    return typeof e?.message === 'string' && e.message.startsWith('heartbeat');
   }
 }

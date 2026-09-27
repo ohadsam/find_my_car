@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.51.0',
+  version: '1.52.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -88,6 +88,17 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.52.0',
+      date: '2026-09-27',
+      items: Object.freeze([
+        'תוקן: חיבור וניתוק Bluetooth לא זוהו כשהאפליקציה סגורה — Android חסם את ההודעות האלה. עכשיו הן מגיעות ברגע האירוע, לכל הרכבים',
+        'רשת ביטחון: השירות ברקע בודק גם כל כמה דקות אילו מכשירי Bluetooth מחוברים, כך שאירוע שהוחמץ יזוהה באיחור קטן במקום לא להיות מזוהה בכלל',
+        'יומן האבחון: סינון לפי רכב מציג עכשיו את כל השורות שמזכירות את הרכב או את מכשיר ה-Bluetooth שלו, כולל שורות מהשירות ברקע',
+        'יומן האבחון: שורות "heartbeat" כבר לא דוחקות החוצה אירועים חשובים',
+        'כל התעלמות מאירוע Bluetooth נרשמת ביומן עם הסיבה (למשל: אין רכב מקושר, כבר יש חניה, שמירה אוטומטית כבויה)',
+      ]),
+    }),
     Object.freeze({
       version: '1.51.0',
       date: '2026-09-25',
