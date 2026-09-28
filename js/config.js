@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.53.0',
+  version: '1.54.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -88,6 +88,14 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.54.0',
+      date: '2026-09-28',
+      items: Object.freeze([
+        'אפשר לשחזר חניה מההיסטוריה בטעות בוטלה (פרטי חניה → "שחזר חניה"), אם אין כרגע חניה פעילה לרכב',
+        'בשחזור בוחרים אם לשמור את התאריך והשעה המקוריים — כך שהטיימר ממשיך לרוץ כאילו החניה מעולם לא הסתיימה — או להתחיל מהרגע הנוכחי',
+      ]),
+    }),
     Object.freeze({
       version: '1.53.0',
       date: '2026-09-27',

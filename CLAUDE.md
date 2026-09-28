@@ -182,6 +182,8 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | `#updateBtBadge()` | Update BT settings button badge (count of linked vehicles) |
 | `#exportData()` | Serialize `Store.exportAll()` to a backup JSON file — browser download, or native Share sheet via `@capacitor/filesystem`+`@capacitor/share` |
 | `#importData(file)` | Confirm → `Store.importAll()` from a picked backup file → reload |
+| `#openRestoreConfirm()` | Opens `restoreParkingModal` for the history item in `detailModal` (v1.54.0) — refuses (toast) if the vehicle already has an active parking |
+| `#restoreFromHistory(keepOriginalTime)` | Moves that history item back to `current` — re-checks the "no active parking" guard, then either keeps the original `timestamp` (the elapsed timer just keeps reading it, so it continues as if never ended) or stamps `now()`. See "Restoring a parking from history" below |
 
 ### `js/ui.js` — `UIController`
 
@@ -205,6 +207,39 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 |--------|-------------|
 | `reverseGeocode(lat, lng)` | Fetch Nominatim → `AddressObj \| null` |
 | `normalizeAddress(addr)` | `AddressObj \| string` → display string |
+
+### Restoring a parking from history (v1.54.0)
+
+For the common "I ended it by mistake" case. The history detail modal's "↩️
+שחזר חניה" button opens `restoreParkingModal` — a required choice, never a
+silent default — for what to do with the parking's timestamp:
+
+- **Keep the original time**: `current.timestamp` is set back to the history
+  item's own `timestamp`. Nothing else has to change — `Utils.formatElapsed()`
+  and the running timer (`#startTimer()`) both already just read
+  `current.timestamp`, so the "לפני ..." display picks up exactly where it
+  left off, as if the parking had never ended. There is no separate "resume"
+  code path to get wrong.
+- **Start from now**: `current.timestamp` becomes `new Date().toISOString()`,
+  identical to a fresh `#saveNewParking()`.
+
+Everything else (location, address, photo, voice, description) is restored
+verbatim. `btEndDevice`/`btEndTime` are cleared — the parking is active again,
+so "ended via Bluetooth" would be a stale, misleading label next to a running
+timer; `btStartDevice` stays, since how it began is still true.
+
+**Guarded, not merged**: restoring refuses (a toast, not a silent no-op) when
+the vehicle already has an active parking — restoring is not a swap. The guard
+is re-checked at confirm time too (not only when the button is first tapped),
+since a widget tap or a Bluetooth auto-start could start a new parking while
+the confirmation modal is sitting open.
+
+**JS-only, both channels identically** — this is in-app history browsing, the
+one category CLAUDE.md's native-migration section explicitly keeps out of
+native (photos, voice, description, history browsing all stay JS-only). It
+runs through the same `VehicleController.setCurrent`/`setHistory` + `#syncUI()`
+path every other parking-state change does, so the widgets/native mirror pick
+it up for free — no new native code needed.
 
 ## Styling Conventions
 
@@ -2174,6 +2209,10 @@ round-trip, before the next stage builds on it.
 - [ ] View history items
 - [ ] Open detail modal with photo/audio
 - [ ] Delete history item
+- [ ] **Restore from history (v1.54.0): with no active parking, open a history item's detail and tap "↩️ שחזר חניה", choose "שמור את הזמן המקורי" — the parking becomes active again, moves out of history, and the "לפני ..." timer shows elapsed time counted from the ORIGINAL timestamp (e.g. "לפני 3 שעות"), not from now**
+- [ ] Restore from history: same, but choose "התחל מעכשיו" — the timer starts at "לפני 0 שניות"
+- [ ] Restore from history: with an active parking already, "↩️ שחזר חניה" refuses with a toast instead of opening the confirm modal, and the history item is untouched
+- [ ] Restore from history: photo/voice/description/address on the restored parking are unchanged; a "הסתיים ב-Bluetooth" detail from before restoring no longer shows (it's active again)
 - [ ] Clear all history
 - [ ] Dark/light theme toggle
 - [ ] Install PWA banner
