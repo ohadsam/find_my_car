@@ -414,6 +414,9 @@ class FindMyCarApp {
 
     Utils.el('detailNavBtn')?.addEventListener('click',    () => this.#navFromDetail());
     Utils.el('detailDeleteBtn')?.addEventListener('click', () => this.#deleteFromDetail());
+    Utils.el('detailRestoreBtn')?.addEventListener('click',   () => this.#openRestoreConfirm());
+    Utils.el('restoreKeepTimeBtn')?.addEventListener('click', () => this.#restoreFromHistory(true));
+    Utils.el('restoreNowBtn')?.addEventListener('click',      () => this.#restoreFromHistory(false));
 
     Utils.el('openWazeBtn')?.addEventListener('click',       () => this.#navOpen('waze'));
     Utils.el('openGoogleMapsBtn')?.addEventListener('click', () => this.#navOpen('google'));
@@ -2429,6 +2432,79 @@ class FindMyCarApp {
     const id = this.#state.detailItemId;
     this.#closeModal('detailModal');
     if (id) this.#deleteHistoryItem(id);
+  }
+
+  // ── RESTORE FROM HISTORY ─────────────────────────────────────
+  // For an accidental "סיים חניה" — moves a history item back to being the
+  // active parking for this vehicle. Never picks a timestamp on its own: the
+  // choice (keep the original time, or start counting from now) always goes
+  // through restoreParkingModal, never silently defaults.
+  #openRestoreConfirm() {
+    const id = this.#state.detailItemId;
+    if (!id) return;
+    if (this.#state.current) {
+      this.#ui.showToast('יש כבר חניה פעילה לרכב זה — סיים אותה כדי לשחזר חניה מההיסטוריה', 'warning');
+      return;
+    }
+    const item = this.#state.history.find(h => h.id === id);
+    if (!item) return;
+    this.#closeModal('detailModal');
+    const desc = Utils.el('restoreParkingDesc');
+    if (desc) {
+      desc.textContent = `נשמרה במקור ב-${Utils.formatDate(item.timestamp)}, ${Utils.formatTime(item.timestamp)}`;
+    }
+    this.#ui.openModal('restoreParkingModal');
+  }
+
+  // @param keepOriginalTime true → the restored parking keeps its original
+  //   timestamp, so the elapsed-time display picks up exactly where it left
+  //   off, as if it had never been ended (Utils.formatElapsed/the timer both
+  //   just read `current.timestamp` — no separate "resume" logic needed).
+  //   false → the parking starts fresh from now, like a brand-new save.
+  #restoreFromHistory(keepOriginalTime) {
+    const id = this.#state.detailItemId;
+    this.#closeModal('restoreParkingModal');
+    if (!id) return;
+    // Re-checked: a parking may have been started (e.g. from a widget) while
+    // this confirmation was open.
+    if (this.#state.current) {
+      this.#ui.showToast('יש כבר חניה פעילה לרכב זה — סיים אותה כדי לשחזר חניה מההיסטוריה', 'warning');
+      return;
+    }
+    const idx = this.#state.history.findIndex(h => h.id === id);
+    if (idx === -1) return;
+    const item = this.#state.history[idx];
+
+    const parking = {
+      ...item,
+      timestamp: keepOriginalTime ? item.timestamp : new Date().toISOString(),
+      // This parking is active again — a stale "ended via Bluetooth" note
+      // would be misleading next to a running elapsed timer. btStartDevice
+      // stays: it's still true that this is how the parking began.
+      btEndDevice: null,
+      btEndTime:   null,
+    };
+
+    this.#state.history = this.#state.history.filter(h => h.id !== id);
+    VehicleController.setHistory(this.#state.activeVehicleId, this.#state.history);
+
+    this.#state.current = parking;
+    this.#resetGpsDetection();
+    VehicleController.setCurrent(this.#state.activeVehicleId, parking);
+
+    this.#map.addParkingMarker(parking.location.lat, parking.location.lng, parking.address);
+    this.#map.flyTo(parking.location.lat, parking.location.lng, 17);
+    this.#syncUI();
+    this.#startTimer();
+    this.#acquireWakeLock();
+    this.#showParkingNotification(parking);
+    this.#ui.showToast(
+      keepOriginalTime ? '↩️ החניה שוחזרה עם הזמן המקורי' : '↩️ החניה שוחזרה',
+      'success',
+    );
+    // Defensive only — a history item almost always already has its address
+    // resolved; #resolveAddress no-ops immediately if so.
+    this.#resolveAddress(this.#state.activeVehicleId, parking.id).catch(() => {});
   }
 
   // ── MODALS ────────────────────────────────────────────────────

@@ -1197,6 +1197,13 @@ audio { width: 100%; }
 }
 .modal-footer > * { flex: 1; }
 
+/* Detail modal footer: the restore action gets its own row, delete/nav share the next */
+.detail-modal-footer { flex-wrap: wrap; }
+.detail-modal-footer .detail-restore-btn { flex-basis: 100%; }
+
+/* Restore-confirm footer: three stacked choices read better than a cramped row */
+.restore-parking-footer { flex-direction: column; }
+
 /* Modal buttons */
 .modal-btn {
   padding: 13px 16px;

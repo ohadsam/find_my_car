@@ -602,9 +602,29 @@
       <div class="modal-body detail-modal-body" id="detailModalContent">
         <!-- Injected by JS -->
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer detail-modal-footer">
+        <button class="modal-btn secondary detail-restore-btn" id="detailRestoreBtn">↩️ שחזר חניה</button>
         <button class="modal-btn secondary" id="detailDeleteBtn">🗑️ מחק</button>
         <button class="modal-btn primary" id="detailNavBtn">🧭 נווט</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RESTORE PARKING MODAL ── -->
+  <div id="restoreParkingModal" class="modal" role="dialog" aria-modal="true" aria-label="שחזור חניה" style="display:none;">
+    <div class="modal-backdrop" data-close="restoreParkingModal"></div>
+    <div class="modal-sheet modal-sheet-alert">
+      <div class="modal-handle"></div>
+      <div class="modal-body alert-body">
+        <div class="alert-icon">↩️</div>
+        <h3 class="alert-title">לשחזר את החניה?</h3>
+        <p class="alert-desc" id="restoreParkingDesc">החניה תחזור להיות פעילה.</p>
+        <p class="alert-desc">מה לעשות עם תאריך ושעת החניה?</p>
+      </div>
+      <div class="modal-footer restore-parking-footer">
+        <button class="modal-btn secondary" data-close="restoreParkingModal">ביטול</button>
+        <button class="modal-btn primary" id="restoreKeepTimeBtn">🕐 שמור את הזמן המקורי</button>
+        <button class="modal-btn success" id="restoreNowBtn">🆕 התחל מעכשיו</button>
       </div>
     </div>
   </div>
