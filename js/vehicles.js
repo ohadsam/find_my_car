@@ -75,6 +75,7 @@ export const VehicleController = {
       bluetoothAutoStart:  false,
       bluetoothStartPopup: true,
       walkAwaySuggest:     false,  // opt-in: a new suggestion category is never sprung on existing users
+      walkAwayAuto:        false,  // opt-in, on top of walkAwaySuggest: save by itself once walking away is confirmed
       ...vehicles[idx],
       ...updates,
     };

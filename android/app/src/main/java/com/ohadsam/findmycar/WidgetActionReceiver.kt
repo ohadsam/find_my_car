@@ -252,7 +252,12 @@ class WidgetActionReceiver : BroadcastReceiver() {
                     done(context, v.label, "כבר קיימת חניה פעילה — ${v.label}", notify = false)
                     return true
                 }
-                NativeParkingCommitter.commitStart(context, s.vehicleId, lat, lng, null, "walkAway", btDevice = s.label.ifBlank { null })
+                // Timed at the moment the car stopped, not at the tap: the elapsed
+                // timer should count from when it was parked.
+                NativeParkingCommitter.commitStart(
+                    context, s.vehicleId, lat, lng, null, "walkAway",
+                    btDevice = s.label.ifBlank { null }, at = s.timestamp.coerceAtMost(now),
+                )
                 PendingParkingSuggestionStore.clear(context)
                 WalkAwayDetector.closeWindow(context, "parking saved from the notification")
                 done(context, v.label, "🅿️ חניה נשמרה — ${v.label}", notify = true)

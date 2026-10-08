@@ -148,11 +148,18 @@
           <div class="empty-state-icon">🅿️</div>
           <h2 class="empty-state-title">אין חניה שמורה</h2>
           <p class="empty-state-desc">לחץ על הכפתור כדי לשמור את מיקום הרכב שלך עם GPS מדויק</p>
+          <!-- Shown when Bluetooth last disconnected (or the car was last seen stopping)
+               at a spot the notification asked about and nobody answered. -->
+          <div class="disconnect-spot-card" id="disconnectSpotCard" style="display:none;">
+            <div class="disconnect-spot-title" id="disconnectSpotTitle"></div>
+            <div class="disconnect-spot-sub" id="disconnectSpotSub"></div>
+            <button class="disconnect-spot-btn" id="saveDisconnectSpotBtn">📍 שמור חניה ממיקום הניתוק</button>
+          </div>
           <button class="primary-cta" id="saveFirstParkingBtn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13S5 14 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/>
             </svg>
-            <span>שמור חניה עכשיו</span>
+            <span id="saveFirstParkingText">שמור חניה עכשיו</span>
           </button>
         </div>
 
@@ -917,9 +924,10 @@
         <p class="alert-desc" id="walkAwaySubtitle">התנתקת מהרכב — לשמור את החניה כאן?</p>
         <p class="alert-desc">המיקום יישמר מהרגע שבו התנתק ה-Bluetooth, לא מהמקום שבו אתה עכשיו.</p>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer walk-away-footer">
+        <button class="modal-btn success" id="walkAwayConfirmBtn">שמור במקום הניתוק 🅿️</button>
+        <button class="modal-btn secondary" id="walkAwayHereBtn">שמור במיקום הנוכחי 📍</button>
         <button class="modal-btn secondary" id="walkAwayDismissBtn">לא עכשיו</button>
-        <button class="modal-btn success" id="walkAwayConfirmBtn">שמור חניה 🅿️</button>
       </div>
     </div>
   </div>

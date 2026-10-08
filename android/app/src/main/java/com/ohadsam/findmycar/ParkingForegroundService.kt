@@ -29,12 +29,12 @@ import com.ohadsam.findmycar.core.GpsDecisionEngine
 import com.ohadsam.findmycar.core.GpsDecisionState
 import com.ohadsam.findmycar.core.GpsMath
 import com.ohadsam.findmycar.core.NearSeen
+import com.ohadsam.findmycar.core.ParkSpotDecision
+import com.ohadsam.findmycar.core.ParkSpotState
+import com.ohadsam.findmycar.core.ParkSpotTracker
 import com.ohadsam.findmycar.core.ParkedSpot
 import com.ohadsam.findmycar.core.PendingGpsSuggestion
 import com.ohadsam.findmycar.core.VehicleJsonParser
-import com.ohadsam.findmycar.core.WalkAwayDecision
-import com.ohadsam.findmycar.core.WalkAwayEngine
-import com.ohadsam.findmycar.core.WalkAwayState
 import com.ohadsam.findmycar.widgets.ParkedVehicles
 import com.ohadsam.findmycar.widgets.WidgetStatusRefresher
 import java.lang.ref.WeakReference
@@ -79,18 +79,6 @@ class ParkingForegroundService : Service() {
         // vehicles a drive belongs to. Native-only: the PWA path picks the
         // nearest parked car instead (it has no background fixes to record).
         private const val GPS_NEAR_CAR_RADIUS_M = 150.0
-        // Walk-away detection thresholds, mirroring js/config.js's
-        // CFG.walkMinSpeed/walkMaxSpeed/walkAbortSpeed/walkRequiredMs/
-        // walkMinDisplacement/walkWindowMs — same hand-kept JS<->Kotlin parity
-        // as the GPS constants above (see CLAUDE.md "Walk-away parking
-        // suggestion").
-        private const val WALK_MIN_SPEED_MPS = 0.5
-        private const val WALK_MAX_SPEED_MPS = 3.0
-        private const val WALK_ABORT_SPEED_MPS = 6.0
-        private const val WALK_REQUIRED_MS = 8_000L
-        private const val WALK_MIN_DISPLACEMENT_M = 30.0
-        private const val WALK_WINDOW_MS = 600_000L
-
         private const val LOCATION_MIN_TIME_MS = 3000L
         private const val LOCATION_MIN_DISTANCE_M = 5f
 
@@ -256,9 +244,9 @@ class ParkingForegroundService : Service() {
     private var gpsLastVehicleSpeedAt: Long? = null
     private var gpsNearSeen: Map<String, NearSeen> = emptyMap()
     private var gpsKnownParkingKeys: Set<String> = emptySet()
-    private var walkAwayState = WalkAwayState()
-    // The window the current walkAwayState belongs to, so a NEW disconnect
-    // (a different window) resets the accumulator instead of inheriting the
+    private var parkSpotState = ParkSpotState()
+    // The window the current parkSpotState belongs to, so a NEW disconnect
+    // (a different window) resets the tracker instead of inheriting the
     // previous one's progress.
     private var walkAwayWindowAt: Long? = null
 
@@ -698,6 +686,9 @@ class ParkingForegroundService : Service() {
                 recordHeartbeatAt()
                 scheduleNextHeartbeat()
                 if (this@ParkingForegroundService.receiver != null) pollBtConnections("heartbeat")
+                // A window whose location fixes stopped arriving (indoors) is
+                // never closed by the per-fix expiry; this is the backstop.
+                try { WalkAwayDetector.expireStale(ctx) } catch (e: Exception) { /* best effort */ }
             }
         }
         ContextCompat.registerReceiver(this, receiver, IntentFilter(ACTION_HEARTBEAT), ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -833,7 +824,7 @@ class ParkingForegroundService : Service() {
             BtPendingActionRecorder.maybeRecord(context, label, connected = true)
             // Reconnected — they got back in, so there is nothing left to ask
             // about the spot they walked away from.
-            WalkAwayDetector.cancelOnReconnect(context)
+            WalkAwayDetector.cancelOnReconnect(context, label)
         } else {
             BtEventBus.emitDisconnected(label)
             BtPendingActionRecorder.maybeRecord(context, label, connected = false)
@@ -1121,64 +1112,55 @@ class ParkingForegroundService : Service() {
     }
 
     /**
-     * Feeds WalkAwayEngine while a disconnect window is open. The suggestion
-     * itself already fired at disconnect time (WalkAwayDetector.maybeOpenWindow)
-     * — this only decides whether to take it back: SuggestStart (confirmed
-     * walking) means the question was the right one to ask and needs no action;
-     * Abort (still moving like a vehicle, or the window ran out) withdraws it.
-     * Runs off the same location fixes as the GPS end-suggestion above — a
-     * parking session and a walk-away window are mutually exclusive in practice
-     * (the window only opens for a vehicle with no active parking), but nothing
-     * here assumes it.
+     * Feeds ParkSpotTracker while a disconnect window is open. The question
+     * itself was asked at disconnect time (WalkAwayDetector.maybeOpenWindow);
+     * this decides what to do as the phone moves:
+     *  - first vehicle-speed sample: the link dropped mid-drive, so the spot
+     *    is void — withdraw the question but KEEP watching for where the car
+     *    stops (retract);
+     *  - walked away from a stopping point: confirm it, save it automatically
+     *    for vehicles that opted in, or ask again at the real spot (onParked);
+     *  - nothing conclusive in time: take the question back (giveUp).
+     * Runs off the same location fixes as the GPS end-suggestion — a parking
+     * session and a window are mutually exclusive in practice (a window only
+     * opens for a vehicle with no active parking), but nothing assumes it.
      */
     private fun runWalkAwayCheck(location: Location, speed: Double?, now: Long) {
         try {
             var window = PendingParkingSuggestionStore.getWindow(this) ?: return
 
-            // A different disconnect than the one the accumulator belongs to:
-            // start counting from scratch rather than inheriting its progress.
+            // A different disconnect than the one the tracker belongs to:
+            // start from scratch rather than inheriting its progress.
             if (walkAwayWindowAt != window.disconnectedAt) {
                 walkAwayWindowAt = window.disconnectedAt
-                walkAwayState = WalkAwayState()
+                parkSpotState = ParkSpotState()
             }
 
             // The parking spot is the position at the DISCONNECT, not wherever
             // the user is when they later tap "save". Every update is offered
             // to the window; WalkAwayDetector/DisconnectFixPolicy adopt only
             // the first good one right after the disconnect (the user is still
-            // at the car), or fill in when no recent cached fix existed.
-            window = WalkAwayDetector.recordSpotFromUpdate(
-                this, window, location.latitude, location.longitude, location.accuracy, now,
-            )
+            // at the car), or fill in when no recent cached fix existed. Once
+            // the car has been seen moving that spot is void and nothing more
+            // is adopted.
+            if (!parkSpotState.sawVehicle) {
+                window = WalkAwayDetector.recordSpotFromUpdate(
+                    this, window, location.latitude, location.longitude, location.accuracy, now,
+                )
+            }
 
-            // Still no spot (no recent cache, and no update arrived inside the
-            // window): "save" will refuse rather than guess. Retraction must
-            // still work, though — a car seen driving off should withdraw the
-            // question — and it only needs speed, so displacement is 0 here.
-            val originLat = window.lat
-            val originLng = window.lng
-            val moved = if (originLat != null && originLng != null) {
-                GpsMath.distanceMeters(location.latitude, location.longitude, originLat, originLng)
-            } else 0.0
-            val (next, decision) = WalkAwayEngine.check(
-                walkAwayState, speed, moved, window.disconnectedAt,
-                WALK_MIN_SPEED_MPS, WALK_MAX_SPEED_MPS, WALK_ABORT_SPEED_MPS,
-                WALK_REQUIRED_MS, WALK_MIN_DISPLACEMENT_M, WALK_WINDOW_MS,
-                GPS_SPEED_SAMPLE_CAP_MS, now,
+            val (next, decision) = ParkSpotTracker.check(
+                parkSpotState, location.latitude, location.longitude, speed,
+                window.lat, window.lng, window.disconnectedAt, now,
             )
-            walkAwayState = next
+            parkSpotState = next
 
             when (decision) {
-                is WalkAwayDecision.SuggestStart ->
-                    // The suggestion already fired at disconnect time — this
-                    // only confirms it was the right call. Nothing left to do
-                    // but stop watching.
-                    WalkAwayDetector.closeWindow(this, "walking confirmed — suggestion already showing")
-                is WalkAwayDecision.Abort -> WalkAwayDetector.abort(
-                    this, window,
-                    if (now - window.disconnectedAt >= WALK_WINDOW_MS) "window expired"
-                    else "still moving at vehicle speed — the car did not stop here",
+                is ParkSpotDecision.Retract -> WalkAwayDetector.retract(
+                    this, window, "still moving at vehicle speed — the car did not stop here",
                 )
+                is ParkSpotDecision.Parked -> WalkAwayDetector.onParked(this, window, decision)
+                is ParkSpotDecision.GiveUp -> WalkAwayDetector.giveUp(this, window, "window expired")
                 null -> Unit
             }
         } catch (e: Exception) {

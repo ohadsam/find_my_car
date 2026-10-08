@@ -591,6 +591,32 @@ step broken or skipped:
   `needsForeground` (surfaced as a toast) instead of silently doing nothing when
   foreground location is missing.
 
+## 4j. Smart parking-spot tracking, auto-save and the remembered spot (v1.56.0)
+
+- Confirm `ParkingForegroundService.runWalkAwayCheck()` feeds `ParkSpotTracker`
+  (not `WalkAwayEngine`) and dispatches `Retract` → `WalkAwayDetector.retract`
+  (window stays OPEN — closing it is the bug that lost mid-drive parkings),
+  `Parked` → `onParked`, `GiveUp` → `giveUp`. `recordSpotFromUpdate` must be
+  skipped once `sawVehicle` (a void spot must never be re-adopted).
+- Confirm `giveUp` (expiry) does NOT remove the `DisconnectSpotStore` entry —
+  keeping it is the whole point — while `retract`, `cancelOnReconnect`
+  (`removeByLabel`), `NativeParkingCommitter.commitStart` and a new disconnect
+  DO remove/replace it.
+- Confirm auto-save is gated on `NativeVehicle.walkAwayAuto` AND only follows
+  `ParkSpotDecision.Parked` (confirmed walking) — never saved on disconnect alone —
+  and that its notification carries a "בטל" (`end`) action.
+- Confirm `ParkSpotTrackerTest` and `DisconnectSpotJsonTest` pass in CI, including
+  the "crawling in a jam never reads as parking" case.
+- Confirm `js/widget-bridge.js` mirrors `walkAwayAuto` in `syncVehicles()` and
+  `getDisconnectSpots`/`clearDisconnectSpot` call the plugin methods of the same
+  name; `index.html` has `disconnectSpotCard`, `saveDisconnectSpotBtn`,
+  `walkAwayHereBtn`.
+- Confirm `#renderDisconnectSpot` runs from `#syncUI` and forgets the spot (JS
+  cache + native) once the active vehicle has a parking; and that saving from a
+  spot/suggestion stamps the parking with the disconnect time (`#stampParkedAt`).
+- Confirm `heartbeat` receiver calls `WalkAwayDetector.expireStale` (a window with
+  no more location fixes must not hold the GPS watch forever).
+
 ## 4i. Walk-away spot is the DISCONNECT spot (v1.55.0)
 
 - Confirm `WalkAwayDetector.maybeOpenWindow()` gates the cached fix through

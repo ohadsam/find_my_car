@@ -3,6 +3,8 @@ package com.ohadsam.findmycar
 import android.content.Context
 import android.util.Log
 import com.ohadsam.findmycar.core.DisconnectFixPolicy
+import com.ohadsam.findmycar.core.DisconnectSpot
+import com.ohadsam.findmycar.core.ParkSpotDecision
 import com.ohadsam.findmycar.core.NativeVehicle
 import com.ohadsam.findmycar.core.PendingParkingSuggestion
 import com.ohadsam.findmycar.core.VehicleJsonParser
@@ -41,6 +43,9 @@ import com.ohadsam.findmycar.core.VehicleJsonParser
  */
 object WalkAwayDetector {
     private const val TAG = "FMC-WalkAway"
+    // Upper bound on how long a window may stay open however the tracker's own
+    // rolling expiry is going (a long drive after a mid-trip drop extends it).
+    private const val HARD_CAP_MS = 2 * 60 * 60 * 1000L
 
     /**
      * Raises the suggestion immediately if this disconnect is one worth asking
@@ -116,6 +121,12 @@ object WalkAwayDetector {
                 lng = lng,
                 disconnectedAt = now,
             )
+            // The previous spot for this vehicle is superseded by this
+            // disconnect, whether or not a new fix is known yet. The new one is
+            // remembered independently of the notification, so the app can still
+            // offer it after the question is ignored or withdrawn.
+            DisconnectSpotStore.remove(context, vehicle.id)
+            if (usable != null) rememberSpot(context, draft, usable.accuracy.toDouble(), "disconnect")
             val notifId = raise(context, draft)
             PendingParkingSuggestionStore.openWindow(context, draft.copy(notificationId = notifId))
             Log.i(TAG, "raised immediate walk-away suggestion for vehicle=${vehicle.name} (fix=${lat != null})")
@@ -162,7 +173,7 @@ object WalkAwayDetector {
      *
      * Never saves a parking itself — like GPS's SuggestEnd, this only ever asks.
      */
-    private fun raise(context: Context, window: PendingParkingSuggestionStore.Window): Int {
+    private fun raise(context: Context, window: PendingParkingSuggestionStore.Window, body: String? = null): Int {
         try {
             val entry = PendingParkingSuggestion(
                 vehicleId = window.vehicleId,
@@ -176,7 +187,8 @@ object WalkAwayDetector {
             Log.i(TAG, "raised walk-away parking suggestion: $entry")
             NativeLogStore.add(
                 context, TAG, "WALK",
-                "Bluetooth disconnected from ${window.vehicleName} — offering immediately to save the parking spot" +
+                (if (body == null) "Bluetooth disconnected from ${window.vehicleName} — offering immediately to save the parking spot"
+                else "asking again about ${window.vehicleName} at the point where the car stopped") +
                     if (window.lat == null) " (no location fix captured yet)" else "",
             )
             // Same headless path as every other notification button (CLAUDE.md,
@@ -189,7 +201,7 @@ object WalkAwayDetector {
             return BackgroundAlertNotifier.show(
                 context,
                 "🅿️ ${window.vehicleName} — לשמור את החניה?",
-                "התנתקת מ-${window.vehicleName}. לשמור את החניה שלו כאן?",
+                body ?: "התנתקת מ-${window.vehicleName}. לשמור את החניה שלו כאן?",
                 listOf(
                     BackgroundAlertNotifier.Action("שמור חניה", WidgetActionReceiver.ACTION_SAVE_AT, window.vehicleId),
                     BackgroundAlertNotifier.Action("לא עכשיו", WidgetActionReceiver.ACTION_DISMISS_WALK, null),
@@ -230,6 +242,7 @@ object WalkAwayDetector {
             if (pending != null && pending.vehicleId == window.vehicleId && pending.timestamp == window.disconnectedAt) {
                 PendingParkingSuggestionStore.set(context, pending.copy(lat = lat, lng = lng))
             }
+            rememberSpot(context, updated, accuracyM.toDouble(), "disconnect")
             NativeLogStore.add(
                 context, TAG, "WALK",
                 "parking spot for ${window.vehicleName} taken from the first fix ${since / 1000}s after the disconnect " +
@@ -242,22 +255,138 @@ object WalkAwayDetector {
         }
     }
 
+    private fun rememberSpot(context: Context, w: PendingParkingSuggestionStore.Window, accuracy: Double?, source: String, at: Long = w.disconnectedAt) {
+        val lat = w.lat ?: return
+        val lng = w.lng ?: return
+        DisconnectSpotStore.upsert(
+            context, DisconnectSpot(w.vehicleId, w.vehicleName, w.label, lat, lng, accuracy, at, source),
+        )
+    }
+
+    private fun withdrawQuestion(context: Context, window: PendingParkingSuggestionStore.Window): Boolean {
+        val pending = PendingParkingSuggestionStore.get(context)
+        // Only the suggestion this window raised — it may already have been
+        // answered from the shade or replaced by a newer disconnect.
+        if (pending == null || pending.vehicleId != window.vehicleId || pending.timestamp != window.disconnectedAt) return false
+        PendingParkingSuggestionStore.clear(context)
+        BackgroundAlertNotifier.cancel(context, window.notificationId)
+        return true
+    }
+
     /**
-     * Retracts an already-raised suggestion: cancels its shade notification and
-     * clears the pending entry JS would otherwise turn into an in-app modal on
-     * its next resume, then closes the window. Called when a location fix
-     * proves the car never actually stopped here (WalkAwayEngine's [Abort][
-     * com.ohadsam.findmycar.core.WalkAwayDecision.Abort] — the link dropped
-     * mid-drive, or the window simply ran out) or the vehicle reconnects (they
-     * got back in). Only acts if the pending suggestion is still the one this
-     * window raised — it may already have been answered from the shade.
+     * The phone moved at vehicle speed after the disconnect: the question asked
+     * at the disconnect ("save the parking here?") is wrong, and so is the spot.
+     * Withdraws the notification and forgets the spot, but — unlike [abort] —
+     * leaves the window OPEN. The link may have dropped mid-drive (a fault,
+     * Bluetooth switched off, a tunnel); the car will still park somewhere, and
+     * ParkSpotTracker keeps looking for where. Closing here is what used to
+     * lose that parking altogether.
+     */
+    fun retract(context: Context, window: PendingParkingSuggestionStore.Window, reason: String) {
+        try {
+            if (withdrawQuestion(context, window)) {
+                Log.i(TAG, "withdrew walk-away suggestion for ${window.vehicleName} ($reason)")
+                NativeLogStore.add(context, TAG, "WALK", "withdrew the parking suggestion for ${window.vehicleName} — $reason; still watching for where it stops")
+            } else {
+                NativeLogStore.add(context, TAG, "WALK", "${window.vehicleName} is moving at vehicle speed — $reason; still watching for where it stops")
+            }
+            DisconnectSpotStore.remove(context, window.vehicleId)
+            PendingParkingSuggestionStore.openWindow(context, window.copy(notificationId = 0, lat = null, lng = null, fixFresh = true))
+        } catch (e: Exception) {
+            Log.w(TAG, "retract failed (non-fatal)", e)
+        }
+    }
+
+    /**
+     * Nothing conclusive within the allowed time. The shade notification and the
+     * pending in-app question are taken back (a question hours later is about a
+     * decision already made), but the remembered spot is KEPT: not getting round
+     * to answering is not the same as the car having moved, and the app still
+     * offers "save it where Bluetooth disconnected" — the whole point of keeping it.
+     */
+    fun giveUp(context: Context, window: PendingParkingSuggestionStore.Window, reason: String) {
+        try {
+            if (withdrawQuestion(context, window)) {
+                Log.i(TAG, "withdrew walk-away suggestion for ${window.vehicleName} ($reason)")
+                NativeLogStore.add(context, TAG, "WALK", "withdrew the parking suggestion for ${window.vehicleName} — $reason (the spot stays available in the app)")
+            }
+            closeWindow(context, reason)
+        } catch (e: Exception) {
+            Log.w(TAG, "giveUp failed (non-fatal)", e)
+        }
+    }
+
+    /**
+     * The user walked away from a spot where the car stopped. Three outcomes:
+     *  - the vehicle opted in to automatic saving: save there now;
+     *  - the spot is the disconnect fix: the question already showing is right,
+     *    nothing to add;
+     *  - the car kept moving first (the old question was withdrawn): ask again,
+     *    now at the real stopping point, by opening a fresh window there.
+     */
+    fun onParked(context: Context, window: PendingParkingSuggestionStore.Window, decision: ParkSpotDecision.Parked) {
+        try {
+            val vehicle = VehicleJsonParser.parse(
+                context.getSharedPreferences(WidgetDataPlugin.PREFS, Context.MODE_PRIVATE)
+                    .getString(WidgetDataPlugin.KEY_VEHICLES_JSON, "[]") ?: "[]",
+            ).firstOrNull { it.id == window.vehicleId }
+            if (vehicle == null || vehicle.hasParking) {
+                giveUp(context, window, "the vehicle is gone or already parked")
+                return
+            }
+            if (vehicle.walkAwayAuto) {
+                autoSave(context, window, decision)
+                return
+            }
+            if (!decision.reanchored) {
+                // The disconnect spot was right all along.
+                closeWindow(context, "walking away confirmed — the suggestion is already showing")
+                return
+            }
+            val fresh = PendingParkingSuggestionStore.Window(
+                vehicleId = window.vehicleId, vehicleName = window.vehicleName, label = window.label,
+                lat = decision.lat, lng = decision.lng,
+                disconnectedAt = System.currentTimeMillis(), fixFresh = true,
+            )
+            val notifId = raise(context, fresh, "זוהתה חניה ב${window.vehicleName}. לשמור אותה?")
+            PendingParkingSuggestionStore.openWindow(context, fresh.copy(notificationId = notifId))
+            rememberSpot(context, fresh, null, "stop", at = decision.at)
+            NativeLogStore.add(context, TAG, "WALK", "the car stopped and the user walked away — asking again at the stopping point")
+        } catch (e: Exception) {
+            Log.w(TAG, "onParked failed (non-fatal)", e)
+        }
+    }
+
+    private fun autoSave(context: Context, window: PendingParkingSuggestionStore.Window, decision: ParkSpotDecision.Parked) {
+        // Pending/notification first: whatever happens next, the question is answered.
+        withdrawQuestion(context, window)
+        val saved = NativeParkingCommitter.commitStart(
+            context, window.vehicleId, decision.lat, decision.lng, null, "walkAway",
+            btDevice = window.label.ifBlank { null }, at = decision.at,
+        )
+        closeWindow(context, if (saved != null) "parking saved automatically" else "automatic save was refused")
+        if (saved == null) return
+        NativeLogStore.add(
+            context, TAG, "WALK",
+            "automatically saved the parking for ${saved.name} after the user walked away from where " +
+                (if (decision.reanchored) "the car stopped" else "Bluetooth disconnected"),
+        )
+        BackgroundAlertNotifier.show(
+            context, "🅿️ ${saved.label}",
+            "החניה נשמרה אוטומטית אחרי שהתרחקת מהרכב. טעות? אפשר לבטל.",
+            listOf(BackgroundAlertNotifier.Action("בטל", "end", saved.id)),
+        )
+    }
+
+    /**
+     * Retracts an already-raised suggestion and closes the window: cancels its
+     * shade notification and clears the pending entry JS would otherwise turn
+     * into an in-app modal. Used when the vehicle reconnects (they got back in).
+     * Only acts if the pending suggestion is still the one this window raised.
      */
     fun abort(context: Context, window: PendingParkingSuggestionStore.Window, reason: String) {
         try {
-            val pending = PendingParkingSuggestionStore.get(context)
-            if (pending != null && pending.vehicleId == window.vehicleId && pending.timestamp == window.disconnectedAt) {
-                PendingParkingSuggestionStore.clear(context)
-                BackgroundAlertNotifier.cancel(context, window.notificationId)
+            if (withdrawQuestion(context, window)) {
                 Log.i(TAG, "withdrew walk-away suggestion for ${window.vehicleName} ($reason)")
                 NativeLogStore.add(context, TAG, "WALK", "withdrew the parking suggestion for ${window.vehicleName} — $reason")
             }
@@ -267,10 +396,24 @@ object WalkAwayDetector {
         }
     }
 
-    /** Reconnecting means they got back in — nothing left to ask about. */
-    fun cancelOnReconnect(context: Context) {
+    /**
+     * Reconnecting means they got back in — nothing left to ask, and the
+     * remembered spot is stale: the car is about to move.
+     */
+    fun cancelOnReconnect(context: Context, label: String) {
+        DisconnectSpotStore.removeByLabel(context, label)
         val window = PendingParkingSuggestionStore.getWindow(context) ?: return
         abort(context, window, "reconnected to the vehicle")
+    }
+
+    /**
+     * Safety net for a window nobody closed: the expiry in ParkSpotTracker is
+     * evaluated per location fix, and a phone indoors may deliver none, which
+     * would keep the location watch (and its battery cost) alive indefinitely.
+     */
+    fun expireStale(context: Context, now: Long = System.currentTimeMillis()) {
+        val window = PendingParkingSuggestionStore.getWindow(context) ?: return
+        if (now - window.disconnectedAt >= HARD_CAP_MS) giveUp(context, window, "no conclusion within ${HARD_CAP_MS / 3_600_000L} hours")
     }
 
     fun closeWindow(context: Context, reason: String) {

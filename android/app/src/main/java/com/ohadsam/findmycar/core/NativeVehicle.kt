@@ -33,4 +33,11 @@ data class NativeVehicle(
      * many NativeVehicle constructions in tests keep compiling unchanged.
      */
     val walkAwaySuggest: Boolean = false,
+    /**
+     * Opt-in per vehicle, on top of [walkAwaySuggest] (v1.56.0): once the phone
+     * is seen walking away from where the car stopped, save the parking by
+     * itself instead of waiting for a tap on the notification. Never the
+     * default — saving without being asked is a different promise than asking.
+     */
+    val walkAwayAuto: Boolean = false,
 )
