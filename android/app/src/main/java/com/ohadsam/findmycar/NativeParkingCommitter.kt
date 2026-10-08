@@ -61,6 +61,9 @@ object NativeParkingCommitter {
     fun commitStart(
         context: Context, vehicleId: String?, lat: Double, lng: Double, accuracy: Double?,
         source: String, btDevice: String? = null,
+        // When the car actually stopped, if that is earlier than now (the
+        // walk-away paths learn of the parking a minute or more afterwards).
+        at: Long = System.currentTimeMillis(),
     ): Vehicle? {
         val v = vehicle(context, vehicleId)
         if (v == null) {
@@ -71,7 +74,7 @@ object NativeParkingCommitter {
             log(context, "save not committed for ${v.name} — it already has an active parking")
             return null
         }
-        val now = System.currentTimeMillis()
+        val now = at
         val op = NativeParkingOp(
             opId = UUID.randomUUID().toString(),
             type = NativeParkingOp.START,
@@ -83,6 +86,9 @@ object NativeParkingCommitter {
             btDevice = btDevice,
         )
         NativeParkingStore.add(context, op)
+        // The vehicle has a parking now, so a remembered disconnect spot for it
+        // is no longer an offer worth making.
+        DisconnectSpotStore.remove(context, v.id)
         WidgetMirror.applyQueuedAction(
             context, "save", v.id, lat, lng,
             parkingId = op.parkingId, timestamp = iso(now), opId = op.opId,

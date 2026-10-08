@@ -55,6 +55,10 @@ class FindMyCarApp {
   // duplicate-delivery guard: {key, at, message}.
   #lastWidgetAction = null;
   #reconcilingBt = false;
+  // Where each vehicle's Bluetooth last disconnected (or the car was last seen
+  // stopping), as mirrored by native — offered on the home screen so an ignored
+  // notification does not lose the spot (v1.56.0).
+  #disconnectSpots = [];
   #reconcilingWidget = false;
   #geocoding = new Set();   // parking ids with an address lookup in flight
   #fillingAddresses = false;
@@ -184,6 +188,7 @@ class FindMyCarApp {
     // it is normally raised while the app is merely backgrounded, not killed,
     // so waiting for the next cold start would show it far too late.
     this.#reconcilePendingParkingSuggestion().catch(() => {});
+    this.#refreshDisconnectSpots().catch(() => {});
 
     const gpsToggle = Utils.el('gpsAutoEndToggle');
     if (gpsToggle) gpsToggle.checked = this.#getGpsSettings().enabled;
@@ -497,6 +502,18 @@ class FindMyCarApp {
       // in-app answer and the notification answer cannot drift apart.
       await this.performWidgetAction('saveAt', null);
     });
+    Utils.el('walkAwayHereBtn')?.addEventListener('click', async () => {
+      // The other honest answer: "I want it where I am now". The recorded
+      // disconnect spot is discarded with the question — the user chose.
+      this.#ui.closeModal('walkAwayModal');
+      await WidgetBridge.clearPendingParkingSuggestion();
+      this.#forgetDisconnectSpot(this.#state.activeVehicleId);
+      DiagLog.log('WALK', 'walk-away suggestion answered with "save at the current location"');
+      if (!this.#state.current) await this.#saveNewParking();
+    });
+    Utils.el('saveDisconnectSpotBtn')?.addEventListener('click', () => {
+      this.#saveFromDisconnectSpot().catch(() => {});
+    });
     Utils.el('walkAwayDismissBtn')?.addEventListener('click', () => {
       this.#closeModal('walkAwayModal');
       DiagLog.log('WALK', 'walk-away suggestion dismissed by the user');
@@ -520,6 +537,7 @@ class FindMyCarApp {
         if (this.#state.current) this.#acquireWakeLock();
         if (this.#getBtSettings().enabled) this.#bluetooth.checkNow();
         this.#reconcilePendingParkingSuggestion().catch(() => {});
+        this.#refreshDisconnectSpots().catch(() => {});
         // Also on resume, not only from #init(): the Activity often stays alive
         // while the app is closed, so a resume is NOT a fresh init — a pending
         // action recorded while the JS engine was frozen would otherwise sit
@@ -783,6 +801,7 @@ class FindMyCarApp {
   // ── PARKING MANAGEMENT ────────────────────────────────────────
   #syncUI() {
     this.#ui.updateAll(this.#state);
+    this.#renderDisconnectSpot();
     WidgetBridge.sync(this.#state);
   }
 
@@ -1162,14 +1181,96 @@ class FindMyCarApp {
     }
     await this.#saveNewParking({ lat: pending.lat, lng: pending.lng, accuracy: 0 });
     if (!this.#state.current) return 'שמירת חניה נכשלה (בדוק מיקום GPS)';
-    if (pending.label) {
-      this.#state.current.btStartDevice = pending.label;
-      VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
-      this.#syncUI();
-    }
+    this.#stampParkedAt(pending.timestamp, pending.label);
     DiagLog.log('WALK', `saved the parking from the walk-away suggestion (at the spot sampled when Bluetooth disconnected)`,
       { vehicleName: pending.vehicleName });
     return `🅿️ חניה נשמרה — ${vLabel}`;
+  }
+
+  /**
+   * Marks the just-saved parking as having begun when the car actually stopped
+   * (the Bluetooth disconnect) and records which device started it. Only for a
+   * time that is plausibly in the past: anything in the future, or unparseable,
+   * leaves the save-time stamp alone.
+   */
+  #stampParkedAt(atMs, btLabel) {
+    const cur = this.#state.current;
+    if (!cur) return;
+    if (btLabel) cur.btStartDevice = btLabel;
+    if (Number.isFinite(atMs) && atMs > 0 && atMs <= Date.now()) cur.timestamp = new Date(atMs).toISOString();
+    VehicleController.setCurrent(this.#state.activeVehicleId, cur);
+    this.#syncUI();
+  }
+
+  async #refreshDisconnectSpots() {
+    const spots = await WidgetBridge.getDisconnectSpots();
+    this.#disconnectSpots = spots.filter(s =>
+      typeof s?.lat === 'number' && typeof s?.lng === 'number' &&
+      Date.now() - (s.at || 0) <= CFG.disconnectSpotMaxAgeMs);
+    this.#renderDisconnectSpot();
+  }
+
+  #forgetDisconnectSpot(vehicleId) {
+    if (!vehicleId || !this.#disconnectSpots.some(s => s.vehicleId === vehicleId)) return;
+    this.#disconnectSpots = this.#disconnectSpots.filter(s => s.vehicleId !== vehicleId);
+    WidgetBridge.clearDisconnectSpot(vehicleId).catch(() => {});
+  }
+
+  /**
+   * The home-screen offer: "Bluetooth disconnected N minutes ago — save the
+   * parking there", next to the usual save-at-current-location button. Shown
+   * only while the active vehicle has no parking; once it has one the remembered
+   * spot is of no further use and is forgotten (here and natively). Synchronous
+   * on purpose — it runs from #syncUI and reads the cache #refreshDisconnectSpots
+   * keeps.
+   */
+  #renderDisconnectSpot() {
+    if (this.#state.current) this.#forgetDisconnectSpot(this.#state.activeVehicleId);
+    const card = Utils.el('disconnectSpotCard');
+    if (!card) return;
+    const label = Utils.el('saveFirstParkingText');
+    const spot = this.#state.current ? null
+      : this.#disconnectSpots.find(s => s.vehicleId === this.#state.activeVehicleId) ?? null;
+    if (!spot) {
+      card.style.display = 'none';
+      if (label) label.textContent = 'שמור חניה עכשיו';
+      return;
+    }
+    const stopped = spot.source === 'stop';
+    const title = Utils.el('disconnectSpotTitle');
+    const sub = Utils.el('disconnectSpotSub');
+    const btn = Utils.el('saveDisconnectSpotBtn');
+    if (title) {
+      title.textContent = stopped
+        ? `🅿️ ${spot.vehicleName || 'הרכב'} נראה עוצר ${Utils.formatElapsed(spot.at)}`
+        : `🔌 ${spot.vehicleName || 'הרכב'} — Bluetooth התנתק ${Utils.formatElapsed(spot.at)}`;
+    }
+    const pos = this.#state.userPos;
+    if (sub) {
+      sub.textContent = pos
+        ? `המקום הזה במרחק ${Utils.formatDistance(Utils.distance(pos.lat, pos.lng, spot.lat, spot.lng))} ממך`
+        : 'אפשר לשמור את החניה במקום שבו זה קרה';
+    }
+    if (btn) btn.textContent = stopped ? '📍 שמור חניה במקום שבו עצר' : '📍 שמור חניה ממיקום הניתוק';
+    if (label) label.textContent = 'שמור במיקום הנוכחי';
+    card.style.display = '';
+  }
+
+  async #saveFromDisconnectSpot() {
+    const spot = this.#disconnectSpots.find(s => s.vehicleId === this.#state.activeVehicleId);
+    if (!spot) return;
+    if (this.#state.current) {
+      this.#ui.showToast('כבר קיימת חניה פעילה לרכב הזה.', 'info');
+      return;
+    }
+    DiagLog.log('WALK', `saving the parking at the remembered ${spot.source === 'stop' ? 'stopping point' : 'Bluetooth-disconnect spot'}`,
+      { vehicleName: spot.vehicleName });
+    // The spot sampled when it happened, never the position the user happens to
+    // be at now — that is the whole reason this is a separate button.
+    await this.#saveNewParking({ lat: spot.lat, lng: spot.lng, accuracy: spot.accuracy || 0 });
+    if (!this.#state.current) return;
+    this.#stampParkedAt(spot.at, spot.label);
+    this.#forgetDisconnectSpot(spot.vehicleId);
   }
 
   /**
@@ -1203,7 +1304,9 @@ class FindMyCarApp {
     }
     DiagLog.log('WALK', 'showing the walk-away parking suggestion', { vehicleName: pending.vehicleName });
     const sub = Utils.el('walkAwaySubtitle');
-    if (sub) sub.textContent = `${pending.vehicleName || ''} — התנתקת מהרכב. לשמור את החניה כאן?`;
+    if (sub) {
+      sub.textContent = `${pending.vehicleName || ''} — Bluetooth התנתק ${Utils.formatElapsed(pending.timestamp)}. לשמור את החניה במקום הניתוק?`;
+    }
     this.#ui.openModal('walkAwayModal');
   }
 

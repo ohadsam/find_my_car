@@ -229,6 +229,13 @@ export class UIController {
         v.walkAwaySuggest,
         checked => onToggleVehicle(v.id, { walkAwaySuggest: checked })
       ));
+      // On top of the suggestion: saves by itself once walking away from where
+      // the car stopped is confirmed, instead of waiting for a tap.
+      card.appendChild(this.#makeBtRow(
+        'שמירה אוטומטית אחרי התרחקות', 'שומר לבד אחרי שזוהתה הליכה מהרכב (דורש "הצע חניה עם ניתוק")',
+        v.walkAwayAuto,
+        checked => onToggleVehicle(v.id, { walkAwayAuto: checked })
+      ));
 
       vehicleSec.appendChild(card);
     });

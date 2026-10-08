@@ -27,6 +27,7 @@ object VehicleJsonParser {
                     bluetoothStartPopup = o.optBoolean("bluetoothStartPopup", true),
                     hasParking = o.optBoolean("hasParking", false),
                     walkAwaySuggest = o.optBoolean("walkAwaySuggest", false),
+                    walkAwayAuto = o.optBoolean("walkAwayAuto", false),
                 )
             }
         } catch (e: Exception) {

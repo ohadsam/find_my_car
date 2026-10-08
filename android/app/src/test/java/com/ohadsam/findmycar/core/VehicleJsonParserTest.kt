@@ -28,6 +28,16 @@ class VehicleJsonParserTest {
     }
 
     @Test
+    fun `walk-away flags default to off and parse when present`() {
+        val off = VehicleJsonParser.parse("""[{"id":"v1","name":"A","icon":"🚗"}]""")[0]
+        assertEquals(false, off.walkAwaySuggest)
+        assertEquals(false, off.walkAwayAuto)
+        val on = VehicleJsonParser.parse("""[{"id":"v1","name":"A","icon":"🚗","walkAwaySuggest":true,"walkAwayAuto":true}]""")[0]
+        assertEquals(true, on.walkAwaySuggest)
+        assertEquals(true, on.walkAwayAuto)
+    }
+
+    @Test
     fun `hasParking false is parsed correctly when explicitly present`() {
         val json = """[{"id":"v1","name":"Tesla","icon":"🚗","hasParking":false}]"""
         val result = VehicleJsonParser.parse(json)

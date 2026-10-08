@@ -78,6 +78,24 @@ export class WidgetBridge {
     await this.#plugin?.clearPendingParkingSuggestion?.().catch(() => {});
   }
 
+  // Where each vehicle's Bluetooth last disconnected (or where it was last seen
+  // stopping), independent of whether the notification that asked is still
+  // around (v1.56.0). [] in the browser/PWA, which has no native watcher.
+  static async getDisconnectSpots() {
+    if (!this.#plugin) return [];
+    try {
+      const { spotsJson } = await this.#plugin.getDisconnectSpots();
+      const parsed = JSON.parse(spotsJson ?? '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static async clearDisconnectSpot(vehicleId) {
+    await this.#plugin?.clearDisconnectSpot?.({ vehicleId }).catch(() => {});
+  }
+
   static async clearPendingGpsSuggestion() {
     await this.#plugin?.clearPendingGpsSuggestion?.().catch(() => {});
   }
@@ -176,6 +194,7 @@ export class WidgetBridge {
           timestamp:           parking?.timestamp ?? null,
           dailyStatusEnabled:  v.dailyStatusEnabled !== false,
           walkAwaySuggest:     !!v.walkAwaySuggest,
+          walkAwayAuto:        !!v.walkAwayAuto,
         };
       }),
       activeVehicleId: state.activeVehicleId ?? '',

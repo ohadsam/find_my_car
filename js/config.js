@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.55.0',
+  version: '1.56.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -45,6 +45,10 @@ export const CFG = Object.freeze({
   walkAbortSpeed:       6.0,    // m/s (~22 km/h) — above this shortly after a disconnect the car clearly never stopped here, so the already-shown suggestion is withdrawn rather than left standing for a destination it knows nothing about
   walkRequiredMs:       8000,   // ms accumulated in the pedestrian band (vestigial, see above)
   walkMinDisplacement:  30,     // meters from the disconnect point (vestigial, see above)
+  // How long a remembered Bluetooth-disconnect spot stays on offer in the app
+  // after the notification that asked about it was ignored. Mirrors
+  // DisconnectSpotStore.MAX_AGE_MS in Kotlin.
+  disconnectSpotMaxAgeMs: 43200000, // ms (12 h)
   walkWindowMs:         600000, // ms (10 min) — how long after a disconnect a stale suggestion is still allowed to reach the in-app modal on resume; generous, since sitting in the car a few minutes before getting out is normal
   // How old a native Bluetooth event may be before its location is no longer
   // trustworthy for auto-start. Delivery of a plugin event waits for the
@@ -88,6 +92,16 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.56.0',
+      date: '2026-10-08',
+      items: Object.freeze([
+        'מקום הניתוק של ה-Bluetooth נשמר גם אם התעלמת מההתראה: במסך הראשי מופיע כפתור "שמור חניה ממיקום הניתוק" לצד "שמור במיקום הנוכחי", ובחלון ההצעה בכניסה לאפליקציה יש את שתי האפשרויות',
+        'חניה שנשמרה ממקום הניתוק נספרת מזמן הניתוק עצמו, לא מהרגע שלחצת',
+        'ניתוק באמצע נסיעה (תקלה, כיבוי Bluetooth, מנהרה) כבר לא מאבד את החניה: ההצעה נמשכת, האפליקציה ממשיכה לעקוב אחרי המקום שבו הרכב באמת עצר, ושואלת שוב שם אחרי שהתרחקת ממנו ברגל',
+        'חדש, אופציונלי לכל רכב: "שמירה אוטומטית אחרי התרחקות" — החניה נשמרת לבד אחרי שזוהתה הליכה מהרכב, בזמן החניה האמיתי, עם כפתור "בטל" בהתראה',
+      ]),
+    }),
     Object.freeze({
       version: '1.55.0',
       date: '2026-10-08',

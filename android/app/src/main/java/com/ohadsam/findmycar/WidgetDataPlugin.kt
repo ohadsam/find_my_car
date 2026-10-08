@@ -18,6 +18,7 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.ohadsam.findmycar.core.DisconnectSpotJson
 import com.ohadsam.findmycar.core.GpsDecision
 import com.ohadsam.findmycar.core.NativeLogEntryJson
 import com.ohadsam.findmycar.core.PendingGpsSuggestionJson
@@ -270,6 +271,24 @@ class WidgetDataPlugin : Plugin(), GpsShadowEventBus.Listener {
     fun clearPendingParkingSuggestion(call: PluginCall) {
         NativeLogStore.add(context, TAG, "BRIDGE", "← JS: clearPendingParkingSuggestion() called")
         PendingParkingSuggestionStore.clear(context)
+        call.resolve()
+    }
+
+    // Where each vehicle's Bluetooth last disconnected (or where it was last
+    // seen stopping), independent of whether the notification that asked about
+    // it is still around — the app offers "save the parking there" from it.
+    @PluginMethod
+    fun getDisconnectSpots(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: getDisconnectSpots() called")
+        val json = DisconnectSpotJson.toJson(DisconnectSpotStore.getAll(context))
+        val ret = JSObject(); ret.put("spotsJson", json); call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun clearDisconnectSpot(call: PluginCall) {
+        NativeLogStore.add(context, TAG, "BRIDGE", "← JS: clearDisconnectSpot() called")
+        val vehicleId = call.getString("vehicleId")
+        if (!vehicleId.isNullOrBlank()) DisconnectSpotStore.remove(context, vehicleId)
         call.resolve()
     }
 
