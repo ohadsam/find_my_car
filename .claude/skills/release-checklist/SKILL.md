@@ -591,6 +591,20 @@ step broken or skipped:
   `needsForeground` (surfaced as a toast) instead of silently doing nothing when
   foreground location is missing.
 
+## 4i. Walk-away spot is the DISCONNECT spot (v1.55.0)
+
+- Confirm `WalkAwayDetector.maybeOpenWindow()` gates the cached fix through
+  `DisconnectFixPolicy.acceptCached` (no age check = a stale cache saved as the
+  parking, silently) and logs which case applied.
+- Confirm `ParkingForegroundService.runWalkAwayCheck()` offers every update to
+  `WalkAwayDetector.recordSpotFromUpdate`, and that function writes the spot to
+  BOTH the window and `PendingParkingSuggestionStore.set(...)` — the latter is
+  what "שמור חניה" reads.
+- Confirm neither `WidgetActionReceiver` (ACTION_SAVE_AT) nor
+  `#acceptWalkAwaySuggestion` falls back to a live/tap-time position when the
+  suggestion has no lat/lng — both must refuse with a message.
+- Confirm `DisconnectFixPolicyTest` passes in CI.
+
 ## 4g. Bluetooth broadcasts actually arrive (v1.52.0)
 
 - Confirm `ParkingForegroundService.registerBtReceiver()` registers with

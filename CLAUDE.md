@@ -1234,6 +1234,27 @@ The vehicle-settings toggle's label changed from "הצע חניה אחרי שה�
 match — the old label promised exactly the delayed, walk-confirmed behavior
 this stage removed.
 
+**v1.55.0 — "the disconnect fix" is now actually guaranteed to be one.** The
+paragraph below states the intent; two holes meant it did not hold. (1) The fix
+came from `getLastKnownLocation()` with no age check, at a moment when nothing
+was feeding the cache (the service's location watch only starts *because* the
+window opened), so it could be hours old and from elsewhere — saved silently.
+(2) With no cached fix at all, the tap fell back to a LIVE read, i.e. wherever
+the user stood after walking away; and the first post-disconnect update patched
+only the in-memory window, not the `PendingParkingSuggestion` that "שמור חניה"
+reads. `core/DisconnectFixPolicy` now decides: a cached fix is used only if at
+most 60s old (`CACHED_MAX_AGE_MS`); the first update the watch delivers within
+45s of the disconnect (`FRESH_WINDOW_MS`) replaces it when accurate to 50m, or
+fills in when there was no usable cache, and is written to **both** the window
+and the pending suggestion (`WalkAwayDetector.recordSpotFromUpdate`); later
+updates are the user walking away and are never adopted. **No spot → refuse**,
+natively (`WidgetActionReceiver` ACTION_SAVE_AT) and in JS
+(`#acceptWalkAwaySuggestion`): never fall back to the tap-time position. The
+"car still moving → withdraw" check no longer depends on having a spot.
+`BtPendingActionRecorder.autoStart` (a different, auto-saving path) still
+tolerates a cached fix up to 10 minutes old (`FIX_MAX_AGE_MS`); it was not
+changed here.
+
 **The location is the disconnect fix, never the answer-time fix.** By the time
 the user actually taps to confirm, they may be tens of metres from the car —
 `PendingParkingSuggestion` carries the `getLastKnownLocation()` fix captured at
@@ -2240,6 +2261,7 @@ round-trip, before the next stage builds on it.
 - [ ] **Android APK (v1.42.0): tap a widget action while the app is COLD (killed, or just launched and still loading).** It must either happen immediately or show "יבוצע כשהאפליקציה תיפתח מחדש" and then actually apply on the next open — never nothing at all. The diagnostic log's `WIDGET` category must contain either a `performWidgetAction(...)` line or a "queued widget action ... for replay" line for every single tap; a tap with no line either way is the silent black hole returning
 - [ ] Android APK (v1.42.0): tap a widget action once and confirm exactly ONE parking is saved and ONE notification posted — two of each means the dedupe guard regressed
 - [ ] **Android APK (v1.46.0, walk-away — now immediate): turn on "הצע חניה עם ניתוק" for a vehicle whose auto-start is OFF, then disconnect Bluetooth (any disconnect — no need to actually walk anywhere).** A "🅿️ לשמור את החניה?" notification must arrive within a second or two of the disconnect, with a "שמור חניה" button. Tapping it saves the parking **at the spot where Bluetooth disconnected**, not where you are standing — check the saved address is the car's, not yours
+- [ ] **Android APK (v1.55.0): with the walk-away suggestion on, disconnect Bluetooth at the car, walk 200m away, THEN tap "שמור חניה" in the notification. The saved parking must be at the car, not where you tapped. The `WALK` log shows either "spot sampled at the disconnect: cached fix Ns old" or "parking spot ... taken from the first fix Ns after the disconnect".** A cached location older than a minute must log "NOT used as the parking spot"; if no location was captured at all the tap must be REFUSED with a notification, never saved at your current position
 - [ ] Android APK (v1.46.0): disconnect and then stay in the car / drive on (a red light or tunnel drop) — the notification still arrives immediately (the intended tradeoff), but within moments of the car resuming vehicle speed it must be WITHDRAWN from the shade — check the `WALK` category shows "withdrew the parking suggestion ... still moving at vehicle speed", and no `walkAwayModal` appears if you open the app right after
 - [ ] Android APK (v1.46.0): disconnect, then sit in the car for a few minutes before getting out — the notification is already showing from the moment of disconnect (not delayed until you get out), and must still be there (not withdrawn), since sitting still never crosses the abort-speed threshold
 - [ ] Android APK (v1.46.0): with auto-start ON, the walk-away suggestion must never appear (the parking is already saved outright) — and with the per-vehicle toggle off, it must never appear either

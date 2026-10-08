@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.54.0',
+  version: '1.55.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -88,6 +88,15 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.55.0',
+      date: '2026-10-08',
+      items: Object.freeze([
+        'הצעת "לשמור את החניה?" אחרי ניתוק Bluetooth שומרת את המקום שנדגם ברגע הניתוק — לא את המקום שבו אתה נמצא כשאתה לוחץ על הכפתור',
+        'מיקום ישן ממטמון המערכת (יותר מדקה) כבר לא משמש כמקום החניה; במקומו נלקחת הקליטה הראשונה מיד אחרי הניתוק, כשאתה עדיין ליד הרכב',
+        'אם לא נקלט מיקום בעת הניתוק, השמירה מההתראה נדחית עם הסבר ברור במקום לשמור את המקום שבו אתה עומד עכשיו',
+      ]),
+    }),
     Object.freeze({
       version: '1.54.0',
       date: '2026-09-28',
