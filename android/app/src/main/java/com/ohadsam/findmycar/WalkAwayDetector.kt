@@ -2,6 +2,7 @@ package com.ohadsam.findmycar
 
 import android.content.Context
 import android.util.Log
+import com.ohadsam.findmycar.core.DisconnectFixPolicy
 import com.ohadsam.findmycar.core.NativeVehicle
 import com.ohadsam.findmycar.core.PendingParkingSuggestion
 import com.ohadsam.findmycar.core.VehicleJsonParser
@@ -84,14 +85,36 @@ object WalkAwayDetector {
             // for elsewhere.
             PendingParkingSuggestionStore.getWindow(context)?.let { BackgroundAlertNotifier.cancel(context, it.notificationId) }
 
-            val (lat, lng) = LastKnownLocation.get(context)
+            // The spot is sampled NOW, at the disconnect — the notification is
+            // answered later, from wherever the user has walked to, and what
+            // gets saved is this, never the position at the tap. A cached fix is
+            // only trusted when recent: the system's cache can be hours old and
+            // from elsewhere, and saving that silently is worse than asking
+            // again. With no usable cache the first location update after the
+            // disconnect fills it in (see recordSpotFromUpdate).
+            val cached = LastKnownLocation.getFix(context)
+            val now = System.currentTimeMillis()
+            val usable = cached?.takeIf { DisconnectFixPolicy.acceptCached(now - it.time) }
+            val lat = usable?.lat
+            val lng = usable?.lng
+            when {
+                usable != null -> NativeLogStore.add(
+                    context, TAG, "WALK",
+                    "spot sampled at the disconnect: cached fix ${(now - usable.time) / 1000}s old, accuracy ${usable.accuracy.toInt()}m",
+                )
+                cached != null -> NativeLogStore.add(
+                    context, TAG, "WALK",
+                    "cached location is ${(now - cached.time) / 60000} min old — NOT used as the parking spot; waiting for a fresh fix",
+                )
+                else -> NativeLogStore.add(context, TAG, "WALK", "no cached location at the disconnect — waiting for a fresh fix")
+            }
             val draft = PendingParkingSuggestionStore.Window(
                 vehicleId = vehicle.id,
                 vehicleName = vehicle.name,
                 label = label,
                 lat = lat,
                 lng = lng,
-                disconnectedAt = System.currentTimeMillis(),
+                disconnectedAt = now,
             )
             val notifId = raise(context, draft)
             PendingParkingSuggestionStore.openWindow(context, draft.copy(notificationId = notifId))
@@ -175,6 +198,47 @@ object WalkAwayDetector {
         } catch (e: Exception) {
             Log.w(TAG, "raise failed (non-fatal)", e)
             return 0
+        }
+    }
+
+    /**
+     * Offers a location update to the open window as the parking spot. Called
+     * for every update while a window is open; [DisconnectFixPolicy] adopts only
+     * the first good one received soon after the disconnect — the user is still
+     * next to the car — and nothing after that, since later updates are them
+     * walking away. Writes the spot to BOTH the window and the pending
+     * suggestion: the latter is what "שמור חניה" actually reads, and updating
+     * only the window (what the old first-update fallback did) left a
+     * suggestion raised with no fix permanently without one.
+     *
+     * @return the window to use from here on (updated when the update was adopted)
+     */
+    fun recordSpotFromUpdate(
+        context: Context, window: PendingParkingSuggestionStore.Window,
+        lat: Double, lng: Double, accuracyM: Float, now: Long,
+    ): PendingParkingSuggestionStore.Window {
+        try {
+            val since = now - window.disconnectedAt
+            val hasSpot = window.lat != null && window.lng != null
+            if (!DisconnectFixPolicy.adoptUpdate(hasSpot, window.fixFresh, since, accuracyM)) return window
+
+            val updated = window.copy(lat = lat, lng = lng, fixFresh = DisconnectFixPolicy.isFresh(accuracyM))
+            PendingParkingSuggestionStore.openWindow(context, updated)
+            val pending = PendingParkingSuggestionStore.get(context)
+            // Only the suggestion this window raised — it may already have been
+            // answered or replaced by a newer disconnect.
+            if (pending != null && pending.vehicleId == window.vehicleId && pending.timestamp == window.disconnectedAt) {
+                PendingParkingSuggestionStore.set(context, pending.copy(lat = lat, lng = lng))
+            }
+            NativeLogStore.add(
+                context, TAG, "WALK",
+                "parking spot for ${window.vehicleName} taken from the first fix ${since / 1000}s after the disconnect " +
+                    "(accuracy ${accuracyM.toInt()}m)" + if (hasSpot) " — replaces the cached one" else "",
+            )
+            return updated
+        } catch (e: Exception) {
+            Log.w(TAG, "recordSpotFromUpdate failed (non-fatal)", e)
+            return window
         }
     }
 

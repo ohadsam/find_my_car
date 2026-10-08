@@ -1133,7 +1133,7 @@ class ParkingForegroundService : Service() {
      */
     private fun runWalkAwayCheck(location: Location, speed: Double?, now: Long) {
         try {
-            val window = PendingParkingSuggestionStore.getWindow(this) ?: return
+            var window = PendingParkingSuggestionStore.getWindow(this) ?: return
 
             // A different disconnect than the one the accumulator belongs to:
             // start counting from scratch rather than inheriting its progress.
@@ -1142,26 +1142,24 @@ class ParkingForegroundService : Service() {
                 walkAwayState = WalkAwayState()
             }
 
-            // With no fix captured at disconnect there is no origin to measure
-            // displacement from. Treat the first fix of the window as that
-            // origin — less precise than the real disconnect point, but it is
-            // the difference between the feature working on such devices and
-            // not working at all.
+            // The parking spot is the position at the DISCONNECT, not wherever
+            // the user is when they later tap "save". Every update is offered
+            // to the window; WalkAwayDetector/DisconnectFixPolicy adopt only
+            // the first good one right after the disconnect (the user is still
+            // at the car), or fill in when no recent cached fix existed.
+            window = WalkAwayDetector.recordSpotFromUpdate(
+                this, window, location.latitude, location.longitude, location.accuracy, now,
+            )
+
+            // Still no spot (no recent cache, and no update arrived inside the
+            // window): "save" will refuse rather than guess. Retraction must
+            // still work, though — a car seen driving off should withdraw the
+            // question — and it only needs speed, so displacement is 0 here.
             val originLat = window.lat
             val originLng = window.lng
-            if (originLat == null || originLng == null) {
-                PendingParkingSuggestionStore.openWindow(
-                    this,
-                    window.copy(lat = location.latitude, lng = location.longitude),
-                )
-                NativeLogStore.add(
-                    this, TAG, "WALK",
-                    "no fix was captured at disconnect — using the first location update as the parking spot",
-                )
-                return
-            }
-
-            val moved = GpsMath.distanceMeters(location.latitude, location.longitude, originLat, originLng)
+            val moved = if (originLat != null && originLng != null) {
+                GpsMath.distanceMeters(location.latitude, location.longitude, originLat, originLng)
+            } else 0.0
             val (next, decision) = WalkAwayEngine.check(
                 walkAwayState, speed, moved, window.disconnectedAt,
                 WALK_MIN_SPEED_MPS, WALK_MAX_SPEED_MPS, WALK_ABORT_SPEED_MPS,

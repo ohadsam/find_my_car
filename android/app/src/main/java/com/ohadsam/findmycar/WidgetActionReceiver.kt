@@ -233,10 +233,21 @@ class WidgetActionReceiver : BroadcastReceiver() {
                 return true
             }
             ACTION_SAVE_AT -> {
-                val s = PendingParkingSuggestionStore.get(context)
-                val lat = s?.lat
-                val lng = s?.lng
-                if (s == null || lat == null || lng == null) return false // no recorded spot — let the app decide
+                val s = PendingParkingSuggestionStore.get(context) ?: return false // nothing outstanding — let the app say so
+                val lat = s.lat
+                val lng = s.lng
+                if (lat == null || lng == null) {
+                    // No spot was sampled at the disconnect. Saving where the
+                    // user stands NOW — the old fallback, via the app — is the
+                    // one outcome this suggestion exists to avoid: they have
+                    // walked away from the car. Refuse, say why, and clear the
+                    // question so the app does not re-ask it on next open.
+                    PendingParkingSuggestionStore.clear(context)
+                    WalkAwayDetector.closeWindow(context, "no parking spot was captured at the disconnect")
+                    NativeLogStore.add(context, TAG, "WALK", "save refused — no location was captured when Bluetooth disconnected")
+                    done(context, v.label, "⚠️ החניה לא נשמרה — לא נקלט מיקום בעת הניתוק מ-${v.label}. פתח את האפליקציה ושמור ידנית.", notify = true)
+                    return true
+                }
                 if (v.parked) {
                     done(context, v.label, "כבר קיימת חניה פעילה — ${v.label}", notify = false)
                     return true

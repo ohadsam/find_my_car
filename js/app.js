@@ -1152,16 +1152,22 @@ class FindMyCarApp {
       return 'כבר קיימת חניה פעילה';
     }
     const hasFix = typeof pending.lat === 'number' && typeof pending.lng === 'number';
-    // No captured fix: fall back to a live read rather than refusing. Less
-    // accurate, but the user explicitly asked for the spot to be saved.
-    await this.#saveNewParking(hasFix ? { lat: pending.lat, lng: pending.lng, accuracy: 0 } : null);
+    // No spot was sampled at the disconnect: refuse. The old fallback — a live
+    // read — saved wherever the user is standing NOW, after walking away from
+    // the car, which is the one outcome this suggestion exists to avoid. A
+    // missing parking they can save by hand beats one saved somewhere wrong.
+    if (!hasFix) {
+      DiagLog.log('WALK', 'saveAt refused — no location was captured when Bluetooth disconnected', { vehicleName: pending.vehicleName });
+      return `⚠️ החניה לא נשמרה — לא נקלט מיקום בעת הניתוק מ-${vLabel}. שמור ידנית מהאפליקציה.`;
+    }
+    await this.#saveNewParking({ lat: pending.lat, lng: pending.lng, accuracy: 0 });
     if (!this.#state.current) return 'שמירת חניה נכשלה (בדוק מיקום GPS)';
     if (pending.label) {
       this.#state.current.btStartDevice = pending.label;
       VehicleController.setCurrent(this.#state.activeVehicleId, this.#state.current);
       this.#syncUI();
     }
-    DiagLog.log('WALK', `saved the parking from the walk-away suggestion (${hasFix ? 'at the disconnect spot' : 'at the current location — no fix was captured'})`,
+    DiagLog.log('WALK', `saved the parking from the walk-away suggestion (at the spot sampled when Bluetooth disconnected)`,
       { vehicleName: pending.vehicleName });
     return `🅿️ חניה נשמרה — ${vLabel}`;
   }

@@ -34,6 +34,7 @@ object PendingParkingSuggestionStore {
     private const val KEY_WINDOW_HAS_FIX = "window_has_fix"
     private const val KEY_WINDOW_AT = "window_at"
     private const val KEY_WINDOW_NOTIF_ID = "window_notif_id"
+    private const val KEY_WINDOW_FIX_FRESH = "window_fix_fresh"
 
     /**
      * An open "did they park and walk away?" window. The suggestion notification
@@ -51,6 +52,12 @@ object PendingParkingSuggestionStore {
         val lng: Double?,
         val disconnectedAt: Long,
         val notificationId: Int = 0,
+        /**
+         * [lat]/[lng] came from a location update received after the
+         * disconnect and accurate enough to end the search (see
+         * DisconnectFixPolicy) — as opposed to the system's cached fix.
+         */
+        val fixFresh: Boolean = false,
     )
 
     private fun prefs(context: Context) =
@@ -69,6 +76,7 @@ object PendingParkingSuggestionStore {
             .putBoolean(KEY_WINDOW_HAS_FIX, window.lat != null && window.lng != null)
             .putLong(KEY_WINDOW_AT, window.disconnectedAt)
             .putInt(KEY_WINDOW_NOTIF_ID, window.notificationId)
+            .putBoolean(KEY_WINDOW_FIX_FRESH, window.fixFresh)
             .apply()
     }
 
@@ -86,6 +94,7 @@ object PendingParkingSuggestionStore {
             lng = if (hasFix) p.getFloat(KEY_WINDOW_LNG, 0f).toDouble() else null,
             disconnectedAt = p.getLong(KEY_WINDOW_AT, 0L),
             notificationId = p.getInt(KEY_WINDOW_NOTIF_ID, 0),
+            fixFresh = p.getBoolean(KEY_WINDOW_FIX_FRESH, false),
         )
     }
 
@@ -100,6 +109,7 @@ object PendingParkingSuggestionStore {
             .remove(KEY_WINDOW_HAS_FIX)
             .remove(KEY_WINDOW_AT)
             .remove(KEY_WINDOW_NOTIF_ID)
+            .remove(KEY_WINDOW_FIX_FRESH)
             .apply()
     }
 
