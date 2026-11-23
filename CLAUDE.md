@@ -31,6 +31,7 @@ Since v1.11.0 the same web app also ships as a **native Android APK** (Capacitor
 | `js/bluetooth-native.js` | `NativeBluetoothController` — same interface as `BluetoothController`, backed by the native `BluetoothClassic` Capacitor plugin (real ACL connect/disconnect). Selected instead of `BluetoothController` in `js/app.js` when `NativeBluetoothController.isSupported()` |
 | `js/widget-bridge.js` | `WidgetBridge` — pushes the active-parking snapshot to the native `WidgetData` plugin so Android home-screen widgets stay current; no-op in the browser |
 | `js/oem-setup.js` | `OemSetup` — builds the "הגדרת זיהוי ברקע" guide's step list and runs each step's action via the native `OemSetup` plugin; no-op in the browser. See "OEM background-restriction setup guide" below |
+| `js/updater.js` | `Updater` + pure helpers (`parseVersion`/`compareVersions`/`parseRelease`/`shareText`/`whatsappShareUrl`/`mailShareUrl`) — update check against the newest GitHub release, native download+install via the `AppUpdate` plugin, PWA reload, app sharing. See "In-app updates and app sharing" below |
 | `js/notify.js` | `Notify` — one-off system notifications for background BT/GPS events; native uses `@capacitor/local-notifications`, browser uses `ServiceWorkerRegistration.showNotification()` |
 | `js/app.js` | `FindMyCarApp` orchestrator — state, events, parking lifecycle, vehicle switching, WhatsApp sharing, Bluetooth |
 | `sw.js` | Service Worker — cache strategies for app shell, tiles, Leaflet CDN |
@@ -210,6 +211,46 @@ Map, camera, voice, and Bluetooth state are owned by their respective controller
 | `reverseGeocode(lat, lng)` | Fetch Nominatim → `AddressObj \| null` |
 | `normalizeAddress(addr)` | `AddressObj \| string` → display string |
 
+### In-app updates and app sharing (v1.57.0)
+
+**Where updates come from.** `.github/workflows/build-android.yml` publishes every
+build of `main` as a GitHub release (`v<versionName>`) with the APK under the
+STABLE name `FindMyCar.apk`, notes taken from that version's `CHANGELOG.md`
+section; a rebuild of the same version replaces the asset. The job therefore needs
+`permissions: contents: write`. `Updater.fetchLatest()` reads the public
+`releases/latest` API (no token; a 404 means "nothing published yet", any other
+failure THROWS so the UI says "could not check", never "you are up to date") and
+`parseRelease()` ignores drafts/prereleases and uses the asset `digest`
+(`sha256:`) when GitHub provides it. **Bump `versionName` in `android/app/build.gradle`
+on every release** — it names the release tag, and the app compares it with
+`CFG.version`; the two must stay equal or every build looks permanently outdated.
+
+**Native (APK)**: `AppUpdatePlugin.downloadAndInstall` streams the file to
+`cacheDir/updates` itself (`HttpURLConnection`, redirects followed by hand so each
+hop is re-checked against github.com / `*.githubusercontent.com`), verifies the
+SHA-256 when JS passes one, and opens the system installer through the existing
+`FileProvider` (`cache-path` in `file_paths.xml`). It needs
+`REQUEST_INSTALL_PACKAGES` in the manifest AND the user's "install unknown apps"
+switch for this app, which cannot be requested in a dialog — the plugin opens the
+settings page and returns `needsPermission`; JS tells the user to press again.
+In-place upgrade only works because `android/app/debug.keystore` is stable (see
+above): never regenerate it. The updater can only ever install a build signed
+with that key — Android enforces that, the checksum is a second layer.
+
+**PWA**: no download; "update now" deletes the `findmycar-*` app-shell caches
+(not the tile cache) and reloads, since GitHub Pages already serves the newest files.
+
+**Automatic check**: `#init()` schedules a silent `#checkForUpdates` ~6 s after
+start when the last check is older than `CFG.update.checkIntervalMs` (12 h; state
+in the non-`fmc_` key `findmycar_update_check_v1`, so it is not part of backups).
+The silent path only toasts, once per version; the dialog is opened by the manual
+button. Diagnostic log category: `UPDATE`.
+
+**Sharing**: Settings → "שתף את האפליקציה" opens `https://wa.me/?text=` or a
+`mailto:` (via a real anchor click, never `location.href`, so a missing mail app
+cannot navigate the WebView away). The text carries the install link
+`releases/latest/download/FindMyCar.apk` and the PWA URL (`CFG.update.pwaUrl`).
+
 ### Restoring a parking from history (v1.54.0)
 
 For the common "I ended it by mistake" case. The history detail modal's "↩️
@@ -375,6 +416,7 @@ never loses its own execution context the same way.
 | *(official `@capacitor/local-notifications`)* | `LocalNotifications` | Used only by `js/notify.js`'s `Notify.show()` for one-off background BT/GPS alerts — separate from the persistent "active parking" notification, which since Stage 9 of the native migration is posted/cancelled directly by `WidgetDataPlugin.update()`/`.clear()` (plain `NotificationCompat`, not this plugin) on native; `#showParkingNotification`/`#cancelParkingNotification` (js/app.js) now skip themselves on native and keep using the browser-safe `ServiceWorkerRegistration.showNotification()` path only on the PWA, which has no native equivalent to delegate to |
 | `android/.../DailyStatusReceiver.kt` | *(no JS-facing methods — receives, not called from JS)* | Manifest-registered `BroadcastReceiver` (see "Once-daily status notification" below) that fires once a day, posts the status notification (per-vehicle parked/not-parked + address, filtered to vehicles with `dailyStatusEnabled`), and reschedules itself for tomorrow — also handles `BOOT_COMPLETED` to re-arm the alarm across reboots (`AlarmManager` alarms don't survive a restart) |
 | `android/.../DailyStatusScheduler.kt` | *(internal)* | `scheduleOrCancel`/`scheduleNext`/`cancel` — owns the `AlarmManager.setExactAndAllowWhileIdle` scheduling math (next occurrence of a fixed target hour) for `DailyStatusReceiver`; called from `WidgetDataPlugin.syncVehicles()` on every sync (idempotent) and from `DailyStatusReceiver` itself after each fire/boot |
+| `android/.../AppUpdatePlugin.kt` | `AppUpdate` | `status()`/`openInstallSettings()`/`downloadAndInstall({url, sha256})`/`cancelDownload()`; emits `updateProgress` `{downloaded,total}` — see "In-app updates and app sharing" below |
 | `android/.../OemSetupPlugin.kt` | `OemSetup` | `status()`/`openAutostart()`/`openOemBattery()`/`openAppSettings()`/`requestIgnoreBatteryOptimizations()` — backs the in-app setup guide (see "OEM background-restriction setup guide" below) |
 | `android/.../OemSettingsIntents.kt` | *(internal)* | The actual intent launching + per-OEM component tables, shared by `OemSetupPlugin` and `BluetoothClassicPlugin` (whose `openAppSettings`/battery-exemption entry points now delegate here rather than building the intents inline — same anti-drift reasoning as `BackgroundAlertNotifier`) |
 | `android/.../DailyStatusVehicles.kt` | *(internal)* | Minimal parser of the `vehicles_json` `SharedPreferences` mirror, independent of `VehicleJsonParser`/`ParkedVehicles` (same "multiple independent readers" precedent as `ParkedVehicles.kt`) — reads only what `DailyStatusReceiver` needs: name/icon/hasParking/address, filtered to `dailyStatusEnabled` |
@@ -2303,6 +2345,10 @@ round-trip, before the next stage builds on it.
 - [ ] **Android APK (v1.56.0, mid-drive drop): turn Bluetooth OFF on the phone while driving, then park and walk away from the car. The disconnect notification is withdrawn as soon as the car is seen moving (`WALK`: "still watching for where it stops"), and after you walk ~40 m from where it stopped a NEW "זוהתה חניה" suggestion arrives for that spot** — not for where Bluetooth dropped
 - [ ] Android APK (v1.56.0): same drive, but sit in a slow jam / red light for a while — no suggestion or auto-save may appear while the car is still part of the traffic
 - [ ] Android APK (v1.56.0, auto-save): enable "שמירה אוטומטית אחרי התרחקות" for a vehicle, park, disconnect and walk 30+ m — the parking is saved without any tap, timed at the disconnect, with a notification whose "בטל" ends it. With the setting off nothing is saved without a tap
+- [ ] **Android APK (v1.57.0, updates): with an OLDER build installed and a newer release published, Settings → "עדכוני אפליקציה" → "בדוק עדכונים" opens "גרסה X זמינה" with the release notes. "הורד והתקן" shows a progress bar, then Android's installer; after installing, the app reopens on the new version with all vehicles/history intact.** First time: the app opens "install unknown apps" settings and says to press again after allowing. With the latest build installed the button says "✅ האפליקציה מעודכנת"; with no network, "לא ניתן לבדוק עדכונים כעת" — never "מעודכנת"
+- [ ] Android APK (v1.57.0): the `UPDATE` diagnostic-log category shows the check ("installed … latest …") and the download result; a `checksum MISMATCH` line means the downloaded file was discarded, not installed
+- [ ] Android APK (v1.57.0): "שתף בוואטסאפ" opens WhatsApp's chooser with the text; "שתף במייל" opens the mail app with subject and body; both texts contain the APK link and the browser link. PWA: same two buttons work in the browser; the update dialog's "עדכן עכשיו" reloads into the new version
+- [ ] CI (v1.57.0): after a push to `main`, the Releases page has `v<versionName>` with `FindMyCar.apk` and the CHANGELOG notes, and `releases/latest/download/FindMyCar.apk` downloads it
 - [ ] Android APK (v1.56.0): reconnect to the car's Bluetooth after a disconnect — the home-screen offer disappears (the car is about to move)
 - [ ] Android APK (v1.46.0): disconnect and then stay in the car / drive on (a red light or tunnel drop) — the notification still arrives immediately (the intended tradeoff), but within moments of the car resuming vehicle speed it must be WITHDRAWN from the shade — check the `WALK` category shows "withdrew the parking suggestion ... still moving at vehicle speed", and no `walkAwayModal` appears if you open the app right after
 - [ ] Android APK (v1.46.0): disconnect, then sit in the car for a few minutes before getting out — the notification is already showing from the moment of disconnect (not delayed until you get out), and must still be there (not withdrawn), since sitting still never crosses the abort-speed threshold

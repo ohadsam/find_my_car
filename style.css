@@ -2624,3 +2624,35 @@ audio { width: 100%; }
   margin-top: 4px;
   flex-shrink: 0;
 }
+
+/* ── APP UPDATE MODAL (v1.57.0) ── */
+.update-notes {
+  width: 100%;
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  text-align: right;
+}
+.update-notes:empty { display: none; }
+.update-progress { width: 100%; margin-top: 12px; }
+.update-progress-track {
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--border);
+  overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--color-primary);
+  transition: width 250ms cubic-bezier(0.4,0,0.2,1);
+}
+.update-progress-text { margin-top: 6px; font-size: 0.8rem; color: var(--text-secondary); text-align: center; }

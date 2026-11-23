@@ -591,6 +591,25 @@ step broken or skipped:
   `needsForeground` (surfaced as a toast) instead of silently doing nothing when
   foreground location is missing.
 
+## 4k. In-app update + sharing (v1.57.0)
+
+- Confirm `android/app/build.gradle` `versionName` equals `js/config.js` `version` —
+  the release tag is derived from it and the app compares it with `CFG.version`.
+- Confirm `build-android.yml` has `permissions: contents: write` and the final
+  "Publish APK as a GitHub release" step (stable asset name `FindMyCar.apk`,
+  `if: github.ref == 'refs/heads/main'`), and that the most recent run's step list
+  shows that step succeeded; then confirm the release exists
+  (`mcp__github__get_release_by_tag` / `list_releases`) with the asset attached.
+- Confirm `AppUpdatePlugin.isAllowedStart` still restricts to
+  `github.com/ohadsam/find_my_car/releases/download/`, redirects go through
+  `isAllowedHop`, and `MainActivity.java` registers `AppUpdatePlugin`.
+- Confirm `AndroidManifest.xml` declares `REQUEST_INSTALL_PACKAGES` and the
+  `FileProvider` with a `cache-path` in `res/xml/file_paths.xml`.
+- Confirm `js/updater.js` is in `sw.js` `STATIC_ASSETS` and has a `modulepreload`,
+  `fetchLatest()` still throws on non-404 failures, and `updater.test.js` passes.
+- Confirm `index.html` has `checkUpdatesBtn`, `updateModal`, `shareAppWhatsAppBtn`,
+  `shareAppEmailBtn` and a `UPDATE` option in `diagLogCategoryFilter`.
+
 ## 4j. Smart parking-spot tracking, auto-save and the remembered spot (v1.56.0)
 
 - Confirm `ParkingForegroundService.runWalkAwayCheck()` feeds `ParkSpotTracker`

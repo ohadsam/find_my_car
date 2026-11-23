@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME      = 'findmycar-v1.56.0';
+const CACHE_NAME      = 'findmycar-v1.57.0';
 const TILES_CACHE     = 'findmycar-tiles-v1.0.0';
 const STATIC_ASSETS = [
   './',
@@ -23,6 +23,7 @@ const STATIC_ASSETS = [
   './js/widget-bridge.js',
   './js/notify.js',
   './js/oem-setup.js',
+  './js/updater.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -58,6 +59,7 @@ self.addEventListener('fetch', (event) => {
 
   const h = url.hostname;
   const isNominatim  = h.includes('nominatim.openstreetmap');
+  const isGitHubApi  = h === 'api.github.com';
   const isMapTile    = h.includes('tile.openstreetmap.org') || h.includes('a.tile.') || h.includes('b.tile.') || h.includes('c.tile.');
   const isCDN        = h.includes('unpkg.com') || h.includes('fonts.googleapis.com') || h.includes('fonts.gstatic.com');
 
@@ -67,6 +69,18 @@ self.addEventListener('fetch', (event) => {
   if (isNominatim) {
     event.respondWith(
       fetch(event.request)
+        .catch(() => new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } }))
+    );
+    return;
+  }
+
+  // GitHub API (the update check): network-only. It must NEVER reach the
+  // app-shell cache-first branch below — a cached "latest release" answer
+  // would make the app report "up to date" forever. A failed request stays a
+  // failure (503) so the updater says "could not check", not "no update".
+  if (isGitHubApi) {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
         .catch(() => new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } }))
     );
     return;

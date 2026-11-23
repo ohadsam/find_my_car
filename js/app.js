@@ -14,6 +14,7 @@ import { WidgetBridge } from './widget-bridge.js';
 import { Notify } from './notify.js';
 import { DiagLog } from './diag-log.js';
 import { OemSetup } from './oem-setup.js';
+import { Updater, whatsappShareUrl, mailShareUrl } from './updater.js';
 
 class FindMyCarApp {
   #state = {
@@ -225,6 +226,10 @@ class FindMyCarApp {
     this.#startLocationWatch();
     this.#setupPWA();
     this.#startDiagHeartbeat();
+    this.#renderUpdateStatus();
+    // Quiet check a few seconds after start (never delaying startup), at most
+    // every CFG.update.checkIntervalMs; a found update is surfaced once per version.
+    if (Updater.checkDue()) setTimeout(() => this.#checkForUpdates({ silent: true }).catch(() => {}), 6000);
 
     if (this.#state.current) {
       this.#acquireWakeLock();
@@ -373,6 +378,10 @@ class FindMyCarApp {
       this.#ui.showToast('המדריך לא יוצג שוב אוטומטית — הוא נשאר זמין בהגדרות', 'info');
     });
 
+    Utils.el('checkUpdatesBtn')?.addEventListener('click', () => this.#checkForUpdates({ silent: false }).catch(() => {}));
+    Utils.el('updateInstallBtn')?.addEventListener('click', () => this.#installUpdate().catch(() => {}));
+    Utils.el('shareAppWhatsAppBtn')?.addEventListener('click', () => this.#shareApp('whatsapp'));
+    Utils.el('shareAppEmailBtn')?.addEventListener('click',    () => this.#shareApp('email'));
     Utils.el('openDiagLogBtn')?.addEventListener('click',   () => this.#openDiagLogModal());
     Utils.el('diagLogRefreshBtn')?.addEventListener('click', async () => {
       await this.#reconcileNativeLog().catch(() => {});
@@ -2449,6 +2458,147 @@ class FindMyCarApp {
     } catch {
       this.#ui.showToast('לא ניתן לשתף כעת', 'error');
     }
+  }
+
+  // ── APP UPDATES + SHARING (v1.57.0) ───────────────────────────
+  #pendingRelease = null;   // newest release found by the last check, if newer than this build
+  #updating = false;        // a download is in flight
+
+  #renderUpdateStatus(text) {
+    const el = Utils.el('appUpdateStatus');
+    if (!el) return;
+    if (text) { el.textContent = text; return; }
+    const last = Updater.lastCheck();
+    const base = `גרסה מותקנת ${CFG.version}`;
+    if (this.#pendingRelease) el.textContent = `${base} · זמינה גרסה חדשה ${this.#pendingRelease.version}`;
+    else if (last.at) el.textContent = `${base} · נבדק ${Utils.formatElapsed(last.at)}`;
+    else el.textContent = base;
+  }
+
+  /**
+   * @param silent true for the automatic startup check: no toast unless there is
+   *   something new, and a failure is only logged.
+   */
+  async #checkForUpdates({ silent }) {
+    const btn = Utils.el('checkUpdatesBtn');
+    const btnText = Utils.el('checkUpdatesBtnText');
+    if (btn?.disabled) return;
+    if (btn) btn.disabled = true;
+    if (btnText && !silent) btnText.textContent = 'בודק...';
+    try {
+      const { release, newer } = await Updater.fetchLatest();
+      Updater.recordCheck({ latest: release?.version ?? null });
+      DiagLog.log('UPDATE', `update check: installed ${CFG.version}, latest ${release?.version ?? 'none published'}${newer ? ' — NEWER' : ''}`);
+      this.#pendingRelease = newer ? release : null;
+      this.#renderUpdateStatus();
+      if (!newer) {
+        if (!silent) this.#ui.showToast(release ? '✅ האפליקציה מעודכנת' : 'עדיין לא פורסמה גרסה להורדה', 'success');
+        return;
+      }
+      // The automatic check mentions a given version once; the manual button always opens the dialog.
+      if (silent) {
+        if (Updater.lastCheck().notified === release.version) return;
+        Updater.recordCheck({ notified: release.version });
+        this.#ui.showToast(`⬆️ גרסה חדשה ${release.version} זמינה — בהגדרות → עדכוני אפליקציה`, 'info');
+        return;
+      }
+      this.#showUpdateModal(release);
+    } catch (e) {
+      DiagLog.log('UPDATE', `update check failed — ${e?.message || e}`);
+      if (!silent) this.#ui.showToast('לא ניתן לבדוק עדכונים כעת (אין חיבור?)', 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+      if (btnText) btnText.textContent = 'בדוק עדכונים';
+    }
+  }
+
+  #showUpdateModal(release) {
+    const native = Updater.isNative();
+    Utils.el('updateTitle').textContent = `גרסה ${release.version} זמינה`;
+    Utils.el('updateVersions').textContent = `מותקן אצלך: ${CFG.version}`;
+    Utils.el('updateNotes').textContent = release.notes || '';
+    const progress = Utils.el('updateProgress');
+    if (progress) progress.style.display = 'none';
+    const hint = Utils.el('updateHint');
+    if (hint) {
+      hint.style.display = native && !release.apkUrl ? '' : 'none';
+      hint.textContent = native && !release.apkUrl ? 'לגרסה הזו אין קובץ התקנה להורדה.' : '';
+    }
+    const install = Utils.el('updateInstallBtn');
+    if (install) {
+      install.disabled = native && !release.apkUrl;
+      install.textContent = native
+        ? `הורד והתקן${release.apkSize ? ` (${(release.apkSize / 1048576).toFixed(1)} MB)` : ''}`
+        : 'עדכן עכשיו';
+    }
+    this.#ui.openModal('updateModal');
+  }
+
+  async #installUpdate() {
+    const release = this.#pendingRelease;
+    if (!release || this.#updating) return;
+    if (!Updater.isNative()) {
+      DiagLog.log('UPDATE', 'PWA update — clearing app caches and reloading');
+      await Updater.reloadPwa();
+      return;
+    }
+    this.#updating = true;
+    const install = Utils.el('updateInstallBtn');
+    const later = Utils.el('updateLaterBtn');
+    const progress = Utils.el('updateProgress');
+    const fill = Utils.el('updateProgressFill');
+    const text = Utils.el('updateProgressText');
+    const hint = Utils.el('updateHint');
+    const setHint = msg => { if (hint) { hint.textContent = msg; hint.style.display = msg ? '' : 'none'; } };
+    if (install) install.disabled = true;
+    if (progress) progress.style.display = '';
+    setHint('');
+    if (text) text.textContent = 'מתחיל הורדה...';
+    DiagLog.log('UPDATE', `downloading ${release.version}${release.sha256 ? ' (checksum known)' : ''}`);
+    try {
+      const res = await Updater.downloadAndInstall(release, ({ downloaded, total }) => {
+        const pct = total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : null;
+        if (fill) fill.style.width = pct === null ? '35%' : `${pct}%`;
+        if (text) text.textContent = pct === null
+          ? `${(downloaded / 1048576).toFixed(1)} MB`
+          : `${pct}% · ${(downloaded / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`;
+      });
+      DiagLog.log('UPDATE', `download result: ${res.status}${res.message ? ' — ' + res.message : ''}`);
+      if (res.status === 'installing') {
+        if (text) text.textContent = 'ההורדה הסתיימה — אשר את ההתקנה במסך שנפתח';
+        setHint('אחרי ההתקנה האפליקציה תיפתח מחדש בגרסה החדשה. הנתונים שלך נשמרים.');
+      } else if (res.status === 'needsPermission') {
+        if (progress) progress.style.display = 'none';
+        setHint('כדי להתקין עדכון צריך לאפשר ל-FindMyCar "התקנת אפליקציות לא מוכרות". פתחנו את המסך המתאים — אשר, חזור ולחץ שוב.');
+      } else if (res.status === 'cancelled') {
+        if (progress) progress.style.display = 'none';
+      } else if (res.status === 'busy') {
+        setHint('הורדה כבר מתבצעת.');
+      } else {
+        if (progress) progress.style.display = 'none';
+        setHint(`⚠️ ${res.message || 'ההורדה נכשלה'}`);
+      }
+    } finally {
+      this.#updating = false;
+      if (install) { install.disabled = false; install.textContent = 'נסה שוב'; }
+      if (later) later.textContent = 'סגור';
+    }
+  }
+
+  /** Opens WhatsApp or the mail app with the install links (see js/updater.js shareText). */
+  #shareApp(channel) {
+    DiagLog.log('UPDATE', `sharing the app via ${channel}`);
+    if (channel === 'whatsapp') {
+      window.open(whatsappShareUrl(), '_blank');
+      return;
+    }
+    // A real anchor click, not window.location: a failed mailto: must never navigate the app away.
+    const a = document.createElement('a');
+    a.href = mailShareUrl();
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   // ── WHATSAPP SHARING ──────────────────────────────────────────
