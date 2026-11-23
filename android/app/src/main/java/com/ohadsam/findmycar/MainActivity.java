@@ -61,6 +61,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(BluetoothClassicPlugin.class);
         registerPlugin(WidgetDataPlugin.class);
         registerPlugin(OemSetupPlugin.class);
+        registerPlugin(AppUpdatePlugin.class);
         super.onCreate(savedInstanceState);
         activeInstance = new WeakReference<>(this);
 

@@ -1,5 +1,5 @@
 export const CFG = Object.freeze({
-  version: '1.56.0',
+  version: '1.57.0',
   keys: Object.freeze({
     theme:             'fmc_theme_v1',
     vehicles:          'fmc_vehicles_v1',
@@ -49,6 +49,18 @@ export const CFG = Object.freeze({
   // after the notification that asked about it was ignored. Mirrors
   // DisconnectSpotStore.MAX_AGE_MS in Kotlin.
   disconnectSpotMaxAgeMs: 43200000, // ms (12 h)
+  // App updates and sharing (v1.57.0). The APK is published by
+  // .github/workflows/build-android.yml as a GitHub release; the app asks the
+  // public releases API what is newest. apkAsset is a STABLE file name so
+  // releases/latest/download/<apkAsset> is always a working install link.
+  update: Object.freeze({
+    repo:            'ohadsam/find_my_car',
+    apkAsset:        'FindMyCar.apk',
+    pwaUrl:          'https://ohadsam.github.io/find_my_car/',
+    checkIntervalMs: 43200000, // ms (12 h) between silent checks at startup
+    timeoutMs:       10000,
+    lastCheckKey:    'findmycar_update_check_v1', // deliberately not fmc_-prefixed: not part of backups
+  }),
   walkWindowMs:         600000, // ms (10 min) — how long after a disconnect a stale suggestion is still allowed to reach the in-app modal on resume; generous, since sitting in the car a few minutes before getting out is normal
   // How old a native Bluetooth event may be before its location is no longer
   // trustworthy for auto-start. Delivery of a plugin event waits for the
@@ -92,6 +104,16 @@ export const CFG = Object.freeze({
   nominatim:         'https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1',
   vehicleIcons:      ['🚗', '🚙', '🚕', '🚌', '🏎️', '🛻', '🚐', '🚑'],
   changelog: Object.freeze([
+    Object.freeze({
+      version: '1.57.0',
+      date: '2026-11-23',
+      items: Object.freeze([
+        'בדיקת עדכונים מתוך האפליקציה (הגדרות → עדכוני אפליקציה), וגם בדיקה שקטה בעת פתיחה — כשיוצאת גרסה חדשה תופיע הודעה',
+        'באנדרואיד אפשר להוריד ולהתקין את העדכון ישירות מהאפליקציה, עם סרגל התקדמות ואימות הקובץ; הנתונים נשמרים',
+        'בדפדפן (PWA) הכפתור מרענן את האפליקציה לגרסה האחרונה',
+        'שיתוף האפליקציה בוואטסאפ ובמייל — קישור להתקנה לאנדרואיד וקישור לגרסת הדפדפן',
+      ]),
+    }),
     Object.freeze({
       version: '1.56.0',
       date: '2026-10-08',

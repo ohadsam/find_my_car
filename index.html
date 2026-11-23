@@ -28,6 +28,7 @@
   <!-- Module preloads for faster startup -->
   <link rel="modulepreload" href="js/config.js">
   <link rel="modulepreload" href="js/store.js">
+  <link rel="modulepreload" href="js/updater.js">
   <link rel="modulepreload" href="js/diag-log.js">
   <link rel="modulepreload" href="js/utils.js">
   <link rel="modulepreload" href="js/geocoder.js">
@@ -371,6 +372,38 @@
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
             <span>פתח מדריך הגדרות</span>
+          </button>
+        </div>
+      </div>
+      <div class="settings-backup-wrapper" id="appUpdateSection">
+        <div class="settings-backup-title">עדכוני אפליקציה</div>
+        <p class="settings-backup-desc" id="appUpdateStatus">גרסה מותקנת —</p>
+        <div class="settings-backup-actions">
+          <button class="settings-backup-btn" id="checkUpdatesBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            <span id="checkUpdatesBtnText">בדוק עדכונים</span>
+          </button>
+        </div>
+      </div>
+      <div class="settings-backup-wrapper" id="appShareSection">
+        <div class="settings-backup-title">שתף את האפליקציה</div>
+        <p class="settings-backup-desc">
+          שולח קישור להתקנה לאנדרואיד וקישור לגרסת הדפדפן — לחבר, לבן משפחה או לעצמך.
+        </p>
+        <div class="settings-backup-actions">
+          <button class="settings-backup-btn" id="shareAppWhatsAppBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 20.5l1.7-5.4A8.4 8.4 0 1 1 21 11.5z"/>
+            </svg>
+            <span>שתף בוואטסאפ</span>
+          </button>
+          <button class="settings-backup-btn" id="shareAppEmailBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="3 7 12 13 21 7"/>
+            </svg>
+            <span>שתף במייל</span>
           </button>
         </div>
       </div>
@@ -932,6 +965,29 @@
     </div>
   </div>
 
+  <!-- ── APP UPDATE MODAL ── -->
+  <div id="updateModal" class="modal" role="dialog" aria-modal="true" aria-label="עדכון זמין" style="display:none;">
+    <div class="modal-backdrop" data-close="updateModal"></div>
+    <div class="modal-sheet modal-sheet-alert">
+      <div class="modal-handle"></div>
+      <div class="modal-body alert-body">
+        <div class="alert-icon">⬆️</div>
+        <h3 class="alert-title" id="updateTitle">גרסה חדשה זמינה</h3>
+        <p class="alert-desc" id="updateVersions"></p>
+        <pre class="update-notes" id="updateNotes"></pre>
+        <div class="update-progress" id="updateProgress" style="display:none;" aria-live="polite">
+          <div class="update-progress-track"><div class="update-progress-fill" id="updateProgressFill"></div></div>
+          <div class="update-progress-text" id="updateProgressText"></div>
+        </div>
+        <p class="alert-desc" id="updateHint" style="display:none;"></p>
+      </div>
+      <div class="modal-footer walk-away-footer">
+        <button class="modal-btn success" id="updateInstallBtn">הורד והתקן</button>
+        <button class="modal-btn secondary" id="updateLaterBtn" data-close="updateModal">אחר כך</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── BLUETOOTH SETTINGS MODAL ── -->
   <div id="btSettingsModal" class="modal" role="dialog" aria-modal="true" aria-label="הגדרות Bluetooth" style="display:none;">
     <div class="modal-backdrop" data-close="btSettingsModal"></div>
@@ -1024,6 +1080,7 @@
             <option value="DAILY">סטטוס יומי</option>
             <option value="NOTIFY">התראות</option>
             <option value="PERM">הרשאות</option>
+            <option value="UPDATE">עדכוני אפליקציה</option>
           </select>
         </div>
         <pre class="diag-log-content" id="diagLogContent">אין רשומות עדיין.</pre>

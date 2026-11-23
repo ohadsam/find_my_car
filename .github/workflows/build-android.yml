@@ -18,6 +18,10 @@ on:
       - '.github/workflows/build-android.yml'
   workflow_dispatch: {}
 
+# contents: write is needed only by the "Publish APK as a GitHub release" step.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -78,3 +82,27 @@ jobs:
           name: findmycar-native-test-report
           path: android/app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
+
+      # The in-app updater (js/updater.js, AppUpdatePlugin.kt) and the share
+      # link both read the newest GitHub release, so every build of main
+      # publishes its APK there under a STABLE file name: the same
+      # releases/latest/download/FindMyCar.apk URL always serves the newest build.
+      # One release per versionName; a rebuild of the same version replaces the
+      # asset instead of piling up releases. Notes come from CHANGELOG.md.
+      - name: Publish APK as a GitHub release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/.*versionName "\([^"]*\)".*/\1/p' android/app/build.gradle | head -1)
+          [ -n "$VERSION" ] || { echo "could not read versionName"; exit 1; }
+          TAG="v$VERSION"
+          cp android/app/build/outputs/apk/debug/app-debug.apk FindMyCar.apk
+          awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md | head -n 40 > release-notes.md
+          [ -s release-notes.md ] || echo "FindMyCar $VERSION" > release-notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" FindMyCar.apk --clobber
+            gh release edit "$TAG" --notes-file release-notes.md --latest
+          else
+            gh release create "$TAG" FindMyCar.apk --target "$GITHUB_SHA" --title "FindMyCar $VERSION" --notes-file release-notes.md --latest
+          fi
