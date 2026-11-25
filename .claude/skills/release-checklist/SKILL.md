@@ -1406,7 +1406,7 @@ blocking if they're environment-only, like Playwright needing a browser).
 
 **Overall: NOT READY** — list exactly what to fix, in priority order.
 
-## Store - update "OS APPs and Downs" (every shipped version)
+## Store - update "OS APPs & Downs" (every shipped version)
 The owner's app store (repo `ohadsam/os_app_store`, https://ohadsam.github.io/os_app_store/) must always show this app's latest version.
 1. After the release is live (APK release / Pages deployed), find the app's entry in `web/data/apps.json` (its `source` block says which file here holds the version).
 2. Preferred: trigger the store's sync - GitHub Actions -> "Sync catalog" -> Run workflow in `ohadsam/os_app_store` (or `mcp__github__actions_run_trigger` workflow `sync-catalog.yml`). It reads this repo's version + CHANGELOG and updates version, update date and what's-new.
